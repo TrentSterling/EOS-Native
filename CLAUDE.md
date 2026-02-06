@@ -150,9 +150,9 @@ If you see "Failed to load custom XAudio2.9 dll", verify the DLL exists at one o
 
 Most managers use a lazy auto-create singleton pattern: `FindAnyObjectByType<T>()` first, then `new GameObject + AddComponent<T>() + DontDestroyOnLoad()` if not found. This means consumers don't need to manually place manager components in the scene.
 
-**Auto-create singletons:** EOSLobbyManager, EOSVoiceManager, EOSStats, EOSAchievements, EOSPartyManager, EOSAntiCheatManager, EOSPlayerRegistry, EOSReports, EOSSanctions, EOSCustomInvites, EOSFriends, EOSLeaderboards, EOSPresence, EOSUserInfo, EOSPlayerDataStorage, EOSTitleStorage, and more.
+**Auto-create singletons:** EOSLobbyManager, EOSVoiceManager, EOSStats, EOSAchievements, EOSPartyManager, EOSAntiCheatManager, EOSPlayerRegistry, EOSReports, EOSSanctions, EOSCustomInvites, EOSFriends, EOSLeaderboards, EOSPresence, EOSUserInfo, EOSPlayerDataStorage, EOSTitleStorage, EOSMetrics, and more.
 
-**Find-only singletons (no auto-create):** EOSTournamentManager, EOSClanManager.
+**Find-only singletons (no auto-create):** EOSTournamentManager, EOSClanManager, EOSGlobalChatManager, EOSReplayHighlights, EOSReplayVoicePlayer, EOSReplayVoiceRecorder.
 
 ## Documentation Site
 
@@ -169,7 +169,34 @@ The Inspector's Quick Match button calls `QuickMatchOrHostAsync()` which:
 2. If found, joins a random one
 3. **If none found, automatically creates and hosts a new lobby**
 
-Both the Inspector (EOSManagerEditor) and the runtime F1 overlay (EOSNativeStatusUI) use this pattern. The Inspector also exposes a Voice toggle that controls `EnableVoice` for both Host and Quick Match lobby creation.
+Both the Inspector (EOSManagerEditor) and the runtime F1 overlay (EOSNativeStatusUI) use this pattern. The Inspector also exposes a Voice toggle and Host Migration toggle that control `EnableVoice` and `AllowHostMigration` for both Host and Quick Match lobby creation.
+
+## Audio Device Selection (Mic/Speaker)
+
+`EOSVoiceManager` provides runtime mic/speaker device switching via EOS RTCAudio APIs:
+
+- `QueryAudioDevices()` - Queries input/output device lists and registers for hotplug notifications
+- `GetInputDevices()` / `GetOutputDevices()` - Returns cached device info lists
+- `SetInputDevice(deviceId)` - Switches active microphone by `RealDeviceId`
+- `SetOutputDevice(deviceId)` - Switches active speaker by `RealDeviceId`
+- `OnAudioDevicesChanged` event - Fires when devices are added/removed
+- `CurrentInputDeviceId` / `CurrentOutputDeviceId` - Track selected device
+
+The F1 overlay Voice tab exposes dropdown selectors for input/output devices with a Refresh button.
+
+## Ported Managers
+
+These managers were ported from FishNet-EOS-Native with FishNet dependencies removed:
+
+| Manager | Location | Description |
+|---------|----------|-------------|
+| EOSGlobalChatManager | `Social/` | Channel-based global chat (join/leave/mute, message history) |
+| EOSReplayHighlights | `Replay/` | Auto-detect gameplay highlights (multi-kill, clutch, comeback) |
+| EOSReplayVoicePlayer | `Replay/` | Voice playback during replay viewing |
+| EOSReplayVoiceRecorder | `Replay/` | Record voice chat for replay storage |
+| EOSMetrics | `Core/` | EOS Metrics API for session telemetry |
+
+**Not ported** (too tightly coupled to FishNet): EOSReplayRecorder, EOSAfkManager, EOSBackfillManager, EOSRematchManager, EOSVoiceZoneManager, EOSVoiceTriggerZone, EOSVoteKickManager, EOSMapVoteManager.
 
 ## Bug/TODO Tracking
 
@@ -177,7 +204,7 @@ See `BUGS.MD` and `TODO.MD` in the repo root for known issues and planned work.
 
 ## Rules
 
-- **Do NOT add wrapper code** to this package. It's pure SDK only. Wrapper logic belongs in the transport or consumer projects.
 - **Do NOT modify the C# source** in Source/Core or Source/Generated. These are Epic's auto-generated files.
 - **Do NOT remove platform support.** All platforms stay included.
 - When updating the SDK, preserve the Plugins/ folder organization (by platform subfolder).
+- **ALWAYS increment version** in `package.json` before each git push.

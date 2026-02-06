@@ -405,6 +405,196 @@ namespace EOSNative.Voice
 
         #endregion
 
+        #region Public API - Audio Devices
+
+        /// <summary>
+        /// Fired when audio input/output devices change (hotplug).
+        /// </summary>
+        public event Action OnAudioDevicesChanged;
+
+        /// <summary>
+        /// Cached input (microphone) devices after QueryAudioDevices().
+        /// </summary>
+        public List<InputDeviceInformation> InputDevices { get; private set; } = new();
+
+        /// <summary>
+        /// Cached output (speaker) devices after QueryAudioDevices().
+        /// </summary>
+        public List<OutputDeviceInformation> OutputDevices { get; private set; } = new();
+
+        /// <summary>
+        /// Currently selected input device ID (null = system default).
+        /// </summary>
+        public string CurrentInputDeviceId { get; private set; }
+
+        /// <summary>
+        /// Currently selected output device ID (null = system default).
+        /// </summary>
+        public string CurrentOutputDeviceId { get; private set; }
+
+        private NotifyEventHandle _audioDevicesChangedHandle;
+
+        /// <summary>
+        /// Queries available audio input and output devices from the OS.
+        /// Results are cached in InputDevices and OutputDevices.
+        /// </summary>
+        public void QueryAudioDevices()
+        {
+            if (RTCAudio == null)
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.VoiceManager, "EOSVoiceManager", "Cannot query audio devices - RTCAudio not available.");
+                return;
+            }
+
+            // Query input devices
+            var inputOptions = new QueryInputDevicesInformationOptions();
+            RTCAudio.QueryInputDevicesInformation(ref inputOptions, null, (ref OnQueryInputDevicesInformationCallbackInfo data) =>
+            {
+                if (data.ResultCode == Result.Success)
+                {
+                    RefreshInputDeviceList();
+                    EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", $"Found {InputDevices.Count} input devices");
+                }
+                else
+                {
+                    Debug.LogWarning($"[EOSVoiceManager] QueryInputDevicesInformation failed: {data.ResultCode}");
+                }
+            });
+
+            // Query output devices
+            var outputOptions = new QueryOutputDevicesInformationOptions();
+            RTCAudio.QueryOutputDevicesInformation(ref outputOptions, null, (ref OnQueryOutputDevicesInformationCallbackInfo data) =>
+            {
+                if (data.ResultCode == Result.Success)
+                {
+                    RefreshOutputDeviceList();
+                    EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", $"Found {OutputDevices.Count} output devices");
+                }
+                else
+                {
+                    Debug.LogWarning($"[EOSVoiceManager] QueryOutputDevicesInformation failed: {data.ResultCode}");
+                }
+            });
+
+            // Register for device change notifications (once)
+            if (_audioDevicesChangedHandle == null)
+            {
+                var notifyOptions = new AddNotifyAudioDevicesChangedOptions();
+                ulong handle = RTCAudio.AddNotifyAudioDevicesChanged(ref notifyOptions, null, (ref AudioDevicesChangedCallbackInfo data) =>
+                {
+                    EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", "Audio devices changed (hotplug)");
+                    RefreshInputDeviceList();
+                    RefreshOutputDeviceList();
+                    OnAudioDevicesChanged?.Invoke();
+                });
+                _audioDevicesChangedHandle = new NotifyEventHandle(handle, h => RTCAudio?.RemoveNotifyAudioDevicesChanged(h));
+            }
+        }
+
+        /// <summary>
+        /// Sets the active input (microphone) device.
+        /// </summary>
+        /// <param name="deviceId">The device ID from InputDeviceInformation.DeviceId, or null for system default.</param>
+        /// <param name="platformAEC">Enable platform Acoustic Echo Cancellation if available.</param>
+        public void SetInputDevice(string deviceId, bool platformAEC = true)
+        {
+            if (RTCAudio == null || LocalUserId == null)
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.VoiceManager, "EOSVoiceManager", "Cannot set input device - not ready.");
+                return;
+            }
+
+            var options = new SetInputDeviceSettingsOptions
+            {
+                LocalUserId = LocalUserId,
+                RealDeviceId = deviceId,
+                PlatformAEC = platformAEC
+            };
+
+            RTCAudio.SetInputDeviceSettings(ref options, null, (ref OnSetInputDeviceSettingsCallbackInfo data) =>
+            {
+                if (data.ResultCode == Result.Success)
+                {
+                    CurrentInputDeviceId = deviceId;
+                    EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", $"Input device set: {deviceId ?? "(default)"}");
+                }
+                else
+                {
+                    Debug.LogWarning($"[EOSVoiceManager] SetInputDeviceSettings failed: {data.ResultCode}");
+                }
+            });
+        }
+
+        /// <summary>
+        /// Sets the active output (speaker) device.
+        /// </summary>
+        /// <param name="deviceId">The device ID from OutputDeviceInformation.DeviceId, or null for system default.</param>
+        public void SetOutputDevice(string deviceId)
+        {
+            if (RTCAudio == null || LocalUserId == null)
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.VoiceManager, "EOSVoiceManager", "Cannot set output device - not ready.");
+                return;
+            }
+
+            var options = new SetOutputDeviceSettingsOptions
+            {
+                LocalUserId = LocalUserId,
+                RealDeviceId = deviceId
+            };
+
+            RTCAudio.SetOutputDeviceSettings(ref options, null, (ref OnSetOutputDeviceSettingsCallbackInfo data) =>
+            {
+                if (data.ResultCode == Result.Success)
+                {
+                    CurrentOutputDeviceId = deviceId;
+                    EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", $"Output device set: {deviceId ?? "(default)"}");
+                }
+                else
+                {
+                    Debug.LogWarning($"[EOSVoiceManager] SetOutputDeviceSettings failed: {data.ResultCode}");
+                }
+            });
+        }
+
+        private void RefreshInputDeviceList()
+        {
+            InputDevices.Clear();
+            if (RTCAudio == null) return;
+
+            var countOptions = new GetInputDevicesCountOptions();
+            uint count = RTCAudio.GetInputDevicesCount(ref countOptions);
+
+            for (uint i = 0; i < count; i++)
+            {
+                var copyOptions = new CopyInputDeviceInformationByIndexOptions { DeviceIndex = i };
+                if (RTCAudio.CopyInputDeviceInformationByIndex(ref copyOptions, out var info) == Result.Success && info.HasValue)
+                {
+                    InputDevices.Add(info.Value);
+                }
+            }
+        }
+
+        private void RefreshOutputDeviceList()
+        {
+            OutputDevices.Clear();
+            if (RTCAudio == null) return;
+
+            var countOptions = new GetOutputDevicesCountOptions();
+            uint count = RTCAudio.GetOutputDevicesCount(ref countOptions);
+
+            for (uint i = 0; i < count; i++)
+            {
+                var copyOptions = new CopyOutputDeviceInformationByIndexOptions { DeviceIndex = i };
+                if (RTCAudio.CopyOutputDeviceInformationByIndex(ref copyOptions, out var info) == Result.Success && info.HasValue)
+                {
+                    OutputDevices.Add(info.Value);
+                }
+            }
+        }
+
+        #endregion
+
         #region Public API - Participant State
 
         /// <summary>
@@ -705,6 +895,9 @@ namespace EOSNative.Voice
             // Dispose all notification handles
             _rtcConnectionHandle?.Dispose();
             _rtcConnectionHandle = null;
+
+            _audioDevicesChangedHandle?.Dispose();
+            _audioDevicesChangedHandle = null;
 
             CleanupAudioNotifications();
 

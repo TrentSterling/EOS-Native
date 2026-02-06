@@ -32,3 +32,12 @@
 - [x] ParrelSync support (device ID uniqueness per clone)
 - [x] XAudio2 DLL path resolution for UPM layout
 - [x] Native DLL loading path fix (Path.GetFullPath for virtual paths)
+- [x] Dark theme UI overhaul for F1 overlay (foldouts, level bars, dark backgrounds)
+- [x] Mic/speaker device selection (EOSVoiceManager + F1 overlay Voice tab)
+- [x] Host migration toggle in Inspector and F1 overlay
+- [x] Port EOSGlobalChatManager from FishNet
+- [x] Port EOSReplayHighlights from FishNet
+- [x] Port EOSReplayVoicePlayer from FishNet
+- [x] Port EOSReplayVoiceRecorder from FishNet
+- [x] Port EOSMetrics from FishNet
+- [x] Create CHANGELOG.MD

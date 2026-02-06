@@ -1542,6 +1542,7 @@ namespace EOSNative
         private string _lobbyStatus = "";
         private bool _lobbyOperationInProgress;
         private bool _enableVoice = true;
+        private bool _enableHostMigration = true;
 
         private void InitializeStyles()
         {
@@ -1911,6 +1912,7 @@ namespace EOSNative
 
                 EditorGUILayout.BeginHorizontal();
                 _enableVoice = EditorGUILayout.ToggleLeft("Voice", _enableVoice, GUILayout.Width(60));
+                _enableHostMigration = EditorGUILayout.ToggleLeft("Host Migration", _enableHostMigration, GUILayout.Width(110));
                 EditorGUILayout.EndHorizontal();
 
                 EditorGUILayout.Space(5);
@@ -2117,7 +2119,8 @@ namespace EOSNative
             {
                 MaxPlayers = 4,
                 IsPublic = true,
-                EnableVoice = _enableVoice
+                EnableVoice = _enableVoice,
+                AllowHostMigration = _enableHostMigration
             };
 
             var (result, lobby) = await lobbyMgr.CreateLobbyAsync(options);
@@ -2165,7 +2168,8 @@ namespace EOSNative
             {
                 MaxPlayers = 4,
                 IsPublic = true,
-                EnableVoice = _enableVoice
+                EnableVoice = _enableVoice,
+                AllowHostMigration = _enableHostMigration
             };
 
             var (result, lobby, didHost) = await lobbyMgr.QuickMatchOrHostAsync(options);

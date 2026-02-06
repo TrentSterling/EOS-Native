@@ -63,6 +63,9 @@ namespace EOSNative.Logging
         // Core (continued)
         PlayerRegistry = 1 << 30,
 
+        // Replay
+        Replay = 1 << 31,
+
         // Aliases for new wrapper categories
         Social = Friends,
 
@@ -76,6 +79,7 @@ namespace EOSNative.Logging
         AllStorage = PlayerDataStorage | TitleStorage,
         AllModeration = Reports | Sanctions | Metrics,
         AllDemo = NetworkPhysicsObject | PlayerBall | PhysicsNetworkTransform | SimpleCamera,
+        AllReplay = Replay,
 
         All = ~0
     }
