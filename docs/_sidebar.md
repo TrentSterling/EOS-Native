@@ -23,9 +23,20 @@
   * [Tournament Brackets](tournaments.md)
   * [Leaderboards & Stats](leaderboards.md)
   * [Achievements](achievements.md)
+  * [Reputation & Karma](reputation.md)
+  * [Match History](match-history.md)
 
 * **Replay System**
   * [Replays & Highlights](replays.md)
+  * [Replay Highlights](highlights.md)
+
+* **Lobby Systems**
+  * [Vote Kick](votekick.md)
+  * [Map/Mode Voting](mapvote.md)
+  * [Backfill & JIP](backfill.md)
+  * [Rematch System](rematch.md)
+  * [AFK Detection](afk.md)
+  * [Global Chat Channels](globalchat.md)
 
 * **Advanced**
   * [Anti-Cheat (EAC)](anticheat.md)

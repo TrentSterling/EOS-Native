@@ -2,6 +2,32 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.3.0] - 2026-02-06
+
+### Added
+
+#### New Managers (ported from FishNet-EOS-Native)
+- `EOSAfkManager` - Automatic idle detection with configurable threshold, auto-kick with warning countdown, host immunity, lobby attribute broadcast
+- `EOSVoteKickManager` - Democratic vote-kick with configurable thresholds (majority/2-3/3-4/unanimous/custom), host immunity, host veto, cooldowns, lobby attribute broadcast
+- `EOSMapVoteManager` - Map/mode voting with tie breakers (random/first/host-choice/revote), live results, preset templates (FPS/Arena maps, Standard/Casual modes)
+- `EOSRematchManager` - Post-match rematch voting with auto-offer, host force, swap teams toggle, keep settings toggle, consecutive rematch limits
+- `EOSBackfillManager` - Join-in-progress controls, game phase management (7 phases), backfill requests, team balancing, game locking, auto-backfill
+
+#### Lobby Manager Enhancement
+- Added `KickMemberAsync(string targetPuid)` to `EOSLobbyManager` using EOS SDK `LobbyInterface.KickMember`
+
+#### Documentation (9 new pages)
+- `reputation.md` - Reputation & karma system (commendations, reports, levels, badges)
+- `match-history.md` - Match history tracking (recording, querying, filtering, cloud sync)
+- `globalchat.md` - Global chat channels (join/leave, messaging, moderation, history)
+- `highlights.md` - Replay highlights (auto-detection, multi-kill, clutch, comeback, manual bookmarks)
+- `votekick.md` - Vote kick system (thresholds, host controls, cooldowns)
+- `mapvote.md` - Map/mode voting (options, tie breakers, presets, live results)
+- `backfill.md` - Backfill & join-in-progress (game phases, JIP eligibility, team balancing)
+- `rematch.md` - Rematch system (voting, host force, swap teams, consecutive limits)
+- `afk.md` - AFK detection (idle tracking, auto-kick, integration with vote kick and backfill)
+- Updated `_sidebar.md` with new "Lobby Systems" section and all new pages
+
 ## [2.2.0] - 2026-02-06
 
 ### Added

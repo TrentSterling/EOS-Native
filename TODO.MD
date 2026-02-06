@@ -45,3 +45,15 @@
 - [x] Auto-create EOSLobbyChatManager singleton
 - [x] All foldouts default to expanded
 - [x] Fix ranked matchmaking OnDestroy crash during shutdown
+- [x] Port EOSAfkManager from FishNet (framework-agnostic)
+- [x] Port EOSVoteKickManager from FishNet (lobby attributes)
+- [x] Port EOSMapVoteManager from FishNet (lobby attributes)
+- [x] Port EOSRematchManager from FishNet (lobby system)
+- [x] Port EOSBackfillManager from FishNet (lobby search)
+- [x] Add KickMemberAsync to EOSLobbyManager
+- [x] Write reputation.md docs
+- [x] Write match-history.md docs
+- [x] Write globalchat.md docs
+- [x] Write highlights.md docs
+- [x] Write votekick.md, mapvote.md, backfill.md, rematch.md, afk.md docs
+- [x] Update _sidebar.md with Lobby Systems section

@@ -158,9 +158,9 @@ Most managers use a lazy auto-create singleton pattern: `FindAnyObjectByType<T>(
 
 ## Documentation Site
 
-Full docsify documentation at `docs/` folder (28 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
+Full docsify documentation at `docs/` folder (37 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
 
-Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lfg, invites, discord, ranked, seasons, tournaments, leaderboards, achievements, replays, anticheat, storage, architecture, platforms, debug, troubleshooting.
+Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lfg, invites, discord, ranked, seasons, tournaments, leaderboards, achievements, reputation, match-history, replays, highlights, votekick, mapvote, backfill, rematch, afk, globalchat, anticheat, storage, architecture, platforms, debug, troubleshooting.
 
 Style matches the FishNet EOS Native docs site with the same docsify theme, theme switcher, and code highlighting.
 
@@ -212,8 +212,13 @@ These managers were ported from FishNet-EOS-Native with FishNet dependencies rem
 | EOSReplayVoicePlayer | `Replay/` | Voice playback during replay viewing |
 | EOSReplayVoiceRecorder | `Replay/` | Record voice chat for replay storage |
 | EOSMetrics | `Core/` | EOS Metrics API for session telemetry |
+| EOSAfkManager | `Lobbies/` | Idle detection with auto-kick, host immunity, lobby broadcast |
+| EOSVoteKickManager | `Lobbies/` | Democratic vote-kick with thresholds, veto, cooldowns |
+| EOSMapVoteManager | `Lobbies/` | Map/mode voting with tie breakers and preset templates |
+| EOSRematchManager | `Lobbies/` | Post-match rematch voting with auto-offer and team swap |
+| EOSBackfillManager | `Lobbies/` | Join-in-progress, game phases, backfill requests, team balancing |
 
-**Not ported** (too tightly coupled to FishNet): EOSReplayRecorder, EOSAfkManager, EOSBackfillManager, EOSRematchManager, EOSVoiceZoneManager, EOSVoiceTriggerZone, EOSVoteKickManager, EOSMapVoteManager.
+**Not ported** (too tightly coupled to FishNet): EOSReplayRecorder, EOSVoiceZoneManager, EOSVoiceTriggerZone.
 
 ## Bug/TODO Tracking
 

@@ -998,6 +998,50 @@ namespace EOSNative.Lobbies
             return result.ResultCode;
         }
 
+        /// <summary>
+        /// Kicks a member from the lobby (owner only).
+        /// </summary>
+        public async Task<Result> KickMemberAsync(string targetPuid)
+        {
+            if (!IsInLobby || !IsOwner)
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.LobbyManager, "EOSLobbyManager", "Must be lobby owner to kick.");
+                return Result.InvalidRequest;
+            }
+
+            var targetUserId = ProductUserId.FromString(targetPuid);
+            if (targetUserId == null || !targetUserId.IsValid())
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.LobbyManager, "EOSLobbyManager", $"Invalid target PUID: {targetPuid}");
+                return Result.InvalidParameters;
+            }
+
+            var kickOptions = new KickMemberOptions
+            {
+                LocalUserId = LocalProductUserId,
+                LobbyId = CurrentLobby.LobbyId,
+                TargetUserId = targetUserId
+            };
+
+            var tcs = new TaskCompletionSource<KickMemberCallbackInfo>();
+            LobbyInterface.KickMember(ref kickOptions, null, (ref KickMemberCallbackInfo data) =>
+            {
+                tcs.SetResult(data);
+            });
+
+            var result = await tcs.Task;
+            if (result.ResultCode == Result.Success)
+            {
+                EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", $"Kicked member: {targetPuid}");
+            }
+            else
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.LobbyManager, "EOSLobbyManager", $"Failed to kick {targetPuid}: {result.ResultCode}");
+            }
+
+            return result.ResultCode;
+        }
+
         #endregion
 
         #region Public API - Attributes
