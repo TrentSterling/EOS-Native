@@ -8,15 +8,6 @@
 
 ## Medium Priority
 
-### ParrelSync documentation
-- ParrelSync support is already built-in (reflection-based in EOSManager, preprocessor-based in EOSPlatformHelper)
-- Each clone gets unique device ID via project path hash
-- Document this more prominently so users know it works out of the box
-
-### Inspector improvements
-- Consider adding max players field to inspector lobby controls (currently hardcoded to 4)
-- Consider adding lobby name field to inspector controls
-
 ## Low Priority
 
 ### Testing
@@ -57,3 +48,7 @@
 - [x] Write highlights.md docs
 - [x] Write votekick.md, mapvote.md, backfill.md, rematch.md, afk.md docs
 - [x] Update _sidebar.md with Lobby Systems section
+- [x] Player profile popup in F1 overlay (info button per lobby member)
+- [x] Inspector lobby name field (was unnamed)
+- [x] Inspector max players field (was hardcoded to 4, now 2-64)
+- [x] ParrelSync docs page (parrelsync.md)

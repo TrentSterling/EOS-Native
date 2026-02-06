@@ -1539,6 +1539,8 @@ namespace EOSNative
 
         // Lobby state
         private string _joinCode = "";
+        private string _lobbyName = "";
+        private int _maxPlayers = 4;
         private string _lobbyStatus = "";
         private bool _lobbyOperationInProgress;
         private bool _enableVoice = true;
@@ -1911,6 +1913,14 @@ namespace EOSNative
                 EditorGUILayout.EndHorizontal();
 
                 EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Name:", GUILayout.Width(42));
+                _lobbyName = EditorGUILayout.TextField(_lobbyName);
+                EditorGUILayout.LabelField("Max:", GUILayout.Width(30));
+                _maxPlayers = EditorGUILayout.IntField(_maxPlayers, GUILayout.Width(30));
+                _maxPlayers = Mathf.Clamp(_maxPlayers, 2, 64);
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.BeginHorizontal();
                 _enableVoice = EditorGUILayout.ToggleLeft("Voice", _enableVoice, GUILayout.Width(60));
                 _enableHostMigration = EditorGUILayout.ToggleLeft("Host Migration", _enableHostMigration, GUILayout.Width(110));
                 EditorGUILayout.EndHorizontal();
@@ -2117,10 +2127,11 @@ namespace EOSNative
             string code = string.IsNullOrEmpty(_joinCode) ? null : _joinCode;
             var options = new LobbyCreateOptions
             {
-                MaxPlayers = 4,
+                MaxPlayers = (uint)_maxPlayers,
                 IsPublic = true,
                 EnableVoice = _enableVoice,
-                AllowHostMigration = _enableHostMigration
+                AllowHostMigration = _enableHostMigration,
+                LobbyName = string.IsNullOrEmpty(_lobbyName) ? null : _lobbyName
             };
 
             var (result, lobby) = await lobbyMgr.CreateLobbyAsync(options);
@@ -2166,10 +2177,11 @@ namespace EOSNative
 
             var options = new LobbyCreateOptions
             {
-                MaxPlayers = 4,
+                MaxPlayers = (uint)_maxPlayers,
                 IsPublic = true,
                 EnableVoice = _enableVoice,
-                AllowHostMigration = _enableHostMigration
+                AllowHostMigration = _enableHostMigration,
+                LobbyName = string.IsNullOrEmpty(_lobbyName) ? null : _lobbyName
             };
 
             var (result, lobby, didHost) = await lobbyMgr.QuickMatchOrHostAsync(options);

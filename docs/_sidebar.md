@@ -41,6 +41,7 @@
 * **Advanced**
   * [Anti-Cheat (EAC)](anticheat.md)
   * [Cloud Storage](storage.md)
+  * [ParrelSync](parrelsync.md)
   * [Architecture](architecture.md)
   * [Platforms](platforms.md)
 

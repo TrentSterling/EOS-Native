@@ -158,9 +158,9 @@ Most managers use a lazy auto-create singleton pattern: `FindAnyObjectByType<T>(
 
 ## Documentation Site
 
-Full docsify documentation at `docs/` folder (37 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
+Full docsify documentation at `docs/` folder (38 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
 
-Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lfg, invites, discord, ranked, seasons, tournaments, leaderboards, achievements, reputation, match-history, replays, highlights, votekick, mapvote, backfill, rematch, afk, globalchat, anticheat, storage, architecture, platforms, debug, troubleshooting.
+Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lfg, invites, discord, ranked, seasons, tournaments, leaderboards, achievements, reputation, match-history, replays, highlights, votekick, mapvote, backfill, rematch, afk, globalchat, parrelsync, anticheat, storage, architecture, platforms, debug, troubleshooting.
 
 Style matches the FishNet EOS Native docs site with the same docsify theme, theme switcher, and code highlighting.
 
@@ -171,7 +171,13 @@ The Inspector's Quick Match button calls `QuickMatchOrHostAsync()` which:
 2. If found, joins a random one
 3. **If none found, automatically creates and hosts a new lobby**
 
-Both the Inspector (EOSManagerEditor) and the runtime F1 overlay (EOSNativeStatusUI) use this pattern. The Inspector also exposes a Voice toggle and Host Migration toggle that control `EnableVoice` and `AllowHostMigration` for both Host and Quick Match lobby creation.
+Both the Inspector (EOSManagerEditor) and the runtime F1 overlay (EOSNativeStatusUI) use this pattern. The Inspector also exposes:
+- **Lobby Name** text field - sets `LobbyName` on creation (empty = unnamed)
+- **Max Players** int field (2-64, default 4) - sets `MaxPlayers` on creation
+- **Voice** toggle - controls `EnableVoice`
+- **Host Migration** toggle - controls `AllowHostMigration`
+
+All four fields apply to both Host Lobby and Quick Match lobby creation.
 
 ## Audio Device Selection (Mic/Speaker)
 
@@ -193,13 +199,13 @@ The runtime F1 overlay (`EOSNativeStatusUI.cs`, ~3100 lines) provides 6 tabs:
 | Tab | Sections |
 |-----|----------|
 | **Status** | SDK status, platform info, interfaces, login actions |
-| **Lobbies** | Current lobby, create/join/search, lobby members (with report button), lobby chat |
+| **Lobbies** | Current lobby, create/join/search, lobby members (with report & profile buttons), lobby chat |
 | **Voice** | Voice status, local mic level bar, audio devices, participants |
 | **Social** | Player registry, recently played (friend/block/invite), local friends (notes/join/invite), blocked players, invites (send/receive/requests), Epic Account, Epic Friends |
 | **Stats** | Stats query/ingest, leaderboard rankings, achievements progress, ranked matchmaking |
 | **Tools** | Cloud storage (files/write/delete), anti-cheat status, replay list/playback/export/import, session metrics, LFG posts |
 
-Also includes a modal report popup triggered from lobby member list.
+Also includes a modal report popup triggered from lobby member list and a player profile popup (info button per member) showing name, platform, PUID, last seen, friend/block status, editable notes, and action buttons (friend, block, report, invite, kick).
 
 ## Ported Managers
 

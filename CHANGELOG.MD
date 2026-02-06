@@ -2,6 +2,26 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.4.0] - 2026-02-06
+
+### Added
+
+#### Player Profile Popup (F1 Overlay)
+- Info button on each lobby member opens a modal profile popup
+- Shows: display name, platform icon, PUID, last seen timestamp
+- Status badges: [Friend], [Blocked], [Host]
+- Editable personal notes per player (save/cancel)
+- Action buttons: Add Friend/Unfriend, Block/Unblock, Report, Invite, Kick (host only)
+
+#### Inspector Improvements
+- Added **Lobby Name** text field to Inspector lobby controls (was unnamed)
+- Added **Max Players** int field to Inspector lobby controls (was hardcoded to 4, now 2-64)
+- Both fields apply to Host Lobby and Quick Match lobby creation
+
+#### Documentation
+- `parrelsync.md` - ParrelSync multiplayer testing support (reflection-based detection, zero config, device ID uniqueness, troubleshooting)
+- Added ParrelSync link to docs sidebar under Advanced section
+
 ## [2.3.0] - 2026-02-06
 
 ### Added

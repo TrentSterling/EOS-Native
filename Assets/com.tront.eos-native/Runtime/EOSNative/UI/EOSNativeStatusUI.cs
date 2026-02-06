@@ -144,6 +144,13 @@ namespace EOSNative.UI
         private string _reportStatus = "";
         private int _reportCategoryIndex;
 
+        // Player profile popup state
+        private bool _showProfilePopup;
+        private string _profilePuid = "";
+        private string _profileNote = "";
+        private bool _profileEditingNote;
+        private string _profileStatus = "";
+
         // Invites state
         private string _inviteRecipientPuid = "";
         private string _inviteStatus = "";
@@ -506,8 +513,12 @@ namespace EOSNative.UI
 
             _windowRect = GUILayout.Window(94201, _windowRect, DrawWindow, "EOS Native (F1)", _windowStyle);
 
-            // Report popup overlay
-            if (_showReportPopup)
+            // Popup overlays
+            if (_showProfilePopup)
+            {
+                DrawPlayerProfilePopup();
+            }
+            else if (_showReportPopup)
             {
                 DrawReportPopup();
             }
@@ -1262,9 +1273,21 @@ namespace EOSNative.UI
                         GUILayout.Label($"{prefix}{displayName}{(isLocal ? " (you)" : "")}", style);
                         GUILayout.FlexibleSpace();
 
-                        // Report button (not for self)
+                        // Profile & Report buttons (not for self)
                         if (!isLocal)
                         {
+                            // Profile button
+                            if (GUILayout.Button("\u2139", _smallButton, GUILayout.Width(22)))
+                            {
+                                _profilePuid = memberPuid;
+                                _showProfilePopup = true;
+                                _profileEditingNote = false;
+                                _profileStatus = "";
+                                var reg = EOSPlayerRegistry.Instance;
+                                _profileNote = reg?.GetNote(memberPuid) ?? "";
+                            }
+
+                            // Report button
                             var reportsManager = EOSReports.Instance;
                             if (reportsManager != null && reportsManager.IsReady)
                             {
@@ -2958,6 +2981,169 @@ namespace EOSNative.UI
                 options.WithGameMode(_lfgGameMode);
             var (result, posts) = await lfgManager.SearchPostsAsync(options);
             _lfgStatus = result == Result.Success ? $"Found {posts.Count} posts" : $"Search failed: {result}";
+        }
+
+        #endregion
+
+        #region Player Profile Popup
+
+        private void DrawPlayerProfilePopup()
+        {
+            if (string.IsNullOrEmpty(_profilePuid)) { _showProfilePopup = false; return; }
+
+            // Darken background
+            GUI.color = new Color(0, 0, 0, 0.5f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            float popupWidth = 340;
+            float popupHeight = 380;
+            Rect popupRect = new Rect(
+                (Screen.width - popupWidth) / 2,
+                (Screen.height - popupHeight) / 2,
+                popupWidth, popupHeight);
+
+            GUI.Box(popupRect, "", _sectionBox);
+            GUILayout.BeginArea(new Rect(popupRect.x + 10, popupRect.y + 10, popupWidth - 20, popupHeight - 20));
+
+            GUILayout.Label("PLAYER PROFILE", _headerStyle);
+            GUILayout.Space(4);
+
+            var registry = EOSPlayerRegistry.Instance;
+            string displayName = registry?.GetPlayerName(_profilePuid) ?? _profilePuid;
+            string platformId = registry?.GetPlatform(_profilePuid);
+            string platformIcon = !string.IsNullOrEmpty(platformId) ? EOSPlayerRegistry.GetPlatformIcon(platformId) : "";
+            string platformName = !string.IsNullOrEmpty(platformId) ? EOSPlayerRegistry.GetPlatformName(platformId) : "Unknown";
+            bool isFriend = registry?.IsFriend(_profilePuid) ?? false;
+            bool isBlocked = registry?.IsBlocked(_profilePuid) ?? false;
+            DateTime? lastSeen = registry?.GetLastSeen(_profilePuid);
+
+            // Name + platform
+            GUILayout.Label($"{platformIcon} {displayName}", _subHeaderStyle);
+            GUILayout.Label($"Platform: {platformName}", _grayLabel);
+            GUILayout.Label($"PUID: {(_profilePuid.Length > 20 ? _profilePuid.Substring(0, 20) + "..." : _profilePuid)}", _grayLabel);
+
+            if (lastSeen.HasValue)
+                GUILayout.Label($"Last seen: {GetTimeAgo(lastSeen.Value)}", _grayLabel);
+
+            GUILayout.Space(6);
+
+            // Status badges
+            GUILayout.BeginHorizontal();
+            if (isFriend)
+                GUILayout.Label("[Friend]", _greenLabel, GUILayout.Width(60));
+            if (isBlocked)
+                GUILayout.Label("[Blocked]", _redLabel, GUILayout.Width(60));
+
+            // Check if in current lobby
+            var lobbyMgr = EOSLobbyManager.Instance;
+            bool isOwner = lobbyMgr != null && lobbyMgr.IsInLobby && lobbyMgr.CurrentLobby.OwnerPuid == _profilePuid;
+            if (isOwner)
+                GUILayout.Label("[Host]", _yellowLabel, GUILayout.Width(50));
+
+            GUILayout.EndHorizontal();
+            GUILayout.Space(6);
+
+            // Notes
+            GUILayout.Label("Personal Note:", _grayLabel);
+            if (_profileEditingNote)
+            {
+                _profileNote = GUILayout.TextField(_profileNote, _textFieldStyle, GUILayout.Height(20));
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Save", _smallButton, GUILayout.Width(50)))
+                {
+                    registry?.SetNote(_profilePuid, _profileNote);
+                    _profileEditingNote = false;
+                    _profileStatus = "Note saved";
+                }
+                if (GUILayout.Button("Cancel", _smallButton, GUILayout.Width(55)))
+                {
+                    _profileNote = registry?.GetNote(_profilePuid) ?? "";
+                    _profileEditingNote = false;
+                }
+                GUILayout.EndHorizontal();
+            }
+            else
+            {
+                string noteDisplay = string.IsNullOrEmpty(_profileNote) ? "(no note)" : _profileNote;
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(noteDisplay, _whiteLabel);
+                if (GUILayout.Button("Edit", _smallButton, GUILayout.Width(40)))
+                    _profileEditingNote = true;
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.Space(8);
+
+            // Action buttons
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(isFriend ? "Unfriend" : "Add Friend", _actionButton))
+            {
+                registry?.ToggleFriend(_profilePuid);
+                _profileStatus = isFriend ? "Removed from friends" : "Added as friend";
+            }
+            if (GUILayout.Button(isBlocked ? "Unblock" : "Block", _smallButton))
+            {
+                if (isBlocked)
+                    registry?.UnblockPlayer(_profilePuid);
+                else
+                    registry?.BlockPlayer(_profilePuid);
+                _profileStatus = isBlocked ? "Unblocked" : "Blocked";
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            // Report button
+            var reportsManager = EOSReports.Instance;
+            if (reportsManager != null && reportsManager.IsReady)
+            {
+                if (GUILayout.Button("Report", _smallButton))
+                {
+                    _showProfilePopup = false;
+                    _reportTargetPuid = _profilePuid;
+                    _showReportPopup = true;
+                    _reportStatus = "";
+                }
+            }
+
+            // Invite button
+            var inviteMgr = EOSCustomInvites.Instance;
+            if (inviteMgr != null)
+            {
+                if (GUILayout.Button("Invite", _smallButton))
+                {
+                    inviteMgr.SendInviteAsync(_profilePuid, "lobby_invite");
+                    _profileStatus = "Invite sent!";
+                }
+            }
+
+            // Kick button (host only, when in lobby)
+            if (lobbyMgr != null && lobbyMgr.IsInLobby && lobbyMgr.IsOwner && !isOwner)
+            {
+                if (GUILayout.Button("Kick", _smallButton))
+                {
+                    _ = lobbyMgr.KickMemberAsync(_profilePuid);
+                    _profileStatus = "Kicked from lobby";
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            if (!string.IsNullOrEmpty(_profileStatus))
+            {
+                GUILayout.Space(4);
+                GUILayout.Label(_profileStatus, _cyanLabel);
+            }
+
+            GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button("Close", _actionButton))
+            {
+                _showProfilePopup = false;
+                _profilePuid = "";
+                _profileStatus = "";
+            }
+
+            GUILayout.EndArea();
         }
 
         #endregion
