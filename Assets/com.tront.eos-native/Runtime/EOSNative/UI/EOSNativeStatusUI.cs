@@ -215,6 +215,7 @@ namespace EOSNative.UI
 
         private void Update()
         {
+            // Keyboard toggle (F1)
 #if EOS_HAS_INPUT_SYSTEM
             if (Keyboard.current != null && Keyboard.current[_toggleKey].wasPressedThisFrame)
 #else
@@ -222,6 +223,19 @@ namespace EOSNative.UI
 #endif
             {
                 _visible = !_visible;
+            }
+
+            // Mobile toggle: 3-finger tap
+            if (Input.touchCount == 3)
+            {
+                bool allBegan = true;
+                for (int i = 0; i < 3; i++)
+                {
+                    if (Input.GetTouch(i).phase != TouchPhase.Began)
+                        allBegan = false;
+                }
+                if (allBegan)
+                    _visible = !_visible;
             }
 
             // Decay peak level indicator
@@ -505,11 +519,31 @@ namespace EOSNative.UI
 
         #region OnGUI
 
+        private float _guiScale = 1f;
+
         private void OnGUI()
         {
             if (!_visible) return;
 
             InitStyles();
+
+            // Scale GUI for high-DPI mobile screens
+            // Reference width: 960px. If screen is wider, scale up proportionally.
+            bool needsScale = Screen.dpi > 200 || (Application.isMobilePlatform && Screen.width > 960);
+            if (needsScale)
+            {
+                _guiScale = Screen.width / 480f;
+                // Clamp so it doesn't get absurdly large
+                _guiScale = Mathf.Clamp(_guiScale, 1f, 4f);
+                GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(_guiScale, _guiScale, 1f));
+
+                // Adjust window rect to fit scaled coordinates
+                float scaledW = Screen.width / _guiScale;
+                float scaledH = Screen.height / _guiScale;
+                _windowRect.width = Mathf.Min(_windowRect.width, scaledW - 10);
+                _windowRect.x = Mathf.Clamp(_windowRect.x, 0, scaledW - _windowRect.width);
+                _windowRect.y = Mathf.Clamp(_windowRect.y, 0, scaledH - 50);
+            }
 
             _windowRect = GUILayout.Window(94201, _windowRect, DrawWindow, "EOS Native (F1)", _windowStyle);
 
@@ -521,6 +555,12 @@ namespace EOSNative.UI
             else if (_showReportPopup)
             {
                 DrawReportPopup();
+            }
+
+            // Reset GUI matrix
+            if (needsScale)
+            {
+                GUI.matrix = Matrix4x4.identity;
             }
         }
 
