@@ -585,7 +585,7 @@ namespace EOSNative.UI
             _chatInputField = AddInputField(chatInputRow.transform, "Type message...");
             _chatInputField.onEndEdit.AddListener(text =>
             {
-                if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                if (!string.IsNullOrWhiteSpace(text))
                     OnSendChat();
             });
             AddButton(chatInputRow.transform, "Send", ColButton, OnSendChat, -1, 70);
@@ -897,6 +897,10 @@ namespace EOSNative.UI
                     string suffix = isLocal ? " (you)" : "";
                     Color nameColor = isLocal ? ColHeader : (isOwner ? ColGreen : ColText);
                     AddLabel(row.transform, $"{prefix}{displayName}{suffix}", 15, nameColor);
+
+                    // Truncated PUID
+                    string shortPuid = memberPuid.Length > 12 ? memberPuid.Substring(0, 12) + "..." : memberPuid;
+                    AddLabel(row.transform, shortPuid, 11, ColDimText);
 
                     if (!isLocal && lobbyMgr.IsOwner)
                     {
