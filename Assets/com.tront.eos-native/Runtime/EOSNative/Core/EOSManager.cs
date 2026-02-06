@@ -1214,8 +1214,8 @@ namespace EOSNative
                     Common.LIBRARY_NAME);
             }
 
-            string libraryPath = UnityEditor.AssetDatabase.GUIDToAssetPath(libs[0]);
-            EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", $" Loading EOS SDK from: {libraryPath}");
+            string libraryPath = System.IO.Path.GetFullPath(UnityEditor.AssetDatabase.GUIDToAssetPath(libs[0]));
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", $"Loading EOS SDK from: {libraryPath}");
 
 #if UNITY_EDITOR_WIN
             _libraryPointer = LoadLibrary(libraryPath);
