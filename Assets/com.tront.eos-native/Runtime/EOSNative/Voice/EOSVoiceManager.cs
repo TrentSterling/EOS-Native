@@ -102,8 +102,8 @@ namespace EOSNative.Voice
         public bool IsVoiceEnabled => !string.IsNullOrEmpty(_currentLobbyId) && !string.IsNullOrEmpty(CurrentRoomName);
 
         /// <summary>
-        /// Local microphone audio level (0-1). Smoothed from speaking state detection.
-        /// Use this for mic level meters in UI. Smoothed from speaking state.
+        /// Local microphone audio level (0-1). Sampled via Unity Microphone API.
+        /// Use this for mic level meters in UI.
         /// </summary>
         public float LocalMicLevel { get; private set; }
 
@@ -125,6 +125,11 @@ namespace EOSNative.Voice
 
         // Participant audio status (main thread only)
         private readonly Dictionary<string, RTCAudioStatus> _audioStatus = new();
+
+        // Unity Microphone capture for local mic level meter
+        private AudioClip _micClip;
+        private string _micDeviceName;
+        private readonly float[] _micSamples = new float[256];
 
         private LobbyInterface Lobby => EOSManager.Instance?.LobbyInterface;
         private RTCInterface RTC => EOSManager.Instance?.RTCInterface;
@@ -174,18 +179,47 @@ namespace EOSNative.Voice
 
         private void Update()
         {
-            // Smooth local mic level based on speaking state
             if (!IsConnected || IsMuted)
             {
-                LocalMicLevel = 0f;
+                StopMicCapture();
+                LocalMicLevel = Mathf.MoveTowards(LocalMicLevel, 0f, 4f * Time.deltaTime);
                 return;
             }
 
-            string localPuid = LocalUserId?.ToString();
-            bool speaking = !string.IsNullOrEmpty(localPuid) && IsSpeaking(localPuid);
-            float target = speaking ? 0.7f : 0f;
-            float speed = speaking ? 12f : 6f;
-            LocalMicLevel = Mathf.MoveTowards(LocalMicLevel, target, speed * Time.deltaTime);
+            StartMicCapture();
+            LocalMicLevel = SampleMicLevel();
+        }
+
+        private void StartMicCapture()
+        {
+            if (_micClip != null) return;
+            _micDeviceName = null; // System default mic
+            _micClip = Microphone.Start(_micDeviceName, true, 1, 44100);
+        }
+
+        private void StopMicCapture()
+        {
+            if (_micClip == null) return;
+            Microphone.End(_micDeviceName);
+            UnityEngine.Object.Destroy(_micClip);
+            _micClip = null;
+        }
+
+        private float SampleMicLevel()
+        {
+            if (_micClip == null) return 0f;
+            int pos = Microphone.GetPosition(_micDeviceName);
+            if (pos < _micSamples.Length) return LocalMicLevel; // Not enough data yet, hold previous
+
+            _micClip.GetData(_micSamples, pos - _micSamples.Length);
+
+            float sum = 0f;
+            for (int i = 0; i < _micSamples.Length; i++)
+                sum += _micSamples[i] * _micSamples[i];
+
+            float rms = Mathf.Sqrt(sum / _micSamples.Length);
+            // Scale up — speech RMS is typically 0.01-0.15, scale so normal speech shows ~0.5-0.8
+            return Mathf.Clamp01(rms * 8f);
         }
 
 #if UNITY_EDITOR
@@ -924,6 +958,7 @@ namespace EOSNative.Voice
             _audioDevicesChangedHandle = null;
 
             CleanupAudioNotifications();
+            StopMicCapture();
 
             // Clear all state
             _audioBuffers.Clear();

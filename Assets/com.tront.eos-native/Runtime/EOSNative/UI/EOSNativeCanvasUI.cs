@@ -101,13 +101,15 @@ namespace EOSNative.UI
         private Transform _lobbyChatContainer;
         private Text _lobbyChatLog;
         private InputField _chatInputField;
-        private ScrollRect _chatScrollRect;
 
         // Voice tab state
         private Transform _voiceStatusContainer;
         private Transform _voiceParticipantsContainer;
+        private Transform _audioDevicesContainer;
         private Image _micLevelFill;
         private Text _micLevelText;
+        private int _selectedInputDevice = -1;
+        private int _selectedOutputDevice = -1;
 
         // Status tab state
         private Transform _statusContainer;
@@ -158,7 +160,8 @@ namespace EOSNative.UI
             {
                 var voice = EOSVoiceManager.Instance;
                 float level = (voice != null && voice.IsConnected && !voice.IsMuted) ? voice.LocalMicLevel : 0f;
-                _micLevelFill.fillAmount = level;
+                var rt = _micLevelFill.rectTransform;
+                rt.anchorMax = new Vector2(level, 1f);
                 if (_micLevelText != null)
                     _micLevelText.text = $"{(level * 100):F0}%";
             }
@@ -553,56 +556,38 @@ namespace EOSNative.UI
             var chatSection = CreateSection(parent, "Lobby Chat");
             _lobbyChatContainer = chatSection.transform;
 
-            // Chat log
+            // Chat log — simple container, no ScrollRect/RectMask2D/ContentSizeFitter
+            // (same fix as console: avoids circular layout dependency that causes flicker)
             var chatLogBg = CreatePanelGO(chatSection.transform, "ChatLog", new Color(0.06f, 0.06f, 0.10f, 1f));
             var chatLogLE = chatLogBg.AddComponent<LayoutElement>();
             chatLogLE.preferredHeight = 150;
             chatLogLE.flexibleWidth = 1;
 
-            var chatScroll = chatLogBg.AddComponent<ScrollRect>();
-            chatScroll.horizontal = false;
-            chatScroll.vertical = true;
-            chatScroll.movementType = ScrollRect.MovementType.Clamped;
-
-            var chatVP = new GameObject("ChatVP");
-            chatVP.transform.SetParent(chatLogBg.transform, false);
-            chatVP.AddComponent<Image>().color = new Color(0, 0, 0, 0.01f);
-            chatVP.AddComponent<RectMask2D>();
-            var chatVpRT = chatVP.GetComponent<RectTransform>();
-            StretchFill(chatVpRT, 6);
-
-            var chatContent = new GameObject("ChatContent", typeof(RectTransform));
-            chatContent.transform.SetParent(chatVP.transform, false);
-            var chatContentRT = chatContent.GetComponent<RectTransform>();
-            chatContentRT.anchorMin = new Vector2(0, 1);
-            chatContentRT.anchorMax = new Vector2(1, 1);
-            chatContentRT.pivot = new Vector2(0.5f, 1);
-            chatContentRT.sizeDelta = Vector2.zero;
-            chatContent.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            chatScroll.viewport = chatVpRT;
-            chatScroll.content = chatContentRT;
-            _chatScrollRect = chatScroll;
-
             var chatLogGo = new GameObject("ChatText");
-            chatLogGo.transform.SetParent(chatContent.transform, false);
+            chatLogGo.transform.SetParent(chatLogBg.transform, false);
             _lobbyChatLog = chatLogGo.AddComponent<Text>();
             _lobbyChatLog.font = _defaultFont;
             _lobbyChatLog.fontSize = 14;
             _lobbyChatLog.color = ColDimText;
             _lobbyChatLog.alignment = TextAnchor.UpperLeft;
             _lobbyChatLog.horizontalOverflow = HorizontalWrapMode.Wrap;
-            _lobbyChatLog.verticalOverflow = VerticalWrapMode.Overflow;
+            _lobbyChatLog.verticalOverflow = VerticalWrapMode.Truncate;
             _lobbyChatLog.supportRichText = true;
             _lobbyChatLog.raycastTarget = false;
             var chatLogTextRT = chatLogGo.GetComponent<RectTransform>();
-            StretchFill(chatLogTextRT);
-            var chatLogTextLE = chatLogGo.AddComponent<LayoutElement>();
-            chatLogTextLE.flexibleWidth = 1;
+            chatLogTextRT.anchorMin = Vector2.zero;
+            chatLogTextRT.anchorMax = Vector2.one;
+            chatLogTextRT.offsetMin = new Vector2(6, 4);
+            chatLogTextRT.offsetMax = new Vector2(-6, -4);
 
             // Chat input row
             var chatInputRow = CreateRow(chatSection.transform);
             _chatInputField = AddInputField(chatInputRow.transform, "Type message...");
+            _chatInputField.onEndEdit.AddListener(text =>
+            {
+                if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                    OnSendChat();
+            });
             AddButton(chatInputRow.transform, "Send", ColButton, OnSendChat, -1, 70);
 
             // Status text
@@ -643,10 +628,12 @@ namespace EOSNative.UI
             levelFill.transform.SetParent(levelBarBg.transform, false);
             _micLevelFill = levelFill.AddComponent<Image>();
             _micLevelFill.color = ColLevelFill;
-            _micLevelFill.type = Image.Type.Filled;
-            _micLevelFill.fillMethod = Image.FillMethod.Horizontal;
-            _micLevelFill.fillAmount = 0;
-            StretchFill(levelFill.GetComponent<RectTransform>());
+            _micLevelFill.raycastTarget = false;
+            var fillRT = levelFill.GetComponent<RectTransform>();
+            fillRT.anchorMin = Vector2.zero;
+            fillRT.anchorMax = new Vector2(0, 1); // Width controlled by anchorMax.x
+            fillRT.offsetMin = Vector2.zero;
+            fillRT.offsetMax = Vector2.zero;
 
             _micLevelText = AddLabel(micRow.transform, "0%", 14, ColDimText, 50);
 
@@ -655,6 +642,21 @@ namespace EOSNative.UI
                 var voice = EOSVoiceManager.Instance;
                 if (voice != null) voice.ToggleMute();
             }, 34);
+
+            // Audio Devices section
+            var deviceSection = CreateSection(parent, "Audio Devices");
+            _audioDevicesContainer = deviceSection.transform;
+
+            AddButton(deviceSection.transform, "Refresh Devices", ColButton, () =>
+            {
+                var voice = EOSVoiceManager.Instance;
+                if (voice != null)
+                {
+                    voice.QueryAudioDevices();
+                    _selectedInputDevice = -1;
+                    _selectedOutputDevice = -1;
+                }
+            }, 30);
 
             var participantsSection = CreateSection(parent, "Participants");
             _voiceParticipantsContainer = participantsSection.transform;
@@ -968,7 +970,71 @@ namespace EOSNative.UI
             AddKVRow(_voiceStatusContainer, "Room", voice.CurrentRoomName ?? "None");
             AddKVRow(_voiceStatusContainer, "Participants", voice.ParticipantCount.ToString());
 
+            RefreshAudioDevices(voice);
             RefreshVoiceParticipants();
+        }
+
+        private void RefreshAudioDevices(EOSVoiceManager voice)
+        {
+            if (_audioDevicesContainer == null) return;
+            // Keep the header (index 0), separator (index 1), and Refresh button (index 2)
+            ClearChildren(_audioDevicesContainer, 3);
+
+            // Input devices (Microphones)
+            AddLabel(_audioDevicesContainer, "Input (Mic):", 15, ColHeader);
+            if (voice.InputDevices.Count > 0)
+            {
+                for (int i = 0; i < voice.InputDevices.Count; i++)
+                {
+                    var device = voice.InputDevices[i];
+                    string label = device.DeviceName?.ToString() ?? $"Device {i}";
+                    if (device.DefaultDevice) label += " (default)";
+
+                    bool isSelected = (_selectedInputDevice == i) ||
+                                      (_selectedInputDevice == -1 && device.DefaultDevice);
+
+                    int idx = i;
+                    string devId = device.DeviceId?.ToString();
+                    Color btnColor = isSelected ? ColGreen : ColInputBg;
+                    AddButton(_audioDevicesContainer, label, btnColor, () =>
+                    {
+                        _selectedInputDevice = idx;
+                        voice.SetInputDevice(devId);
+                    }, 28);
+                }
+            }
+            else
+            {
+                AddLabel(_audioDevicesContainer, "No input devices. Press Refresh.", 13, ColDimText);
+            }
+
+            // Output devices (Speakers)
+            AddLabel(_audioDevicesContainer, "Output (Speaker):", 15, ColHeader);
+            if (voice.OutputDevices.Count > 0)
+            {
+                for (int i = 0; i < voice.OutputDevices.Count; i++)
+                {
+                    var device = voice.OutputDevices[i];
+                    string label = device.DeviceName?.ToString() ?? $"Device {i}";
+                    if (device.DefaultDevice) label += " (default)";
+
+                    bool isSelected = (_selectedOutputDevice == i) ||
+                                      (_selectedOutputDevice == -1 && device.DefaultDevice);
+
+                    int idx = i;
+                    string devId = device.DeviceId?.ToString();
+                    Color btnColor = isSelected ? ColGreen : ColInputBg;
+                    AddButton(_audioDevicesContainer, label, btnColor, () =>
+                    {
+                        _selectedOutputDevice = idx;
+                        voice.SetOutputDevice(devId);
+                    }, 28);
+                }
+            }
+            else
+            {
+                AddLabel(_audioDevicesContainer, "No output devices. Press Refresh.", 13, ColDimText);
+            }
         }
 
         private void RefreshVoiceParticipants()
@@ -1275,6 +1341,7 @@ namespace EOSNative.UI
             {
                 chatMgr.SendChatMessage(msg);
                 _chatInputField.text = "";
+                _chatInputField.ActivateInputField();
             }
         }
 
