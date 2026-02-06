@@ -146,6 +146,31 @@ In builds, Unity copies DLLs to `<GameName>_Data/Plugins/x86_64/`.
 
 If you see "Failed to load custom XAudio2.9 dll", verify the DLL exists at one of the candidate paths and that the path is resolving correctly.
 
+## Unified LobbyOptions (Fluent Builder)
+
+`LobbyOptions` is a single class that works for both creating and searching lobbies. It implicitly converts to `LobbyCreateOptions` or `LobbySearchOptions` so the same object can be passed to any lobby API.
+
+```csharp
+// Fluent builder — one object for everything
+var options = new LobbyOptions()
+    .WithName("Pro Players")
+    .WithGameMode("deathmatch")
+    .WithMaxPlayers(16)
+    .WithVoice()
+    .WithRegion("us-east");
+
+// Works for both creating and searching (implicit conversion)
+await lobbyMgr.CreateLobbyAsync(options);   // → LobbyCreateOptions
+await lobbyMgr.SearchLobbiesAsync(options);  // → LobbySearchOptions
+
+// Factory presets
+var quick = LobbyOptions.QuickMatch();
+var ranked = LobbyOptions.ForSkillRange(1500, 200);
+var tdm = LobbyOptions.ForGameMode("tdm");
+```
+
+Fields are split into shared (name, gamemode, maxplayers), create-only (voice, crossplay, hostmigration), and search-only (maxresults, skill range, platform/input filters). Irrelevant fields are gracefully ignored during conversion.
+
 ## Singleton Auto-Creation Pattern
 
 Most managers use a lazy auto-create singleton pattern: `FindAnyObjectByType<T>()` first, then `new GameObject + AddComponent<T>() + DontDestroyOnLoad()` if not found. This means consumers don't need to manually place manager components in the scene.
@@ -189,8 +214,11 @@ All four fields apply to both Host Lobby and Quick Match lobby creation.
 - `SetOutputDevice(deviceId)` - Switches active speaker by `RealDeviceId`
 - `OnAudioDevicesChanged` event - Fires when devices are added/removed
 - `CurrentInputDeviceId` / `CurrentOutputDeviceId` - Track selected device
+- `LocalMicLevel` (float, 0-1) - Smoothed local mic level based on speaking state detection (via `ParticipantUpdated` callback). Ramps up when speaking, decays when silent. Used by both OnGUI and Canvas UI level bars.
 
 The F1 overlay Voice tab exposes dropdown selectors for input/output devices with a Refresh button.
+
+**Note:** `AudioBeforeSend` was tested for real RMS-based mic levels but causes `StackOverflowException` in `PlatformInterface.Tick()` — the EOS C# SDK queues audio frame callbacks and overflows processing them. Use speaking state smoothing instead.
 
 ## F1 Overlay Tabs (EOSNativeStatusUI)
 
@@ -206,6 +234,33 @@ The runtime F1 overlay (`EOSNativeStatusUI.cs`, ~3100 lines) provides 6 tabs:
 | **Tools** | Cloud storage (files/write/delete), anti-cheat status, replay list/playback/export/import, session metrics, LFG posts |
 
 Also includes a modal report popup triggered from lobby member list and a player profile popup (info button per member) showing name, platform, PUID, last seen, friend/block status, editable notes, and action buttons (friend, block, report, invite, kick).
+
+## Canvas UI (EOSNativeCanvasUI)
+
+A Canvas-based runtime UI (`EOSNativeCanvasUI.cs`, ~800 lines) that works on Android/iOS where OnGUI may not render. Uses `UnityEngine.UI` (no TextMeshPro). All UI elements created at runtime in code — no prefabs, no scene objects.
+
+**Toggle:** Bottom-right corner "EOS" button (80x80), or 3-finger tap on mobile.
+
+**Canvas setup:** `ScreenSpaceOverlay`, `sortingOrder: 9999`, `CanvasScaler` with `ScaleWithScreenSize` (1080x1920 reference, match 0.5).
+
+**4 Tabs:** Status, Lobbies, Voice, Social (mirrors OnGUI sections).
+
+| Tab | Contents |
+|-----|----------|
+| **Status** | SDK status, auth, PUID, platform info, interfaces, login/logout actions |
+| **Lobbies** | Current lobby info, create (name/max/public/voice/migrate), join by code, quick match, search, members, chat |
+| **Voice** | Voice status, mic level bar, mute toggle, participants with speaking indicators |
+| **Social** | Player registry, recently played, local friends, blocked players, Epic friends |
+
+**Default visibility:** Mobile = Canvas ON, OnGUI OFF. Editor/Desktop = OnGUI ON, Canvas toggle button always visible.
+
+**Refresh:** `InvokeRepeating` at 1s interval updates the active tab. Mic level bar uses `Update()` for smooth animation.
+
+**Singleton:** Same auto-create pattern as other managers (`FindAnyObjectByType + AddComponent + DontDestroyOnLoad`).
+
+**asmdef dependency:** `EOSNative.asmdef` references `UnityEngine.UI` (built-in Unity module).
+
+**Coexistence:** Both OnGUI (`EOSNativeStatusUI`) and Canvas UI (`EOSNativeCanvasUI`) can run simultaneously. Neither depends on the other.
 
 ## Ported Managers
 
@@ -226,17 +281,52 @@ These managers were ported from FishNet-EOS-Native with FishNet dependencies rem
 
 **Not ported** (too tightly coupled to FishNet): EOSReplayRecorder, EOSVoiceZoneManager, EOSVoiceTriggerZone.
 
-## Android Build (Core Library Desugaring)
+## Android Build (Core Library Desugaring + Native Libs)
 
 The EOS SDK AAR (`eossdk-StaticSTDC-release.aar`) requires Java 8 core library desugaring. Without it, Android builds fail with:
 
 > `Dependency ':eossdk-StaticSTDC-release:' requires core library desugaring to be enabled for :launcher.`
 
-`EOSAndroidBuildProcessor.cs` (in `EOSNative.Editor/`) automatically injects the required Gradle config into both `launcher/build.gradle` and `unityLibrary/build.gradle` via `IPostGenerateGradleAndroidProject`. It adds:
-- `coreLibraryDesugaringEnabled true` in `compileOptions`
-- `coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'` in `dependencies`
+`EOSAndroidBuildProcessor.cs` (in `EOSNative.Editor/`) automatically injects the required Gradle config into both `launcher/build.gradle` and `unityLibrary/build.gradle` via `IPostGenerateGradleAndroidProject`. It handles three things:
+
+1. **Core library desugaring:** `coreLibraryDesugaringEnabled true` in `compileOptions` + `coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'` in `dependencies`
+2. **Extract native libs:** Injects `android:extractNativeLibs="true"` into AndroidManifest.xml's `<application>` tag — required so native `.so` files from the EOS AAR are extracted at install time (without this, `System.loadLibrary` may fail with `UnsatisfiedLinkError`)
+3. **EOS login scheme:** Injects `eos_login_protocol_scheme` string resource into `strings.xml`
 
 No manual Gradle template editing is required.
+
+### Android SDK Loading
+
+`LoadAndroidLibrary()` in `EOSManager.cs` uses a two-step approach:
+1. Tries `System.loadLibrary("EOSSDK")` — may fail if the AAR bundles the `.so` differently (logged as warning, not fatal)
+2. Always calls `EOSSDK.init(activity)` — the AAR's init handles library loading internally
+
+This resilient approach avoids crashes when `System.loadLibrary` can't find the `.so` but the AAR init can.
+
+## Overlay UI Mode (EOSManager)
+
+EOSManager exposes an `OverlayUIMode` enum to control which runtime UI is active:
+
+| Mode | OnGUI (F1) | Canvas UI | Console |
+|------|-----------|-----------|---------|
+| **Auto** (default) | Desktop only | Mobile only | If `_showConsole` enabled |
+| **OnGUI** | Yes | No | If enabled |
+| **Canvas** | No | Yes | If enabled |
+| **Both** | Yes | Yes | If enabled |
+| **None** | No | No | If enabled |
+
+Set via Inspector on the EOSManager component. The `_showConsole` bool independently controls the Canvas console.
+
+## Runtime Console (EOSNativeConsole)
+
+A Canvas-based runtime console (`EOSNativeConsole.cs`) that captures `Application.logMessageReceived` output. Works on Android/iOS where the built-in dev console is hard to read.
+
+- **Toggle:** Bottom-left corner button with error count badge, or 3-finger tap
+- **Canvas:** `ScreenSpaceOverlay`, `sortingOrder: 10000` (above Canvas UI at 9999)
+- **Features:** Log/Warning/Error filter buttons with counts, collapse duplicate messages, clear button
+- **Limits:** Max 200 entries, 60 visible lines, color-coded by log type
+- **Panel:** Occupies bottom half of screen when open
+- **Text area:** Uses a simple `Text` component with `VerticalWrapMode.Truncate` instead of `ScrollRect`/`RectMask2D`/`ContentSizeFitter` — eliminates text flickering on window resize caused by circular layout dependencies. Newest entries at top, overflow truncated at bottom.
 
 ## Bug/TODO Tracking
 

@@ -230,6 +230,11 @@ namespace EOSNative.Lobbies
         public string JoinCode = null;
 
         /// <summary>
+        /// Use EOS-generated LobbyId as the join code instead of a random 4-digit code.
+        /// </summary>
+        public bool UseEosLobbyId = false;
+
+        /// <summary>
         /// Whether to allow host migration (default: true).
         /// When enabled, EOS automatically promotes a new host if the owner leaves.
         /// </summary>
@@ -546,10 +551,182 @@ namespace EOSNative.Lobbies
             return this;
         }
 
+        /// <summary>
+        /// Filter by minimum player count in lobby.
+        /// </summary>
+        public LobbySearchOptions WithMinPlayers(int minPlayers)
+        {
+            _minPlayers = minPlayers;
+            return this;
+        }
+
+        /// <summary>
+        /// Filter by maximum player count (lobby max members).
+        /// </summary>
+        public LobbySearchOptions WithMaxPlayers(int maxPlayers)
+        {
+            _maxPlayers = maxPlayers;
+            return this;
+        }
+
+        /// <summary>
+        /// Exclude full lobbies (alias for OnlyWithAvailableSlots).
+        /// </summary>
+        public LobbySearchOptions ExcludeFull()
+        {
+            OnlyAvailable = true;
+            return this;
+        }
+
+        /// <summary>
+        /// Filter by host platform.
+        /// Platform IDs: "WIN" (Windows), "MAC" (macOS), "LNX" (Linux),
+        ///               "AND" (Android), "IOS" (iOS), "OVR" (Quest/Meta VR)
+        /// </summary>
+        public LobbySearchOptions WithPlatform(string platformId)
+        {
+            EnsureFilters();
+            Filters[LobbyAttributes.HOST_PLATFORM] = platformId;
+            return this;
+        }
+
+        /// <summary>
+        /// Filter by host platform using EOSPlatformType.
+        /// </summary>
+        public LobbySearchOptions WithPlatform(EOSPlatformType platform)
+        {
+            string platformId = platform switch
+            {
+                EOSPlatformType.Windows => "WIN",
+                EOSPlatformType.macOS => "MAC",
+                EOSPlatformType.Linux => "LNX",
+                EOSPlatformType.Android => "AND",
+                EOSPlatformType.iOS => "IOS",
+                EOSPlatformType.Quest => "OVR",
+                _ => null
+            };
+            if (!string.IsNullOrEmpty(platformId))
+                return WithPlatform(platformId);
+            return this;
+        }
+
+        /// <summary>
+        /// Filter to only desktop platforms (Windows, macOS, Linux).
+        /// </summary>
+        public LobbySearchOptions DesktopOnly()
+        {
+            AttributeFilters.Add(new AttributeFilter(
+                LobbyAttributes.HOST_PLATFORM,
+                "WIN,MAC,LNX",
+                SearchComparison.AnyOf));
+            return this;
+        }
+
+        /// <summary>
+        /// Filter to only mobile platforms (Android, iOS, Quest).
+        /// </summary>
+        public LobbySearchOptions MobileOnly()
+        {
+            AttributeFilters.Add(new AttributeFilter(
+                LobbyAttributes.HOST_PLATFORM,
+                "AND,IOS,OVR",
+                SearchComparison.AnyOf));
+            return this;
+        }
+
+        /// <summary>
+        /// Filter to same platform as the current device.
+        /// </summary>
+        public LobbySearchOptions SamePlatformOnly()
+        {
+            return WithPlatform(EOSPlatformHelper.PlatformId);
+        }
+
+        /// <summary>
+        /// Filter by host input type.
+        /// Input type IDs: "KBM" (Keyboard/Mouse), "CTL" (Controller), "TCH" (Touch), "VRC" (VR Controller)
+        /// </summary>
+        public LobbySearchOptions WithInputType(string inputTypeId)
+        {
+            EnsureFilters();
+            Filters[LobbyAttributes.HOST_INPUT_TYPE] = inputTypeId;
+            return this;
+        }
+
+        /// <summary>
+        /// Filter by host input type using InputType enum.
+        /// </summary>
+        public LobbySearchOptions WithInputType(InputType inputType)
+        {
+            return WithInputType(EOSInputHelper.GetInputTypeId(inputType));
+        }
+
+        /// <summary>
+        /// Filter to only keyboard/mouse lobbies.
+        /// </summary>
+        public LobbySearchOptions KeyboardMouseOnly()
+        {
+            return WithInputType("KBM");
+        }
+
+        /// <summary>
+        /// Filter to only controller lobbies.
+        /// </summary>
+        public LobbySearchOptions ControllerOnly()
+        {
+            return WithInputType("CTL");
+        }
+
+        /// <summary>
+        /// Filter to same input type as current device.
+        /// </summary>
+        public LobbySearchOptions SameInputOnly()
+        {
+            return WithInputType(EOSInputHelper.InputTypeId);
+        }
+
+        /// <summary>
+        /// Filter to "fair" input types (same type or compatible).
+        /// KBM only matches KBM, Controller/Touch match each other, VR only matches VR.
+        /// </summary>
+        public LobbySearchOptions FairInputOnly()
+        {
+            var current = EOSInputHelper.CurrentInputType;
+            switch (current)
+            {
+                case InputType.KeyboardMouse:
+                    return WithInputType("KBM");
+                case InputType.Controller:
+                case InputType.Touch:
+                    AttributeFilters.Add(new AttributeFilter(
+                        LobbyAttributes.HOST_INPUT_TYPE,
+                        "CTL,TCH",
+                        SearchComparison.AnyOf));
+                    return this;
+                case InputType.VRController:
+                    return WithInputType("VRC");
+                default:
+                    return this;
+            }
+        }
+
         private void EnsureFilters()
         {
             Filters ??= new Dictionary<string, string>();
         }
+
+        #endregion
+
+        #region Internal State
+
+        internal int? _minPlayers = null;
+        internal int? _maxPlayers = null;
+
+        /// <summary>Minimum players filter (if set).</summary>
+        public int? MinPlayersFilter => _minPlayers;
+
+        /// <summary>Maximum players filter (if set).</summary>
+        public int? MaxPlayersFilter => _maxPlayers;
 
         #endregion
 
@@ -593,6 +770,394 @@ namespace EOSNative.Lobbies
         public static LobbySearchOptions ForSkillRange(int playerSkill, int range = 200)
         {
             return new LobbySearchOptions()
+                .WithSkillRange(playerSkill - range, playerSkill + range)
+                .ExcludePassworded()
+                .ExcludeGamesInProgress();
+        }
+
+        #endregion
+    }
+
+    /// <summary>
+    /// Unified lobby options that work for both creating and searching lobbies.
+    /// One options class rules them all — use the same options object for
+    /// HostLobbyAsync, SearchLobbiesAsync, QuickMatchOrHostAsync, etc.
+    /// Fields that don't apply to a specific operation are gracefully ignored.
+    /// </summary>
+    public class LobbyOptions
+    {
+        #region Shared Fields (used by both Create and Search)
+
+        /// <summary>
+        /// Human-readable lobby name.
+        /// Create: Sets the lobby name attribute.
+        /// Search: Filters by exact name match.
+        /// </summary>
+        public string LobbyName;
+
+        /// <summary>
+        /// Game mode (e.g., "deathmatch", "coop", "ranked").
+        /// </summary>
+        public string GameMode;
+
+        /// <summary>
+        /// Map name.
+        /// </summary>
+        public string Map;
+
+        /// <summary>
+        /// Server region (e.g., "us-east", "eu-west").
+        /// </summary>
+        public string Region;
+
+        /// <summary>
+        /// Version bucket for matchmaking.
+        /// </summary>
+        public string BucketId;
+
+        /// <summary>
+        /// Maximum players.
+        /// Create: Sets lobby capacity.
+        /// Search: Filters by max capacity.
+        /// </summary>
+        public uint? MaxPlayers;
+
+        /// <summary>
+        /// Password for the lobby.
+        /// Create: Makes lobby password-protected.
+        /// Search: (not used for search filtering)
+        /// </summary>
+        public string Password;
+
+        /// <summary>
+        /// Skill level for matchmaking.
+        /// </summary>
+        public int? SkillLevel;
+
+        /// <summary>
+        /// Custom attributes.
+        /// </summary>
+        public Dictionary<string, string> Attributes;
+
+        #endregion
+
+        #region Create-Only Fields (ignored during search)
+
+        /// <summary>
+        /// Custom join code. If null, a random 4-digit code is generated.
+        /// Create-only.
+        /// </summary>
+        public string JoinCode;
+
+        /// <summary>
+        /// Use EOS-generated LobbyId as the join code.
+        /// Create-only.
+        /// </summary>
+        public bool UseEosLobbyId;
+
+        /// <summary>
+        /// Whether the lobby is publicly searchable (default: true).
+        /// Create-only.
+        /// </summary>
+        public bool IsPublic = true;
+
+        /// <summary>
+        /// Enable voice chat (default: true).
+        /// Create-only.
+        /// </summary>
+        public bool EnableVoice = true;
+
+        /// <summary>
+        /// Start with microphone muted.
+        /// Create-only.
+        /// </summary>
+        public bool StartMuted;
+
+        /// <summary>
+        /// Allow host migration (default: true).
+        /// Create-only.
+        /// </summary>
+        public bool AllowHostMigration = true;
+
+        /// <summary>
+        /// Allow crossplay (default: true).
+        /// Create-only.
+        /// </summary>
+        public bool AllowCrossplay = true;
+
+        #endregion
+
+        #region Search-Only Fields (ignored during create)
+
+        /// <summary>
+        /// Maximum search results (default: 10).
+        /// Search-only.
+        /// </summary>
+        public uint MaxResults = 10;
+
+        /// <summary>
+        /// Minimum players in lobby filter.
+        /// Search-only.
+        /// </summary>
+        public int? MinPlayers;
+
+        /// <summary>
+        /// Only return lobbies with available slots (default: true).
+        /// Search-only.
+        /// </summary>
+        public bool OnlyAvailable = true;
+
+        /// <summary>
+        /// Exclude password-protected lobbies.
+        /// Search-only.
+        /// </summary>
+        public bool ExcludePasswordProtected;
+
+        /// <summary>
+        /// Exclude lobbies where game is in progress.
+        /// Search-only.
+        /// </summary>
+        public bool ExcludeInProgress;
+
+        /// <summary>
+        /// Minimum skill level filter.
+        /// Search-only.
+        /// </summary>
+        public int? MinSkill;
+
+        /// <summary>
+        /// Maximum skill level filter.
+        /// Search-only.
+        /// </summary>
+        public int? MaxSkill;
+
+        /// <summary>
+        /// Platform filter.
+        /// Values: "WIN", "MAC", "LNX", "AND", "IOS", "OVR", "DESKTOP", "MOBILE", "SAME"
+        /// Search-only.
+        /// </summary>
+        public string PlatformFilter;
+
+        /// <summary>
+        /// Input type filter for input-based matchmaking.
+        /// Values: "KBM", "CTL", "TCH", "VRC", "SAME", "FAIR"
+        /// Search-only.
+        /// </summary>
+        public string InputFilter;
+
+        #endregion
+
+        #region Fluent Builder Methods - Shared
+
+        public LobbyOptions WithName(string name) { LobbyName = name; return this; }
+        public LobbyOptions WithGameMode(string mode) { GameMode = mode; return this; }
+        public LobbyOptions WithMap(string map) { Map = map; return this; }
+        public LobbyOptions WithRegion(string region) { Region = region; return this; }
+        public LobbyOptions WithBucketId(string bucket) { BucketId = bucket; return this; }
+        public LobbyOptions WithMaxPlayers(uint max) { MaxPlayers = max; return this; }
+        public LobbyOptions WithPassword(string pass) { Password = pass; return this; }
+        public LobbyOptions WithSkillLevel(int skill) { SkillLevel = skill; return this; }
+        public LobbyOptions WithAttribute(string key, string value)
+        {
+            Attributes ??= new Dictionary<string, string>();
+            Attributes[key] = value;
+            return this;
+        }
+
+        #endregion
+
+        #region Fluent Builder Methods - Create-Only
+
+        public LobbyOptions WithJoinCode(string code) { JoinCode = code; return this; }
+        public LobbyOptions WithEosLobbyId() { UseEosLobbyId = true; return this; }
+        public LobbyOptions WithVoice(bool enabled = true) { EnableVoice = enabled; return this; }
+        public LobbyOptions WithMutedMic(bool muted = true) { StartMuted = muted; return this; }
+        public LobbyOptions WithHostMigration(bool enabled = true) { AllowHostMigration = enabled; return this; }
+        public LobbyOptions WithCrossplay(bool enabled = true) { AllowCrossplay = enabled; return this; }
+        public LobbyOptions AsPrivate() { IsPublic = false; return this; }
+        public LobbyOptions AsPublic() { IsPublic = true; return this; }
+
+        #endregion
+
+        #region Fluent Builder Methods - Search-Only
+
+        public LobbyOptions WithMaxResults(uint max) { MaxResults = max; return this; }
+        public LobbyOptions WithMinPlayers(int min) { MinPlayers = min; return this; }
+        public LobbyOptions ExcludeFull() { OnlyAvailable = true; return this; }
+        public LobbyOptions IncludeFull() { OnlyAvailable = false; return this; }
+        public LobbyOptions ExcludePassworded() { ExcludePasswordProtected = true; return this; }
+        public LobbyOptions ExcludeGamesInProgress() { ExcludeInProgress = true; return this; }
+        public LobbyOptions WithMinSkill(int min) { MinSkill = min; return this; }
+        public LobbyOptions WithMaxSkill(int max) { MaxSkill = max; return this; }
+        public LobbyOptions WithSkillRange(int min, int max) { MinSkill = min; MaxSkill = max; return this; }
+        public LobbyOptions WithPlatformFilter(string platformId) { PlatformFilter = platformId; return this; }
+        public LobbyOptions DesktopOnly() { PlatformFilter = "DESKTOP"; return this; }
+        public LobbyOptions MobileOnly() { PlatformFilter = "MOBILE"; return this; }
+        public LobbyOptions SamePlatformOnly() { PlatformFilter = "SAME"; return this; }
+        public LobbyOptions WithInputFilter(string inputTypeId) { InputFilter = inputTypeId; return this; }
+        public LobbyOptions KeyboardMouseOnly() { InputFilter = "KBM"; return this; }
+        public LobbyOptions ControllerOnly() { InputFilter = "CTL"; return this; }
+        public LobbyOptions SameInputOnly() { InputFilter = "SAME"; return this; }
+        public LobbyOptions FairInputOnly() { InputFilter = "FAIR"; return this; }
+
+        #endregion
+
+        #region Conversion Methods
+
+        /// <summary>
+        /// Convert to LobbyCreateOptions for hosting.
+        /// </summary>
+        public LobbyCreateOptions ToCreateOptions()
+        {
+            var options = new LobbyCreateOptions
+            {
+                LobbyName = LobbyName,
+                GameMode = GameMode,
+                Map = Map,
+                Region = Region,
+                BucketId = BucketId ?? "v1",
+                MaxPlayers = MaxPlayers ?? 4,
+                Password = Password,
+                SkillLevel = SkillLevel,
+                JoinCode = JoinCode,
+                UseEosLobbyId = UseEosLobbyId,
+                IsPublic = IsPublic,
+                EnableVoice = EnableVoice,
+                StartMuted = StartMuted,
+                AllowHostMigration = AllowHostMigration,
+                AllowCrossplay = AllowCrossplay,
+                Attributes = Attributes != null ? new Dictionary<string, string>(Attributes) : null
+            };
+            return options;
+        }
+
+        /// <summary>
+        /// Convert to LobbySearchOptions for searching.
+        /// </summary>
+        public LobbySearchOptions ToSearchOptions()
+        {
+            var options = new LobbySearchOptions
+            {
+                MaxResults = MaxResults,
+                BucketId = BucketId,
+                OnlyAvailable = OnlyAvailable,
+                ExcludePasswordProtected = ExcludePasswordProtected,
+                ExcludeInProgress = ExcludeInProgress
+            };
+
+            // Apply filters
+            if (!string.IsNullOrEmpty(GameMode))
+                options = options.WithGameMode(GameMode);
+            if (!string.IsNullOrEmpty(Map))
+                options = options.WithMap(Map);
+            if (!string.IsNullOrEmpty(Region))
+                options = options.WithRegion(Region);
+            if (!string.IsNullOrEmpty(LobbyName))
+                options = options.WithLobbyName(LobbyName);
+            if (MinPlayers.HasValue)
+                options = options.WithMinPlayers(MinPlayers.Value);
+            if (MaxPlayers.HasValue)
+                options = options.WithMaxPlayers((int)MaxPlayers.Value);
+            if (MinSkill.HasValue)
+                options = options.WithMinSkill(MinSkill.Value);
+            if (MaxSkill.HasValue)
+                options = options.WithMaxSkill(MaxSkill.Value);
+
+            // Apply platform filter
+            if (!string.IsNullOrEmpty(PlatformFilter))
+            {
+                switch (PlatformFilter.ToUpperInvariant())
+                {
+                    case "DESKTOP":
+                        options = options.DesktopOnly();
+                        break;
+                    case "MOBILE":
+                        options = options.MobileOnly();
+                        break;
+                    case "SAME":
+                        options = options.SamePlatformOnly();
+                        break;
+                    default:
+                        options = options.WithPlatform(PlatformFilter);
+                        break;
+                }
+            }
+
+            // Apply input type filter
+            if (!string.IsNullOrEmpty(InputFilter))
+            {
+                switch (InputFilter.ToUpperInvariant())
+                {
+                    case "SAME":
+                        options = options.SameInputOnly();
+                        break;
+                    case "FAIR":
+                        options = options.FairInputOnly();
+                        break;
+                    default:
+                        options = options.WithInputType(InputFilter);
+                        break;
+                }
+            }
+
+            // Copy custom attributes
+            if (Attributes != null)
+            {
+                foreach (var kvp in Attributes)
+                    options = options.WithAttribute(kvp.Key, kvp.Value);
+            }
+
+            return options;
+        }
+
+        /// <summary>
+        /// Implicit conversion to LobbyCreateOptions.
+        /// </summary>
+        public static implicit operator LobbyCreateOptions(LobbyOptions options)
+        {
+            return options?.ToCreateOptions();
+        }
+
+        /// <summary>
+        /// Implicit conversion to LobbySearchOptions.
+        /// </summary>
+        public static implicit operator LobbySearchOptions(LobbyOptions options)
+        {
+            return options?.ToSearchOptions();
+        }
+
+        #endregion
+
+        #region Factory Methods
+
+        /// <summary>
+        /// Create options preset for quick match.
+        /// </summary>
+        public static LobbyOptions QuickMatch()
+        {
+            return new LobbyOptions
+            {
+                MaxResults = 50,
+                OnlyAvailable = true,
+                ExcludePasswordProtected = true,
+                ExcludeInProgress = true
+            };
+        }
+
+        /// <summary>
+        /// Create options for a specific game mode.
+        /// </summary>
+        public static LobbyOptions ForGameMode(string gameMode)
+        {
+            return new LobbyOptions().WithGameMode(gameMode);
+        }
+
+        /// <summary>
+        /// Create options for skill-based matchmaking.
+        /// </summary>
+        public static LobbyOptions ForSkillRange(int playerSkill, int range = 200)
+        {
+            return new LobbyOptions()
                 .WithSkillRange(playerSkill - range, playerSkill + range)
                 .ExcludePassworded()
                 .ExcludeGamesInProgress();
@@ -661,6 +1226,18 @@ namespace EOSNative.Lobbies
         /// Custom game settings JSON or simple string.
         /// </summary>
         public const string GAME_SETTINGS = "GAME_SETTINGS";
+
+        /// <summary>
+        /// Host platform ID (e.g., "WIN", "MAC", "LNX", "AND", "IOS", "OVR").
+        /// Automatically set when creating a lobby.
+        /// </summary>
+        public const string HOST_PLATFORM = "HOST_PLATFORM";
+
+        /// <summary>
+        /// Host input type ID (e.g., "KBM", "CTL", "TCH", "VRC").
+        /// Automatically set when creating a lobby.
+        /// </summary>
+        public const string HOST_INPUT_TYPE = "HOST_INPUT_TYPE";
     }
 
     /// <summary>

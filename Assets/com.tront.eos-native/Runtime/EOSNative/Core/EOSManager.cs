@@ -115,8 +115,11 @@ namespace EOSNative
         [SerializeField] private string _displayName = "Player";
 
         [Header("Status Overlay")]
-        [Tooltip("Show the F1 status overlay in-game (adds EOSNativeStatusUI)")]
-        [SerializeField] private bool _showStatusOverlay = true;
+        [Tooltip("Which overlay UI to show at runtime.\nAuto = Canvas on mobile, OnGUI on desktop.\nBoth = show both simultaneously.")]
+        [SerializeField] private OverlayUIMode _overlayMode = OverlayUIMode.Auto;
+
+        [Tooltip("Show a Canvas-based runtime console (captures Debug.Log on mobile)")]
+        [SerializeField] private bool _showConsole = true;
 
         /// <summary>
         /// The config currently assigned or loaded from Resources.
@@ -372,6 +375,16 @@ namespace EOSNative
 
         private async void Start()
         {
+            // Create console FIRST so it captures all startup logs
+            if (_showConsole)
+            {
+                var _ = EOSNativeConsole.Instance;
+            }
+
+            Debug.Log("[EOS-Native] Starting up...");
+            Debug.Log($"[EOS-Native] Platform: {EOSPlatformHelper.CurrentPlatform} | Device: {SystemInfo.deviceModel} | OS: {SystemInfo.operatingSystem}");
+            Debug.Log($"[EOS-Native] Unity {Application.unityVersion} | App {Application.version} | Mobile: {EOSPlatformHelper.IsMobile}");
+
             // Auto-load config if not assigned
             if (_config == null)
             {
@@ -397,16 +410,25 @@ namespace EOSNative
             }
 #endif
 
+            if (_config != null)
+                Debug.Log($"[EOS-Native] Config loaded: Product={_config.ProductName}, AutoInit={_autoInitialize}, AutoLogin={_autoLogin}");
+            else
+                Debug.LogWarning("[EOS-Native] No EOSConfig found! Place an EOSConfig asset in a Resources folder.");
+
             // Auto-initialize
             if (_autoInitialize && !IsInitialized && _config != null)
             {
-                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", "Auto-initializing EOS SDK...");
+                Debug.Log("[EOS-Native] Auto-initializing EOS SDK...");
                 var result = Initialize(_config);
                 if (result != Result.Success)
                 {
-                    Debug.LogError($"[EOSManager] Auto-init failed: {result}");
+                    if (s_sdkCorrupted)
+                        Debug.LogError("[EOS-Native] Auto-init failed - SDK is corrupted. Restart Unity to fix.");
+                    else
+                        Debug.LogError($"[EOS-Native] Auto-init failed: {result}");
                     return;
                 }
+                Debug.Log("[EOS-Native] SDK initialized successfully.");
             }
 
             // Auto-login with device token (ParrelSync safe)
@@ -415,19 +437,36 @@ namespace EOSNative
                 string name = !string.IsNullOrEmpty(_displayName) ? _displayName
                     : (_config != null && !string.IsNullOrEmpty(_config.DefaultDisplayName) ? _config.DefaultDisplayName : "Player");
 
-                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", $"Auto-login as '{name}'...");
+                Debug.Log($"[EOS-Native] Auto-login as '{name}'...");
                 var loginResult = await LoginWithDeviceTokenAsync(name);
                 if (loginResult != Result.Success)
                 {
-                    Debug.LogError($"[EOSManager] Auto-login failed: {loginResult}");
+                    Debug.LogError($"[EOS-Native] Auto-login failed: {loginResult}");
+                }
+                else
+                {
+                    Debug.Log($"[EOS-Native] Logged in! PUID: {LocalProductUserId}");
                 }
             }
 
-            // Auto-add status overlay
-            if (_showStatusOverlay && GetComponent<EOSNativeStatusUI>() == null)
-            {
+            // Auto-add overlay UI based on mode
+            bool wantOnGUI = _overlayMode == OverlayUIMode.OnGUI || _overlayMode == OverlayUIMode.Both
+                || (_overlayMode == OverlayUIMode.Auto && !EOSPlatformHelper.IsMobile);
+            bool wantCanvas = _overlayMode == OverlayUIMode.Canvas || _overlayMode == OverlayUIMode.Both
+                || (_overlayMode == OverlayUIMode.Auto && EOSPlatformHelper.IsMobile);
+
+            Debug.Log($"[EOS-Native] Overlay mode: {_overlayMode} (OnGUI={wantOnGUI}, Canvas={wantCanvas}, Console={_showConsole})");
+
+            if (wantOnGUI && GetComponent<EOSNativeStatusUI>() == null)
                 gameObject.AddComponent<EOSNativeStatusUI>();
+
+            if (wantCanvas)
+            {
+                // Force-create the Canvas UI singleton (it lives on its own GameObject)
+                var _ = EOSNativeCanvasUI.Instance;
             }
+
+            Debug.Log("[EOS-Native] Startup complete.");
         }
 
         private void FixedUpdate()
@@ -524,19 +563,21 @@ namespace EOSNative
             // Check if SDK is in a corrupted state from a previous crash
             if (s_sdkCorrupted)
             {
-                EOSDebugLogger.LogError("EOSManager", "EOS SDK is in a corrupted state from a previous crash. Please restart Unity to reinitialize.");
+                Debug.LogError("[EOS-Native] EOS SDK is in a corrupted state from a previous session.\n" +
+                    "This typically happens when Unity crashes or exits abnormally while EOS is running.\n" +
+                    "Please RESTART UNITY to fix this.");
                 return Result.UnexpectedError;
             }
 
             if (config == null)
             {
-                EOSDebugLogger.LogError("EOSManager", "Config is null.");
+                Debug.LogError("[EOS-Native] Config is null. Create an EOSConfig via Assets > Create > EOS Native > Config");
                 return Result.InvalidParameters;
             }
 
             if (!config.Validate(out string error))
             {
-                Debug.LogError($"[EOSManager] Config validation failed: {error}");
+                Debug.LogError($"[EOS-Native] Config validation failed: {error}");
                 return Result.InvalidParameters;
             }
 
@@ -548,9 +589,13 @@ namespace EOSNative
             };
 
             Result initResult = PlatformInterface.Initialize(ref initOptions);
-            if (initResult != Result.Success && initResult != Result.AlreadyConfigured)
+            if (initResult == Result.AlreadyConfigured)
             {
-                Debug.LogError($"[EOSManager] PlatformInterface.Initialize failed: {initResult}");
+                Debug.Log("[EOS-Native] SDK was already initialized (AlreadyConfigured) - reusing existing session.");
+            }
+            else if (initResult != Result.Success)
+            {
+                Debug.LogError($"[EOS-Native] PlatformInterface.Initialize failed: {initResult}");
                 return initResult;
             }
 
@@ -558,10 +603,36 @@ namespace EOSNative
             _platform = CreatePlatformInterface(config);
             if (_platform == null)
             {
-                // Mark SDK as corrupted - this usually happens after a crash during the previous session
-                s_sdkCorrupted = true;
-                EOSDebugLogger.LogError("EOSManager", "PlatformInterface.Create returned null. EOS SDK may be in a bad state - please restart Unity.");
-                return Result.UnexpectedError;
+                // First attempt failed - try recovery: shutdown and reinitialize
+                Debug.LogWarning("[EOS-Native] PlatformInterface.Create returned null. Attempting recovery (shutdown + retry)...");
+                try
+                {
+                    PlatformInterface.Shutdown();
+                    var retryInit = PlatformInterface.Initialize(ref initOptions);
+                    if (retryInit == Result.Success || retryInit == Result.AlreadyConfigured)
+                    {
+                        _platform = CreatePlatformInterface(config);
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning($"[EOS-Native] Recovery attempt threw: {ex.Message}");
+                }
+
+                if (_platform == null)
+                {
+                    // Recovery failed - mark as corrupted
+                    s_sdkCorrupted = true;
+                    Debug.LogError(
+                        "[EOS-Native] === EOS SDK INITIALIZATION FAILED ===\n" +
+                        "PlatformInterface.Create returned null after recovery attempt.\n" +
+                        "This usually happens when the SDK is left in a bad state from a previous crash.\n\n" +
+                        "TO FIX: Restart Unity (or restart the app on device).\n" +
+                        "=========================================");
+                    return Result.UnexpectedError;
+                }
+
+                Debug.Log("[EOS-Native] Recovery successful! SDK reinitialized.");
             }
 
             IsInitialized = true;
@@ -1240,13 +1311,25 @@ namespace EOSNative
         private void LoadAndroidLibrary()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            // Step 1: Try System.loadLibrary — may fail if native lib is already loaded by the AAR
+            // or if the AAR handles loading internally via EOSSDK.init()
             try
             {
                 using (AndroidJavaClass sys = new AndroidJavaClass("java.lang.System"))
                 {
                     sys.CallStatic("loadLibrary", "EOSSDK");
                 }
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", "System.loadLibrary(EOSSDK) succeeded.");
+            }
+            catch (Exception e)
+            {
+                // Not fatal — EOSSDK.init() below will load the native lib from the AAR
+                Debug.LogWarning($"[EOSManager] System.loadLibrary(EOSSDK) failed (this is OK if using AAR): {e.Message}");
+            }
 
+            // Step 2: Always call EOSSDK.init(activity) — this is required and handles native lib loading
+            try
+            {
 #if UNITY_6000_0_OR_NEWER
                 using (AndroidJavaClass eos = new AndroidJavaClass("com.epicgames.mobile.eossdk.EOSSDK"))
                 {
@@ -1260,13 +1343,11 @@ namespace EOSNative
                     eos.CallStatic("init", activity);
                 }
 #endif
-
-                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", "Android EOS SDK loaded successfully.");
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", "Android EOS SDK initialized successfully.");
             }
             catch (Exception e)
             {
-                Debug.LogError($"[EOSManager] Failed to load Android EOS SDK: {e}");
-                throw;
+                Debug.LogError($"[EOSManager] Failed to initialize Android EOS SDK: {e}");
             }
 #endif
         }
@@ -2013,7 +2094,8 @@ namespace EOSNative
 
             EditorGUILayout.Space(5);
 
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("_showStatusOverlay"), new GUIContent("F1 Status Overlay", "Auto-add the in-game status overlay (toggle with F1)"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("_overlayMode"), new GUIContent("Overlay UI Mode", "Auto = Canvas on mobile, OnGUI on desktop"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("_showConsole"), new GUIContent("Runtime Console", "Canvas-based log console (captures Debug.Log)"));
 
             EditorGUILayout.Space(5);
 
@@ -2215,4 +2297,21 @@ namespace EOSNative
         #endregion
     }
 #endif
+
+    /// <summary>
+    /// Controls which runtime overlay UI is created.
+    /// </summary>
+    public enum OverlayUIMode
+    {
+        /// <summary>Canvas on mobile, OnGUI on desktop/editor.</summary>
+        Auto,
+        /// <summary>OnGUI overlay only (F1 toggle).</summary>
+        OnGUI,
+        /// <summary>Canvas overlay only (corner button toggle).</summary>
+        Canvas,
+        /// <summary>Both overlays active simultaneously.</summary>
+        Both,
+        /// <summary>No overlay UI.</summary>
+        None
+    }
 }

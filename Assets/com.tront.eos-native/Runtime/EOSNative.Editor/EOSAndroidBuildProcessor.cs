@@ -36,7 +36,10 @@ namespace EOSNative.Editor
             if (File.Exists(unityLibGradle))
                 InjectDesugaring(unityLibGradle, "unityLibrary");
 
-            // 2. Inject eos_login_protocol_scheme string resource
+            // 2. Ensure native libs are extracted from AARs (required for EOS SDK .so loading)
+            InjectExtractNativeLibs(path);
+
+            // 3. Inject eos_login_protocol_scheme string resource
             InjectEosLoginScheme(path);
         }
 
@@ -77,6 +80,34 @@ namespace EOSNative.Editor
                 File.WriteAllText(gradlePath, content);
                 Debug.Log($"[EOS-Native] Enabled core library desugaring in {moduleName}/build.gradle");
             }
+        }
+
+        private static void InjectExtractNativeLibs(string unityLibPath)
+        {
+            // Set extractNativeLibs=true in AndroidManifest.xml so native .so files
+            // from AAR dependencies are extracted to the APK lib directory at install time.
+            // Without this, System.loadLibrary() may fail to find libEOSSDK.so on some devices.
+            string manifestPath = Path.Combine(unityLibPath, "src", "main", "AndroidManifest.xml");
+            if (!File.Exists(manifestPath))
+            {
+                Debug.LogWarning("[EOS-Native] AndroidManifest.xml not found, skipping extractNativeLibs injection.");
+                return;
+            }
+
+            string content = File.ReadAllText(manifestPath);
+
+            // Check if extractNativeLibs is already set
+            if (content.Contains("extractNativeLibs"))
+                return;
+
+            // Add extractNativeLibs="true" to the <application> tag
+            content = Regex.Replace(
+                content,
+                @"(<application\b)",
+                "$1 android:extractNativeLibs=\"true\"");
+
+            File.WriteAllText(manifestPath, content);
+            Debug.Log("[EOS-Native] Injected android:extractNativeLibs=\"true\" into AndroidManifest.xml");
         }
 
         private static void InjectEosLoginScheme(string unityLibPath)

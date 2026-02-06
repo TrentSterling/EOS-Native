@@ -2,6 +2,27 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.5.0] - 2026-02-06
+
+### Added
+- **Canvas-based runtime UI (`EOSNativeCanvasUI`)** - New `UnityEngine.UI` Canvas overlay that works on Android/iOS where OnGUI may not render. All UI created at runtime in code (no prefabs). Toggle via bottom-right corner button or 3-finger tap.
+  - 4 tabs: Status, Lobbies, Voice, Social
+  - CanvasScaler with ScaleWithScreenSize for automatic DPI handling
+  - ScrollRect for proper touch scrolling on mobile
+  - Dark theme matching existing OnGUI overlay
+  - Coexists with OnGUI overlay (both can run simultaneously)
+- **Canvas-based runtime console (`EOSNativeConsole`)** - Captures `Application.logMessageReceived` for mobile-friendly log viewing. Bottom-left toggle button with error count badge, Log/Warning/Error filter buttons with counts, collapse duplicates, clear, auto-scroll. Max 200 entries, sortingOrder 10000.
+- **Overlay UI Mode toggle** - `OverlayUIMode` enum on EOSManager (Auto/OnGUI/Canvas/Both/None) controls which runtime UI is active. Auto mode defaults to Canvas on mobile, OnGUI on desktop. Separate `_showConsole` toggle for the runtime console.
+- Added `UnityEngine.UI` reference to `EOSNative.asmdef`
+- **Unified `LobbyOptions` class** - Fluent builder that works for both creating and searching lobbies. One options object with implicit conversion to `LobbyCreateOptions` and `LobbySearchOptions`. Includes factory presets (`QuickMatch()`, `ForGameMode()`, `ForSkillRange()`) and platform/input filtering.
+- **`LobbySearchOptions` platform & input filtering** - Added `WithPlatform()`, `DesktopOnly()`, `MobileOnly()`, `SamePlatformOnly()`, `WithInputType()`, `KeyboardMouseOnly()`, `ControllerOnly()`, `SameInputOnly()`, `FairInputOnly()`, `WithMinPlayers()`, `WithMaxPlayers()`, `ExcludeFull()` fluent methods
+- Added `HOST_PLATFORM` and `HOST_INPUT_TYPE` lobby attribute constants
+- Added `UseEosLobbyId` field to `LobbyCreateOptions`
+
+### Fixed
+- **Android native library loading crash** - `System.loadLibrary("EOSSDK")` failure no longer crashes the app; logged as warning and `EOSSDK.init(activity)` is always called (AAR handles loading internally)
+- **Android native libs not extracted** - Build processor now injects `android:extractNativeLibs="true"` into AndroidManifest.xml to ensure AAR `.so` files are extracted at install time
+
 ## [2.4.2] - 2026-02-06
 
 ### Added

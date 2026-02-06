@@ -3,7 +3,8 @@
     "rootNamespace": "EOSNative",
     "references": [
         "Epic.OnlineServices",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "UnityEngine.UI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

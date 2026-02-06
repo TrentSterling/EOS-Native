@@ -1435,7 +1435,7 @@ namespace EOSNative.UI
             // Level bar
             GUILayout.BeginHorizontal();
             GUILayout.Label("Level:", _grayLabel, GUILayout.Width(60));
-            float localLevel = voice.IsMuted ? 0f : 0.3f;
+            float localLevel = voice.IsMuted ? 0f : voice.LocalMicLevel;
             if (localLevel > _peakLevel) { _peakLevel = localLevel; _peakDecay = localLevel; }
             Rect barRect = GUILayoutUtility.GetRect(180, 12);
             DrawLevelBar(barRect, localLevel, _peakDecay);

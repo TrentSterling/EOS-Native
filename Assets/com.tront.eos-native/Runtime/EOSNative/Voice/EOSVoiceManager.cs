@@ -101,6 +101,12 @@ namespace EOSNative.Voice
         /// </summary>
         public bool IsVoiceEnabled => !string.IsNullOrEmpty(_currentLobbyId) && !string.IsNullOrEmpty(CurrentRoomName);
 
+        /// <summary>
+        /// Local microphone audio level (0-1). Smoothed from speaking state detection.
+        /// Use this for mic level meters in UI. Smoothed from speaking state.
+        /// </summary>
+        public float LocalMicLevel { get; private set; }
+
         #endregion
 
         #region Private Fields
@@ -164,6 +170,22 @@ namespace EOSNative.Voice
             {
                 _instance = null;
             }
+        }
+
+        private void Update()
+        {
+            // Smooth local mic level based on speaking state
+            if (!IsConnected || IsMuted)
+            {
+                LocalMicLevel = 0f;
+                return;
+            }
+
+            string localPuid = LocalUserId?.ToString();
+            bool speaking = !string.IsNullOrEmpty(localPuid) && IsSpeaking(localPuid);
+            float target = speaking ? 0.7f : 0f;
+            float speed = speaking ? 12f : 6f;
+            LocalMicLevel = Mathf.MoveTowards(LocalMicLevel, target, speed * Time.deltaTime);
         }
 
 #if UNITY_EDITOR
@@ -888,6 +910,8 @@ namespace EOSNative.Voice
             _audioBeforeRenderHandle = null;
             _participantUpdatedHandle = null;
             _participantStatusHandle = null;
+
+            LocalMicLevel = 0f;
         }
 
         private void Cleanup()
