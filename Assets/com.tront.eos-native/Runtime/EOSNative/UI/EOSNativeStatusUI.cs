@@ -231,7 +231,7 @@ namespace EOSNative.UI
                 bool allBegan = true;
                 for (int i = 0; i < 3; i++)
                 {
-                    if (Input.GetTouch(i).phase != TouchPhase.Began)
+                    if (Input.GetTouch(i).phase != UnityEngine.TouchPhase.Began)
                         allBegan = false;
                 }
                 if (allBegan)
