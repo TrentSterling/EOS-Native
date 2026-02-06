@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.4.1] - 2026-02-06
+
+### Fixed
+- **Android build failure** - EOS SDK AAR requires core library desugaring; added `EOSAndroidBuildProcessor` that automatically injects `coreLibraryDesugaringEnabled` and `desugar_jdk_libs` dependency into both `launcher` and `unityLibrary` Gradle files via `IPostGenerateGradleAndroidProject`
+
 ## [2.4.0] - 2026-02-06
 
 ### Added

@@ -226,6 +226,18 @@ These managers were ported from FishNet-EOS-Native with FishNet dependencies rem
 
 **Not ported** (too tightly coupled to FishNet): EOSReplayRecorder, EOSVoiceZoneManager, EOSVoiceTriggerZone.
 
+## Android Build (Core Library Desugaring)
+
+The EOS SDK AAR (`eossdk-StaticSTDC-release.aar`) requires Java 8 core library desugaring. Without it, Android builds fail with:
+
+> `Dependency ':eossdk-StaticSTDC-release:' requires core library desugaring to be enabled for :launcher.`
+
+`EOSAndroidBuildProcessor.cs` (in `EOSNative.Editor/`) automatically injects the required Gradle config into both `launcher/build.gradle` and `unityLibrary/build.gradle` via `IPostGenerateGradleAndroidProject`. It adds:
+- `coreLibraryDesugaringEnabled true` in `compileOptions`
+- `coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'` in `dependencies`
+
+No manual Gradle template editing is required.
+
 ## Bug/TODO Tracking
 
 See `BUGS.MD` and `TODO.MD` in the repo root for known issues and planned work.
