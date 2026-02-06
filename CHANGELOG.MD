@@ -2,10 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
-## [2.4.1] - 2026-02-06
+## [2.4.2] - 2026-02-06
 
 ### Fixed
-- **Android build failure** - EOS SDK AAR requires core library desugaring; added `EOSAndroidBuildProcessor` that automatically injects `coreLibraryDesugaringEnabled` and `desugar_jdk_libs` dependency into both `launcher` and `unityLibrary` Gradle files via `IPostGenerateGradleAndroidProject`
+- **Android build failure (desugaring)** - EOS SDK AAR requires core library desugaring; `EOSAndroidBuildProcessor` auto-injects `coreLibraryDesugaringEnabled` and `desugar_jdk_libs` into both Gradle modules
+- **Android build failure (missing resource)** - EOS AAR's AndroidManifest references `eos_login_protocol_scheme` string resource; build processor now auto-injects it into `strings.xml` using the client ID from EOSConfig asset (format: `eos.{clientid_lowercase}`)
 
 ## [2.4.0] - 2026-02-06
 
