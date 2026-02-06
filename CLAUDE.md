@@ -154,6 +154,8 @@ Most managers use a lazy auto-create singleton pattern: `FindAnyObjectByType<T>(
 
 **Find-only singletons (no auto-create):** EOSTournamentManager, EOSClanManager, EOSGlobalChatManager, EOSReplayHighlights, EOSReplayVoicePlayer, EOSReplayVoiceRecorder.
 
+**Note:** EOSLobbyChatManager was upgraded from find-only to auto-create in v2.2.0.
+
 ## Documentation Site
 
 Full docsify documentation at `docs/` folder (28 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
@@ -183,6 +185,21 @@ Both the Inspector (EOSManagerEditor) and the runtime F1 overlay (EOSNativeStatu
 - `CurrentInputDeviceId` / `CurrentOutputDeviceId` - Track selected device
 
 The F1 overlay Voice tab exposes dropdown selectors for input/output devices with a Refresh button.
+
+## F1 Overlay Tabs (EOSNativeStatusUI)
+
+The runtime F1 overlay (`EOSNativeStatusUI.cs`, ~3100 lines) provides 6 tabs:
+
+| Tab | Sections |
+|-----|----------|
+| **Status** | SDK status, platform info, interfaces, login actions |
+| **Lobbies** | Current lobby, create/join/search, lobby members (with report button), lobby chat |
+| **Voice** | Voice status, local mic level bar, audio devices, participants |
+| **Social** | Player registry, recently played (friend/block/invite), local friends (notes/join/invite), blocked players, invites (send/receive/requests), Epic Account, Epic Friends |
+| **Stats** | Stats query/ingest, leaderboard rankings, achievements progress, ranked matchmaking |
+| **Tools** | Cloud storage (files/write/delete), anti-cheat status, replay list/playback/export/import, session metrics, LFG posts |
+
+Also includes a modal report popup triggered from lobby member list.
 
 ## Ported Managers
 

@@ -10,7 +10,7 @@ Configure per-category logging to filter noise during development.
 
 ## F1 Runtime Overlay
 
-Press **F1** to toggle the main debug overlay with four tabs:
+Press **F1** to toggle the main debug overlay with six tabs:
 
 ### Status Tab
 - SDK initialization state
@@ -25,18 +25,41 @@ Press **F1** to toggle the main debug overlay with four tabs:
 - Create lobby controls
 - Join by code
 - Search all lobbies
-- Member list
-- Text chat
+- Lobby members with report button per player
+- Lobby chat with scrollable message log and send input
 
 ### Voice Tab
 - RTC connection status
-- Mute toggle
-- Participant list with speaking indicators
+- Local mic level bar with mute/unmute toggle
+- Input/output audio device selection dropdowns with refresh
+- Participant list with speaking indicators and level bars
 - Audio status per participant
 
 ### Social Tab
-- Friends list
-- Custom invites
+- Recently played players (last 7 days) with friend/block/invite buttons
+- Local friends list with status indicators, notes, join/invite buttons, cloud sync
+- Blocked players with unblock/clear
+- Custom invites (send, receive, accept/reject, quick-send to friends)
+- Epic Account login status
+- Epic friends list (query, accept/reject requests)
+
+### Stats Tab
+- Stats query and ingest with test controls
+- Leaderboard definitions and top rankings
+- Achievements list with progress and unlock status
+- Ranked matchmaking: rating, tier, win/loss record, find/host/queue controls
+
+### Tools Tab
+- Cloud storage: file list, usage, write/delete test controls
+- Anti-cheat: status, session controls, auto-start toggle
+- Replays: local replay list, playback controls, timeline, export/import
+- Session metrics: begin/end, duration, session ID
+- LFG: create/search/browse posts, join requests
+
+### Report Popup
+- Modal overlay triggered from lobby member list
+- Category selection (Cheating, Exploiting, Offensive, Verbal Abuse, Spamming, etc.)
+- Send report with status feedback
 
 ## Logging
 
@@ -61,12 +84,23 @@ EOSDebugLogger.LogError("Voice", "Failed to connect to RTC");
 |----------|-------------|
 | EOSManager | SDK lifecycle |
 | LobbyManager | Lobby operations |
+| LobbyChatManager | Lobby text chat |
 | VoiceManager | Voice/RTC |
+| VoicePlayer | Per-participant audio |
 | Friends | Friends system |
+| Presence | Online presence |
+| UserInfo | User info queries |
+| CustomInvites | Custom invitations |
+| Stats | Player statistics |
 | Leaderboards | Rankings |
 | Achievements | Achievement tracking |
-| Storage | Cloud storage |
-| Party | Party system |
+| PlayerDataStorage | Player cloud saves |
+| TitleStorage | Title data |
+| Reports | Player reporting |
+| Sanctions | Ban/restriction queries |
+| Metrics | Session telemetry |
+| PlayerRegistry | PUID/name cache |
+| Replay | Replay system (highlights, voice recording/playback) |
 
 ## Toast Notifications
 

@@ -249,11 +249,18 @@ namespace EOSNative.Social
             EOSDebugLogger.Log(DebugCategory.Stats, "EOSRankedMatchmaking", "Initialized");
         }
 
+        private bool _isQuitting;
+
+        private void OnApplicationQuit()
+        {
+            _isQuitting = true;
+        }
+
         private void OnDestroy()
         {
-            if (_isDirty)
+            if (_isDirty && !_isQuitting)
             {
-                _ = SavePlayerDataAsync();
+                try { _ = SavePlayerDataAsync(); } catch { }
             }
 
             if (_instance == this)

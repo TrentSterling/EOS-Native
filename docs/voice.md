@@ -21,6 +21,38 @@ bool isMuted = voice.IsMuted;
 bool connected = voice.IsConnected;
 ```
 
+## Audio Device Selection
+
+Switch microphones and speakers at runtime:
+
+```csharp
+var voice = EOSVoiceManager.Instance;
+
+// Query available devices (call once at start or on refresh)
+voice.QueryAudioDevices();
+
+// Get device lists
+var inputs = voice.InputDevices;    // List of microphones
+var outputs = voice.OutputDevices;  // List of speakers
+
+// Switch devices by ID
+voice.SetInputDevice(inputs[1].DeviceId);
+voice.SetOutputDevice(outputs[0].DeviceId);
+
+// Current device tracking
+string currentMic = voice.CurrentInputDeviceId;
+string currentSpeaker = voice.CurrentOutputDeviceId;
+
+// Listen for device hotplug (e.g. headset plugged in)
+voice.OnAudioDevicesChanged += () =>
+{
+    // Re-query and update UI
+    voice.QueryAudioDevices();
+};
+```
+
+The F1 overlay Voice tab includes dropdown selectors for input/output devices with a Refresh button.
+
 ## Per-Player Controls
 
 ### Volume Control
@@ -76,6 +108,7 @@ voice.OnVoiceConnectionChanged += (isConnected) => { };
 voice.OnParticipantSpeaking += (puid, isSpeaking) => { };
 voice.OnAudioFrameReceived += (puid, frames) => { };  // Audio thread!
 voice.OnParticipantAudioStatusChanged += (puid, status) => { };
+voice.OnAudioDevicesChanged += () => { };  // Device hotplug
 ```
 
 ## Platform Support
@@ -111,7 +144,8 @@ If you see "Failed to load custom XAudio2.9 dll", verify the DLL exists in `Runt
 Press **F1** and switch to the **Voice** tab to see:
 - RTC connection status
 - Mute state
-- Participant list with speaking indicators
+- Input/output device selection dropdowns
+- Participant list with speaking indicators and level bars
 - Audio status per participant
 
 ## Troubleshooting

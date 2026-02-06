@@ -19,7 +19,7 @@ var result = await lobby.CreateLobbyAsync(new CreateLobbyOptions
 Debug.Log($"Code: {lobby.CurrentLobby.JoinCode}");
 ```
 
-### With Voice Enabled
+### With Voice and Host Migration
 
 ```csharp
 var result = await lobby.CreateLobbyAsync(new CreateLobbyOptions
@@ -27,9 +27,12 @@ var result = await lobby.CreateLobbyAsync(new CreateLobbyOptions
     LobbyName = "Voice Room",
     MaxPlayers = 8,
     IsPublic = true,
-    EnableVoice = true
+    EnableVoice = true,
+    AllowHostMigration = true  // default: true
 });
 ```
+
+Host migration is enabled by default. Set `AllowHostMigration = false` to disable it. Both the Inspector and F1 overlay expose this as a toggle.
 
 ## Joining a Lobby
 

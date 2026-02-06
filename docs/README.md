@@ -8,8 +8,8 @@
 - **All Platforms** - Windows, Mac, Linux, Android, iOS
 - **Auto-Setup** - Drop EOSManager in scene, hit play
 - **Lobbies** - 4-digit join codes, quick match, host migration
-- **Voice Chat** - RTC lobby-based, auto-connects, spatial audio
-- **Text Chat** - Lobby-based with cloud-persisted history
+- **Voice Chat** - RTC lobby-based, auto-connects, mic/speaker device selection
+- **Text Chat** - Lobby chat + global chat channels
 - **Party System** - Persistent cross-game groups with follow-the-leader
 - **Friends** - Epic Account friends, requests, block/unblock
 - **Ranked** - ELO/Glicko-2 skill-based matchmaking
@@ -18,7 +18,9 @@
 - **Cloud Storage** - 400MB per player saves
 - **Anti-Cheat** - Easy Anti-Cheat integration
 - **Discord Presence** - Zero-dependency Rich Presence
-- **F1 Debug Overlay** - Runtime status, lobbies, voice, social tabs
+- **Replay Highlights** - Auto-detect multi-kill, clutch, comeback moments
+- **Session Metrics** - Player session telemetry for Developer Portal
+- **F1 Debug Overlay** - Dark theme with 6 tabs: status, lobbies, voice, social, stats, tools
 
 ## Requirements
 
@@ -64,7 +66,7 @@ await EOSLobbyChatManager.Instance.SendChatMessageAsync("Hello!");
 | **Core Features** | Lobbies, Voice, Chat, Authentication |
 | **Social** | Friends, Parties, Invites, Clans, Discord |
 | **Competitive** | Ranked Matchmaking, Leaderboards, Achievements |
-| **Replay System** | Recording and Playback |
+| **Replay System** | Recording, Playback, Highlights, Voice Recording |
 | **Advanced** | Anti-Cheat, Cloud Storage, Architecture |
 
 ## Support

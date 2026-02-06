@@ -69,6 +69,19 @@ Common issues and solutions.
 2. Verify `IsMuted` is false in F1 Voice tab
 3. Verify lobby has `EnableVoice = true`
 
+### "Wrong microphone/speakers"
+
+**Cause**: Default audio device is not the one you want.
+
+**Solution**: Use the F1 overlay Voice tab to select input/output devices from the dropdowns. Or programmatically:
+
+```csharp
+var voice = EOSVoiceManager.Instance;
+voice.QueryAudioDevices();
+voice.SetInputDevice(desiredDeviceId);
+voice.SetOutputDevice(desiredDeviceId);
+```
+
 ### "Echo/feedback"
 
 **Cause**: Echo cancellation not enabled.

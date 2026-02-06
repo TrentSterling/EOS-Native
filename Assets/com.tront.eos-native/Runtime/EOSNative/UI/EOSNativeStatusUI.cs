@@ -1,9 +1,16 @@
+using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading.Tasks;
 using Epic.OnlineServices;
+using Epic.OnlineServices.Reports;
 using Epic.OnlineServices.RTCAudio;
+using EOSNative.AntiCheat;
 using EOSNative.Lobbies;
 using EOSNative.Logging;
+using EOSNative.Replay;
+using EOSNative.Social;
+using EOSNative.Storage;
 using EOSNative.Voice;
 using UnityEngine;
 #if EOS_HAS_INPUT_SYSTEM
@@ -14,7 +21,7 @@ namespace EOSNative.UI
 {
     /// <summary>
     /// Runtime OnGUI overlay for EOS Native verification.
-    /// Toggle with F1. Tabs: Status, Lobbies, Voice, Social.
+    /// Toggle with F1. Tabs: Status, Lobbies, Voice, Social, Stats, Tools.
     /// Dark-themed professional UI with foldouts, level bars, and device selection.
     /// </summary>
     public class EOSNativeStatusUI : MonoBehaviour
@@ -97,20 +104,98 @@ namespace EOSNative.UI
         private float _peakDecay;
 
         // Foldout states
-        private bool _foldInterfaces = false;
+        private bool _foldInterfaces = true;
         private bool _foldPlatform = true;
         private bool _foldCurrentLobby = true;
         private bool _foldCreateLobby = true;
         private bool _foldJoinLobby = true;
-        private bool _foldSearch = false;
+        private bool _foldSearch = true;
         private bool _foldParticipants = true;
         private bool _foldAudioDevices = true;
-        private bool _foldFriends = false;
-        private bool _foldRecent = false;
+        private bool _foldFriends = true;
+        private bool _foldRecent = true;
         private bool _foldEpicAccount = true;
+        private bool _foldMembers = true;
+        private bool _foldChat = true;
+        private bool _foldLocalMic = true;
+        private bool _foldInvites = true;
+        private bool _foldBlocked = true;
+        private bool _foldEpicFriends = true;
+        private bool _foldStats = true;
+        private bool _foldAchievements = true;
+        private bool _foldRanked = true;
+        private bool _foldStorage = true;
+        private bool _foldAntiCheat = true;
+        private bool _foldReplays = true;
+        private bool _foldMetrics = true;
+        private bool _foldLFG = true;
+
+        // Chat state
+        private string _chatInput = "";
+        private Vector2 _chatScrollPos;
+        private readonly StringBuilder _chatLogBuilder = new StringBuilder();
+
+        // Members state
+        private Vector2 _memberScrollPos;
+
+        // Report popup state
+        private bool _showReportPopup;
+        private string _reportTargetPuid = "";
+        private string _reportStatus = "";
+        private int _reportCategoryIndex;
+
+        // Invites state
+        private string _inviteRecipientPuid = "";
+        private string _inviteStatus = "";
+
+        // Friends state
+        private Vector2 _friendsScrollPos;
+        private string _editingNotePuid;
+        private string _editingNoteText = "";
+
+        // Epic Friends state
+        private Vector2 _epicFriendsScrollPos;
+
+        // Blocked state
+        private Vector2 _blockedScrollPos;
+
+        // Stats & Leaderboards state
+        private Vector2 _statsScrollPos;
+        private Vector2 _leaderboardScrollPos;
+        private string _selectedLeaderboardId = "";
+        private List<LeaderboardEntry> _currentLeaderboardEntries = new List<LeaderboardEntry>();
+        private string _testStatName = "test_stat";
+        private int _testStatAmount = 1;
+
+        // Achievements state
+        private Vector2 _achievementsScrollPos;
+
+        // Ranked state
+        private string _rankedGameMode = "ranked";
+        private string _rankedStatus = "";
+
+        // Cloud Storage state
+        private Vector2 _storageScrollPos;
+        private string _testFileName = "test.txt";
+        private string _testFileContent = "Hello, EOS!";
+
+        // Replays state
+        private Vector2 _replayListScroll;
+        private List<ReplayHeader> _cachedReplays = new List<ReplayHeader>();
+        private float _lastReplayRefresh;
+        private string _importPath = "";
+        private bool _showExportSuccess;
+        private float _exportSuccessTime;
+
+        // LFG state
+        private string _lfgTitle = "Looking for players";
+        private string _lfgGameMode = "";
+        private int _lfgDesiredSize = 4;
+        private string _lfgStatus = "";
+        private Vector2 _lfgSearchScrollPos;
 
         // Tab names
-        private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social" };
+        private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social", "Stats", "Tools" };
 
         #endregion
 
@@ -420,6 +505,12 @@ namespace EOSNative.UI
             InitStyles();
 
             _windowRect = GUILayout.Window(94201, _windowRect, DrawWindow, "EOS Native (F1)", _windowStyle);
+
+            // Report popup overlay
+            if (_showReportPopup)
+            {
+                DrawReportPopup();
+            }
         }
 
         private void DrawWindow(int id)
@@ -446,6 +537,8 @@ namespace EOSNative.UI
                 case 1: DrawLobbiesTab(); break;
                 case 2: DrawVoiceTab(); break;
                 case 3: DrawSocialTab(); break;
+                case 4: DrawStatsTab(); break;
+                case 5: DrawToolsTab(); break;
             }
 
             GUILayout.EndScrollView();
@@ -753,6 +846,12 @@ namespace EOSNative.UI
                 GUILayout.EndVertical();
             }
 
+            // Lobby Members
+            DrawLobbyMembersSection();
+
+            // Lobby Chat
+            DrawLobbyChatSection();
+
             // Status message
             if (!string.IsNullOrEmpty(_lobbyStatus))
             {
@@ -884,6 +983,9 @@ namespace EOSNative.UI
             }
 
             GUILayout.EndVertical();
+
+            // Local Mic Level
+            DrawLocalMicLevelSection();
 
             // Audio Devices
             if (voice != null)
@@ -1034,103 +1136,1964 @@ namespace EOSNative.UI
                 return;
             }
 
-            // Player Registry
+            // Player Registry summary
             GUILayout.BeginVertical(_sectionBox);
             GUILayout.Label("Player Registry", _headerStyle);
             GUILayout.Space(4);
-
             var registry = EOSPlayerRegistry.Instance;
             if (registry != null)
             {
                 DrawKeyValue("Cached", registry.CachedPlayerCount.ToString());
                 DrawKeyValue("Friends", registry.FriendCount.ToString());
                 DrawKeyValue("Blocked", registry.BlockedCount.ToString());
-
-                // Recent players
-                if (DrawFoldout($"Recent Players", ref _foldRecent))
-                {
-                    var recent = registry.GetRecentPlayers(7);
-                    if (recent.Count > 0)
-                    {
-                        int shown = 0;
-                        foreach (var (puid, name, lastSeen) in recent)
-                        {
-                            if (shown++ >= 8) { GUILayout.Label($"  ... +{recent.Count - 8} more", _grayLabel); break; }
-                            string shortPuid = puid.Length > 8 ? puid.Substring(0, 8) + ".." : puid;
-                            GUILayout.Label($"  {name} ({shortPuid}) - {lastSeen:MM/dd HH:mm}", _monoLabel);
-                        }
-                    }
-                    else
-                    {
-                        GUILayout.Label("  No recent players.", _grayLabel);
-                    }
-                }
-
-                // Friends list
-                if (DrawFoldout($"Friends ({registry.FriendCount})", ref _foldFriends))
-                {
-                    var friends = registry.GetFriends();
-                    if (friends.Count > 0)
-                    {
-                        foreach (var (puid, name) in friends)
-                        {
-                            GUILayout.BeginHorizontal();
-                            var status = registry.GetFriendStatus(puid);
-                            var (statusText, statusStyle) = status switch
-                            {
-                                FriendStatus.InLobby => ("[IN LOBBY]", _greenLabel),
-                                FriendStatus.InGame => ("[IN GAME]", _yellowLabel),
-                                FriendStatus.Offline => ("[OFFLINE]", _grayLabel),
-                                _ => ("[???]", _grayLabel)
-                            };
-                            GUILayout.Label(statusText, statusStyle, GUILayout.Width(80));
-                            GUILayout.Label(name, _whiteLabel);
-                            GUILayout.EndHorizontal();
-                        }
-                    }
-                    else
-                    {
-                        GUILayout.Label("  No friends found.", _grayLabel);
-                    }
-                }
             }
             else
             {
                 GUILayout.Label("EOSPlayerRegistry not found.", _grayLabel);
             }
-
             GUILayout.EndVertical();
 
-            // Epic Account
-            if (DrawFoldout("Epic Account", ref _foldEpicAccount))
+            DrawRecentlyPlayedSection();
+            GUILayout.Space(4);
+            DrawLocalFriendsSection();
+            GUILayout.Space(4);
+            DrawBlockedPlayersSection();
+            GUILayout.Space(4);
+            DrawInvitesSection();
+            GUILayout.Space(4);
+            DrawEpicAccountSection();
+            GUILayout.Space(4);
+            DrawEpicFriendsSection();
+        }
+
+        #endregion
+
+        #region Stats Tab
+
+        private void DrawStatsTab()
+        {
+            var mgr = EOSManager.Instance;
+            if (mgr == null || !mgr.IsLoggedIn)
             {
-                GUILayout.BeginVertical(_sectionBox);
+                GUILayout.Label("Login required for stats.", _yellowLabel);
+                return;
+            }
 
-                if (mgr.IsEpicAccountLoggedIn)
+            DrawStatsAndLeaderboardsSection();
+            GUILayout.Space(4);
+            DrawAchievementsSection();
+            GUILayout.Space(4);
+            DrawRankedSection();
+        }
+
+        #endregion
+
+        #region Tools Tab
+
+        private void DrawToolsTab()
+        {
+            var mgr = EOSManager.Instance;
+            if (mgr == null || !mgr.IsLoggedIn)
+            {
+                GUILayout.Label("Login required for tools.", _yellowLabel);
+                return;
+            }
+
+            DrawCloudStorageSection();
+            GUILayout.Space(4);
+            DrawAntiCheatSection();
+            GUILayout.Space(4);
+            DrawReplaysSection();
+            GUILayout.Space(4);
+            DrawSessionMetricsSection();
+            GUILayout.Space(4);
+            DrawLFGSection();
+        }
+
+        #endregion
+
+        #region Lobby Members Section
+
+        private void DrawLobbyMembersSection()
+        {
+            var lobbyMgr = EOSLobbyManager.Instance;
+            if (lobbyMgr == null || !lobbyMgr.IsInLobby) return;
+
+            if (!DrawFoldout("Lobby Members", ref _foldMembers)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            var lobby = lobbyMgr.CurrentLobby;
+            string ownerPuid = lobby.OwnerPuid;
+            string localPuid = EOSManager.Instance?.LocalProductUserId?.ToString();
+
+            var lobbyInterface = EOSManager.Instance?.LobbyInterface;
+            if (lobbyInterface != null)
+            {
+                var detailsOptions = new Epic.OnlineServices.Lobby.CopyLobbyDetailsHandleOptions
                 {
-                    GUILayout.Label("Connected to Epic Account", _greenLabel);
-                    GUILayout.Label($"EpicAccountId: {mgr.LocalEpicAccountId}", _monoLabel);
+                    LocalUserId = EOSManager.Instance.LocalProductUserId,
+                    LobbyId = lobby.LobbyId
+                };
 
-                    GUILayout.Space(4);
-                    if (GUILayout.Button("Logout Epic Account", _smallButton))
+                if (lobbyInterface.CopyLobbyDetailsHandle(ref detailsOptions, out var details) == Result.Success && details != null)
+                {
+                    var countOptions = new Epic.OnlineServices.Lobby.LobbyDetailsGetMemberCountOptions();
+                    uint memberCount = details.GetMemberCount(ref countOptions);
+
+                    _memberScrollPos = GUILayout.BeginScrollView(_memberScrollPos, GUILayout.Height(Mathf.Min(100, memberCount * 24 + 10)));
+
+                    for (uint i = 0; i < memberCount; i++)
                     {
-                        _ = mgr.LogoutEpicAccountAsync();
+                        var memberOptions = new Epic.OnlineServices.Lobby.LobbyDetailsGetMemberByIndexOptions { MemberIndex = i };
+                        var memberId = details.GetMemberByIndex(ref memberOptions);
+                        if (memberId == null) continue;
+
+                        string memberPuid = memberId.ToString();
+                        string displayName = EOSPlayerRegistry.Instance?.GetPlayerName(memberPuid)
+                            ?? (memberPuid.Length > 8 ? memberPuid.Substring(0, 8) : memberPuid);
+
+                        bool isOwner = memberPuid == ownerPuid;
+                        bool isLocal = memberPuid == localPuid;
+
+                        GUILayout.BeginHorizontal();
+                        string prefix = isOwner ? "[HOST] " : "       ";
+                        GUIStyle style = isLocal ? _cyanLabel : (isOwner ? _greenLabel : _whiteLabel);
+                        GUILayout.Label($"{prefix}{displayName}{(isLocal ? " (you)" : "")}", style);
+                        GUILayout.FlexibleSpace();
+
+                        // Report button (not for self)
+                        if (!isLocal)
+                        {
+                            var reportsManager = EOSReports.Instance;
+                            if (reportsManager != null && reportsManager.IsReady)
+                            {
+                                if (GUILayout.Button("\u26A0", _smallButton, GUILayout.Width(22)))
+                                {
+                                    _reportTargetPuid = memberPuid;
+                                    _showReportPopup = true;
+                                    _reportStatus = "";
+                                }
+                            }
+                        }
+
+                        GUILayout.EndHorizontal();
+                    }
+
+                    GUILayout.EndScrollView();
+                    details.Release();
+                }
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Lobby Chat Section
+
+        private void DrawLobbyChatSection()
+        {
+            if (!DrawFoldout("Lobby Chat", ref _foldChat)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            var lobbyMgr = EOSLobbyManager.Instance;
+            if (lobbyMgr == null || !lobbyMgr.IsInLobby)
+            {
+                GUILayout.Label("Join a lobby to chat.", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            var chatMgr = EOSLobbyChatManager.Instance;
+            if (chatMgr == null)
+            {
+                GUILayout.Label("Chat manager not found.", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            // Chat log
+            _chatLogBuilder.Clear();
+            var messages = chatMgr.Messages;
+            int startIdx = Mathf.Max(0, messages.Count - 20);
+            for (int i = startIdx; i < messages.Count; i++)
+            {
+                var msg = messages[i];
+                if (msg.IsSystem)
+                    _chatLogBuilder.AppendLine($"<color=#888888>* {msg.Message}</color>");
+                else
+                    _chatLogBuilder.AppendLine($"<color=#666666>[{msg.LocalTime:HH:mm}]</color> <color=#66ccff>{msg.SenderName}</color>: {msg.Message}");
+            }
+
+            var richLabel = new GUIStyle(_grayLabel) { richText = true, wordWrap = true };
+            _chatScrollPos = GUILayout.BeginScrollView(_chatScrollPos, GUILayout.Height(120));
+            GUILayout.Label(_chatLogBuilder.ToString(), richLabel);
+            GUILayout.EndScrollView();
+
+            // Chat input
+            GUILayout.BeginHorizontal();
+            GUI.SetNextControlName("ChatInput");
+            _chatInput = GUILayout.TextField(_chatInput, _textFieldStyle);
+            if (GUILayout.Button("Send", _smallButton, GUILayout.Width(45)) ||
+                (Event.current.isKey && Event.current.keyCode == KeyCode.Return && GUI.GetNameOfFocusedControl() == "ChatInput"))
+            {
+                if (!string.IsNullOrWhiteSpace(_chatInput))
+                {
+                    chatMgr.SendChatMessage(_chatInput);
+                    _chatInput = "";
+                    _chatScrollPos.y = float.MaxValue;
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Local Mic Level Section
+
+        private void DrawLocalMicLevelSection()
+        {
+            var voice = EOSVoiceManager.Instance;
+            if (voice == null || !voice.IsConnected) return;
+
+            if (!DrawFoldout("Local Microphone", ref _foldLocalMic)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Status:", _grayLabel, GUILayout.Width(60));
+            GUILayout.Label(voice.IsMuted ? "MUTED" : "Active", voice.IsMuted ? _redLabel : _greenLabel);
+            GUILayout.EndHorizontal();
+
+            // Level bar
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Level:", _grayLabel, GUILayout.Width(60));
+            float localLevel = voice.IsMuted ? 0f : 0.3f;
+            if (localLevel > _peakLevel) { _peakLevel = localLevel; _peakDecay = localLevel; }
+            Rect barRect = GUILayoutUtility.GetRect(180, 12);
+            DrawLevelBar(barRect, localLevel, _peakDecay);
+            GUILayout.Label($"{(localLevel * 100):F0}%", _grayLabel, GUILayout.Width(40));
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            if (GUILayout.Button(voice.IsMuted ? "UNMUTE MIC" : "MUTE MIC", _actionButton, GUILayout.Height(26)))
+            {
+                voice.ToggleMute();
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Recently Played Section
+
+        private void DrawRecentlyPlayedSection()
+        {
+            var registry = EOSPlayerRegistry.Instance;
+            if (registry == null) return;
+
+            int count = registry.CachedPlayerCount;
+            if (!DrawFoldout($"Recently Played ({count})", ref _foldRecent)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (count == 0)
+            {
+                GUILayout.Label("No players discovered yet.", _grayLabel);
+                GUILayout.Label("Join lobbies to build your player list!", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            var recent = registry.GetRecentPlayers(7);
+            if (recent.Count == 0)
+            {
+                GUILayout.Label("No recent players (last 7 days).", _grayLabel);
+            }
+            else
+            {
+                GUILayout.Label($"Last 7 days ({recent.Count} players):", _grayLabel);
+
+                int shown = 0;
+                foreach (var (puid, name, lastSeen) in recent)
+                {
+                    if (shown >= 10) break;
+                    if (registry.IsBlocked(puid)) continue;
+
+                    GUILayout.BeginHorizontal(_sectionBox);
+
+                    string platform = registry.GetPlatform(puid);
+                    if (!string.IsNullOrEmpty(platform))
+                    {
+                        GUILayout.Label(EOSPlayerRegistry.GetPlatformIcon(platform), _grayLabel, GUILayout.Width(18));
+                    }
+
+                    GUILayout.Label(name, _whiteLabel, GUILayout.Width(80));
+                    GUILayout.Label(GetTimeAgo(lastSeen), _grayLabel, GUILayout.Width(50));
+                    GUILayout.FlexibleSpace();
+
+                    // Friend toggle
+                    bool isFriend = registry.IsFriend(puid);
+                    string starIcon = isFriend ? "\u2605" : "\u2606";
+                    if (GUILayout.Button(starIcon, _smallButton, GUILayout.Width(22)))
+                    {
+                        registry.ToggleFriend(puid);
+                    }
+
+                    // Block button
+                    if (GUILayout.Button("\u26D4", _smallButton, GUILayout.Width(22)))
+                    {
+                        registry.BlockPlayer(puid);
+                    }
+
+                    // Invite button
+                    var invitesManager = EOSCustomInvites.Instance;
+                    if (invitesManager != null && invitesManager.IsReady && !string.IsNullOrEmpty(invitesManager.CurrentPayload))
+                    {
+                        if (GUILayout.Button("Inv", _smallButton, GUILayout.Width(28)))
+                        {
+                            SendInviteToPuid(puid, name);
+                        }
+                    }
+
+                    GUILayout.EndHorizontal();
+                    shown++;
+                }
+
+                if (recent.Count > 10)
+                {
+                    GUILayout.Label($"  ... and {recent.Count - 10} more", _grayLabel);
+                }
+            }
+
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"Total cached: {count}", _grayLabel);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Clear", _smallButton, GUILayout.Width(45)))
+            {
+                registry.ClearCache();
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Local Friends Section
+
+        private void DrawLocalFriendsSection()
+        {
+            var registry = EOSPlayerRegistry.Instance;
+            if (registry == null) return;
+
+            int friendCount = registry.FriendCount;
+            if (!DrawFoldout($"Local Friends ({friendCount})", ref _foldFriends)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (friendCount == 0)
+            {
+                GUILayout.Label("No local friends yet.", _grayLabel);
+                GUILayout.Label("Mark players as friends from Recently Played!", _grayLabel);
+            }
+            else
+            {
+                var friends = registry.GetFriends();
+                float listHeight = Mathf.Clamp(friends.Count * 28, 60, 150);
+                _friendsScrollPos = GUILayout.BeginScrollView(_friendsScrollPos, GUILayout.Height(listHeight));
+
+                foreach (var (puid, name) in friends)
+                {
+                    DrawLocalFriendRow(puid, name, registry);
+                }
+
+                GUILayout.EndScrollView();
+            }
+
+            // Footer
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+
+            // Refresh
+            if (GUILayout.Button("\u21BB", _smallButton, GUILayout.Width(25)))
+            {
+                _ = registry.RefreshAllFriendStatusesAsync();
+            }
+
+            // Cloud sync
+            var storage = EOSPlayerDataStorage.Instance;
+            bool canSync = storage != null && storage.IsReady && !registry.IsCloudSyncInProgress;
+            GUI.enabled = canSync;
+            string syncLabel = registry.IsCloudSyncInProgress ? "..." : "\u2601";
+            if (GUILayout.Button(syncLabel, _smallButton, GUILayout.Width(25)))
+            {
+                _ = registry.FullCloudSyncAsync();
+            }
+            GUI.enabled = true;
+
+            if (registry.LastCloudSync != DateTime.MinValue)
+            {
+                GUILayout.Label(GetTimeAgo(registry.LastCloudSync), _grayLabel);
+            }
+
+            GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button("Clear", _smallButton, GUILayout.Width(45)))
+            {
+                registry.ClearFriends();
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.EndVertical();
+        }
+
+        private void DrawLocalFriendRow(string puid, string displayName, EOSPlayerRegistry registry)
+        {
+            GUILayout.BeginHorizontal();
+
+            var (status, lobbyCode) = registry.GetFriendStatusWithLobby(puid);
+            string statusIcon;
+            GUIStyle statusStyle;
+            switch (status)
+            {
+                case FriendStatus.InLobby:
+                    statusIcon = "\u25CF";
+                    statusStyle = _greenLabel;
+                    break;
+                case FriendStatus.InGame:
+                    statusIcon = "\u25CF";
+                    statusStyle = _cyanLabel;
+                    break;
+                default:
+                    statusIcon = "\u25CB";
+                    statusStyle = _grayLabel;
+                    break;
+            }
+            GUILayout.Label(statusIcon, statusStyle, GUILayout.Width(14));
+
+            string platform = registry.GetPlatform(puid);
+            if (!string.IsNullOrEmpty(platform))
+            {
+                GUILayout.Label(EOSPlayerRegistry.GetPlatformIcon(platform), _grayLabel, GUILayout.Width(18));
+            }
+
+            GUILayout.Label(displayName, _whiteLabel, GUILayout.Width(80));
+
+            // Note or status
+            string note = registry.GetNote(puid);
+            bool hasNote = !string.IsNullOrEmpty(note);
+            bool isEditingThis = _editingNotePuid == puid;
+
+            if (isEditingThis)
+            {
+                _editingNoteText = GUILayout.TextField(_editingNoteText, 200, GUILayout.Width(80));
+                if (GUILayout.Button("\u2714", _smallButton, GUILayout.Width(20)))
+                {
+                    registry.SetNote(puid, _editingNoteText);
+                    _editingNotePuid = null;
+                    _editingNoteText = "";
+                }
+                if (GUILayout.Button("\u2718", _smallButton, GUILayout.Width(20)))
+                {
+                    _editingNotePuid = null;
+                    _editingNoteText = "";
+                }
+            }
+            else
+            {
+                string displayText;
+                if (hasNote)
+                    displayText = note.Length > 8 ? note.Substring(0, 6) + ".." : note;
+                else
+                    displayText = status == FriendStatus.InLobby ? "Here" :
+                                  status == FriendStatus.InGame ? (lobbyCode ?? "Game") : "--";
+
+                GUIStyle textStyle = hasNote ? _cyanLabel : (status == FriendStatus.InLobby ? _greenLabel : _grayLabel);
+                GUILayout.Label(displayText, textStyle, GUILayout.Width(45));
+
+                string noteIcon = hasNote ? "\u270E" : "\u270F";
+                if (GUILayout.Button(noteIcon, _smallButton, GUILayout.Width(20)))
+                {
+                    _editingNotePuid = puid;
+                    _editingNoteText = note ?? "";
+                }
+            }
+
+            GUILayout.FlexibleSpace();
+
+            if (!isEditingThis && status == FriendStatus.InGame && !string.IsNullOrEmpty(lobbyCode))
+            {
+                if (GUILayout.Button("Join", _smallButton, GUILayout.Width(35)))
+                {
+                    JoinFriendLobby(lobbyCode);
+                }
+            }
+            else if (!isEditingThis)
+            {
+                var invitesManager = EOSCustomInvites.Instance;
+                if (status != FriendStatus.InLobby && invitesManager != null && invitesManager.IsReady && !string.IsNullOrEmpty(invitesManager.CurrentPayload))
+                {
+                    if (GUILayout.Button("Inv", _smallButton, GUILayout.Width(35)))
+                    {
+                        SendInviteToPuid(puid, displayName);
+                    }
+                }
+            }
+
+            if (!isEditingThis)
+            {
+                if (GUILayout.Button("\u2718", _smallButton, GUILayout.Width(22)))
+                {
+                    registry.RemoveFriend(puid);
+                }
+            }
+
+            GUILayout.EndHorizontal();
+        }
+
+        private async void JoinFriendLobby(string lobbyCode)
+        {
+            var lobbyMgr = EOSLobbyManager.Instance;
+            if (lobbyMgr == null) return;
+
+            if (lobbyMgr.IsInLobby)
+            {
+                await lobbyMgr.LeaveLobbyAsync();
+            }
+
+            _lobbyStatus = $"Joining {lobbyCode}...";
+            var (result, lobby) = await lobbyMgr.JoinLobbyByCodeAsync(lobbyCode);
+            _lobbyStatus = result == Result.Success
+                ? $"Joined! Code: {lobby.JoinCode}"
+                : $"Failed: {result}";
+        }
+
+        #endregion
+
+        #region Blocked Players Section
+
+        private void DrawBlockedPlayersSection()
+        {
+            var registry = EOSPlayerRegistry.Instance;
+            if (registry == null) return;
+
+            int blockedCount = registry.BlockedCount;
+            if (blockedCount == 0) return;
+
+            if (!DrawFoldout($"Blocked ({blockedCount})", ref _foldBlocked)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            var blocked = registry.GetBlockedPlayers();
+            float listHeight = Mathf.Clamp(blocked.Count * 24, 50, 100);
+            _blockedScrollPos = GUILayout.BeginScrollView(_blockedScrollPos, GUILayout.Height(listHeight));
+
+            foreach (var (puid, name) in blocked)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("\u26D4", _redLabel, GUILayout.Width(18));
+                GUILayout.Label(name, _whiteLabel, GUILayout.Width(130));
+                GUILayout.FlexibleSpace();
+
+                if (GUILayout.Button("Unblock", _smallButton, GUILayout.Width(55)))
+                {
+                    registry.UnblockPlayer(puid);
+                }
+
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.EndScrollView();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Clear All", _smallButton, GUILayout.Width(60)))
+            {
+                registry.ClearBlocked();
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Invites Section
+
+        private void DrawInvitesSection()
+        {
+            var invitesManager = EOSCustomInvites.Instance;
+            if (invitesManager == null) return;
+
+            int pendingCount = invitesManager.PendingInvites.Count + invitesManager.PendingRequests.Count;
+            string title = pendingCount > 0 ? $"Invites ({pendingCount} pending)" : "Invites";
+
+            if (!DrawFoldout(title, ref _foldInvites)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (!invitesManager.IsReady)
+            {
+                GUILayout.Label("Waiting for EOS login...", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            var lobbyMgr = EOSLobbyManager.Instance;
+            bool isInLobby = lobbyMgr != null && lobbyMgr.IsInLobby;
+
+            // Current payload
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Payload:", _grayLabel, GUILayout.Width(55));
+            string payload = invitesManager.CurrentPayload;
+            GUILayout.Label(string.IsNullOrEmpty(payload) ? "(not set)" : payload, string.IsNullOrEmpty(payload) ? _grayLabel : _cyanLabel);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            if (isInLobby)
+            {
+                if (GUILayout.Button("Set Lobby Code as Payload", _smallButton))
+                {
+                    invitesManager.SetLobbyPayload();
+                    _inviteStatus = "Payload set to lobby code";
+                }
+            }
+
+            GUILayout.Space(6);
+
+            // Send invite
+            GUILayout.Label("Send Invite", _subHeaderStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("To:", _grayLabel, GUILayout.Width(25));
+            _inviteRecipientPuid = GUILayout.TextField(_inviteRecipientPuid, _textFieldStyle);
+            GUILayout.EndHorizontal();
+
+            GUI.enabled = !string.IsNullOrWhiteSpace(_inviteRecipientPuid) && !string.IsNullOrEmpty(payload);
+            if (GUILayout.Button("SEND INVITE", _smallButton))
+            {
+                SendInviteToRecipient();
+            }
+            GUI.enabled = true;
+
+            if (string.IsNullOrEmpty(payload))
+            {
+                GUILayout.Label("Set payload first (lobby code)", _grayLabel);
+            }
+
+            // Quick Send to Friends
+            var registry = EOSPlayerRegistry.Instance;
+            if (registry != null && registry.FriendCount > 0 && !string.IsNullOrEmpty(payload))
+            {
+                GUILayout.Space(6);
+                GUILayout.Label("Quick Send to Friends:", _grayLabel);
+                GUILayout.BeginHorizontal();
+                int shown = 0;
+                foreach (var (puid, name) in registry.GetFriends())
+                {
+                    if (shown >= 4) break;
+                    string buttonText = name.Length > 12 ? name.Substring(0, 10) + ".." : name;
+                    if (GUILayout.Button(buttonText, _smallButton, GUILayout.Width(75)))
+                    {
+                        SendInviteToPuid(puid, name);
+                    }
+                    shown++;
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+
+            // Pending received invites
+            if (invitesManager.PendingInvites.Count > 0)
+            {
+                GUILayout.Space(8);
+                GUILayout.Label($"Received Invites ({invitesManager.PendingInvites.Count})", _subHeaderStyle);
+                foreach (var kvp in invitesManager.PendingInvites)
+                {
+                    var invite = kvp.Value;
+                    GUILayout.BeginVertical(_sectionBox);
+                    string shortSender = invite.SenderId?.ToString();
+                    if (shortSender?.Length > 16) shortSender = shortSender.Substring(0, 8) + "...";
+                    GUILayout.Label($"From: {shortSender}", _grayLabel);
+                    if (!string.IsNullOrEmpty(invite.Payload))
+                        GUILayout.Label($"Code: {invite.Payload}", _cyanLabel);
+                    GUILayout.Label(GetTimeAgo(invite.ReceivedTime), _grayLabel);
+
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("Accept", _smallButton))
+                    {
+                        AcceptInviteAndJoin(kvp.Key, invite);
+                    }
+                    if (GUILayout.Button("Reject", _smallButton))
+                    {
+                        invitesManager.RejectInvite(kvp.Key);
+                    }
+                    GUILayout.EndHorizontal();
+                    GUILayout.EndVertical();
+                }
+            }
+
+            // Pending join requests
+            if (invitesManager.PendingRequests.Count > 0)
+            {
+                GUILayout.Space(8);
+                GUILayout.Label($"Join Requests ({invitesManager.PendingRequests.Count})", _subHeaderStyle);
+                foreach (var kvp in invitesManager.PendingRequests)
+                {
+                    var request = kvp.Value;
+                    GUILayout.BeginVertical(_sectionBox);
+                    string shortFrom = request.FromUserId?.ToString();
+                    if (shortFrom?.Length > 16) shortFrom = shortFrom.Substring(0, 8) + "...";
+                    GUILayout.Label($"From: {shortFrom}", _grayLabel);
+                    GUILayout.Label(GetTimeAgo(request.ReceivedTime), _grayLabel);
+
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("Accept", _smallButton))
+                    {
+                        _ = invitesManager.AcceptRequestToJoinAsync(request.FromUserId);
+                    }
+                    if (GUILayout.Button("Reject", _smallButton))
+                    {
+                        _ = invitesManager.RejectRequestToJoinAsync(request.FromUserId);
+                    }
+                    GUILayout.EndHorizontal();
+                    GUILayout.EndVertical();
+                }
+            }
+
+            if (!string.IsNullOrEmpty(_inviteStatus))
+            {
+                GUILayout.Space(4);
+                GUILayout.Label(_inviteStatus, _orangeLabel);
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        private async void SendInviteToRecipient()
+        {
+            var invitesManager = EOSCustomInvites.Instance;
+            if (invitesManager == null) return;
+            _inviteStatus = "Sending...";
+            var result = await invitesManager.SendInviteAsync(_inviteRecipientPuid.Trim());
+            _inviteStatus = result == Result.Success ? "Invite sent!" : $"Failed: {result}";
+            if (result == Result.Success) _inviteRecipientPuid = "";
+        }
+
+        private async void SendInviteToPuid(string puid, string displayName)
+        {
+            var invitesManager = EOSCustomInvites.Instance;
+            if (invitesManager == null || !invitesManager.IsReady) return;
+            _inviteStatus = $"Sending to {displayName}...";
+            var result = await invitesManager.SendInviteAsync(puid);
+            _inviteStatus = result == Result.Success ? $"Sent to {displayName}!" : $"Failed: {result}";
+        }
+
+        private async void AcceptInviteAndJoin(string inviteId, InviteData invite)
+        {
+            var invitesManager = EOSCustomInvites.Instance;
+            invitesManager?.AcceptInvite(inviteId);
+
+            if (invite.TryGetLobbyCode(out string lobbyCode))
+            {
+                _inviteStatus = $"Joining {lobbyCode}...";
+                var lobbyMgr = EOSLobbyManager.Instance;
+                if (lobbyMgr != null)
+                {
+                    var (result, lobby) = await lobbyMgr.JoinLobbyByCodeAsync(lobbyCode);
+                    _inviteStatus = result == Result.Success ? $"Joined: {lobby.JoinCode}" : $"Join failed: {result}";
+                }
+            }
+            else
+            {
+                _inviteStatus = "Invite accepted (no lobby code)";
+            }
+        }
+
+        #endregion
+
+        #region Epic Account Section
+
+        private void DrawEpicAccountSection()
+        {
+            var mgr = EOSManager.Instance;
+            if (!DrawFoldout("Epic Account", ref _foldEpicAccount)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (mgr.IsEpicAccountLoggedIn)
+            {
+                GUILayout.Label("Connected to Epic Account", _greenLabel);
+                GUILayout.Label($"EpicAccountId: {mgr.LocalEpicAccountId}", _monoLabel);
+                GUILayout.Space(4);
+                if (GUILayout.Button("Logout Epic Account", _smallButton))
+                {
+                    _ = mgr.LogoutEpicAccountAsync();
+                }
+            }
+            else
+            {
+                GUILayout.Label("Not connected to Epic Account.", _grayLabel);
+                GUILayout.Label("Enables: Friends, Presence, Achievements", _grayLabel);
+                GUILayout.Space(4);
+                if (GUILayout.Button("Login with Epic", _actionButton))
+                {
+                    _ = mgr.LoginWithEpicAccountAsync();
+                }
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Epic Friends Section
+
+        private void DrawEpicFriendsSection()
+        {
+            var friendsManager = EOSFriends.Instance;
+            if (friendsManager == null) return;
+
+            var eosManager = EOSManager.Instance;
+            if (eosManager == null || !eosManager.IsEpicAccountLoggedIn) return;
+
+            string title = friendsManager.IsReady
+                ? $"Epic Friends ({friendsManager.FriendCount})"
+                : "Epic Friends";
+
+            if (!DrawFoldout(title, ref _foldEpicFriends)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (!friendsManager.IsReady)
+            {
+                GUILayout.Label("Initializing...", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            if (GUILayout.Button("Refresh", _smallButton))
+            {
+                _ = friendsManager.QueryFriendsAsync();
+            }
+
+            GUILayout.Space(4);
+
+            if (friendsManager.FriendCount == 0)
+            {
+                GUILayout.Label("No Epic friends found.", _grayLabel);
+            }
+            else
+            {
+                float listHeight = Mathf.Clamp(friendsManager.FriendCount * 28, 60, 120);
+                _epicFriendsScrollPos = GUILayout.BeginScrollView(_epicFriendsScrollPos, GUILayout.Height(listHeight));
+
+                foreach (var friend in friendsManager.Friends)
+                {
+                    GUILayout.BeginHorizontal();
+
+                    string statusIcon = friend.Status switch
+                    {
+                        Epic.OnlineServices.Friends.FriendsStatus.Friends => "\u2714",
+                        Epic.OnlineServices.Friends.FriendsStatus.InviteSent => "\u27A1",
+                        Epic.OnlineServices.Friends.FriendsStatus.InviteReceived => "\u2709",
+                        _ => "\u2022"
+                    };
+                    GUIStyle statusStyle = friend.Status switch
+                    {
+                        Epic.OnlineServices.Friends.FriendsStatus.Friends => _greenLabel,
+                        Epic.OnlineServices.Friends.FriendsStatus.InviteSent => _yellowLabel,
+                        Epic.OnlineServices.Friends.FriendsStatus.InviteReceived => _cyanLabel,
+                        _ => _grayLabel
+                    };
+                    GUILayout.Label(statusIcon, statusStyle, GUILayout.Width(18));
+
+                    string displayText = !string.IsNullOrEmpty(friend.DisplayName) ? friend.DisplayName
+                        : (friend.AccountId?.ToString()?.Length > 16 ? friend.AccountId.ToString().Substring(0, 8) + "..." : friend.AccountId?.ToString() ?? "?");
+                    GUILayout.Label(displayText, _whiteLabel);
+                    GUILayout.FlexibleSpace();
+
+                    if (friend.Status == Epic.OnlineServices.Friends.FriendsStatus.InviteReceived)
+                    {
+                        if (GUILayout.Button("\u2714", _smallButton, GUILayout.Width(25)))
+                        {
+                            _ = friendsManager.AcceptInviteAsync(friend.AccountId);
+                        }
+                        if (GUILayout.Button("\u2718", _smallButton, GUILayout.Width(25)))
+                        {
+                            _ = friendsManager.RejectInviteAsync(friend.AccountId);
+                        }
+                    }
+                    else if (friend.Status == Epic.OnlineServices.Friends.FriendsStatus.Friends)
+                    {
+                        GUILayout.Label("Friend", _grayLabel, GUILayout.Width(40));
+                    }
+
+                    GUILayout.EndHorizontal();
+                }
+
+                GUILayout.EndScrollView();
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Stats & Leaderboards Section
+
+        private void DrawStatsAndLeaderboardsSection()
+        {
+            var statsManager = EOSStats.Instance;
+            var leaderboardsManager = EOSLeaderboards.Instance;
+
+            int statsCount = statsManager?.CachedStatsCount ?? 0;
+            int leaderboardCount = leaderboardsManager?.DefinitionCount ?? 0;
+            string title = $"Stats & Leaderboards ({statsCount} stats, {leaderboardCount} boards)";
+
+            if (!DrawFoldout(title, ref _foldStats)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            bool statsReady = statsManager != null && statsManager.IsReady;
+            bool leaderboardsReady = leaderboardsManager != null && leaderboardsManager.IsReady;
+
+            if (!statsReady && !leaderboardsReady)
+            {
+                GUILayout.Label("Waiting for EOS login...", _grayLabel);
+                GUILayout.Label("Stats require Developer Portal config.", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            // Stats
+            if (statsReady)
+            {
+                GUILayout.Label("My Stats", _subHeaderStyle);
+
+                if (GUILayout.Button("Query My Stats", _smallButton))
+                {
+                    _ = statsManager.QueryMyStatsAsync();
+                }
+
+                if (statsManager.CachedStatsCount > 0)
+                {
+                    _statsScrollPos = GUILayout.BeginScrollView(_statsScrollPos, GUILayout.Height(80));
+                    foreach (var kvp in statsManager.CachedStats)
+                    {
+                        GUILayout.BeginHorizontal();
+                        GUILayout.Label(kvp.Key, _grayLabel, GUILayout.Width(100));
+                        GUILayout.Label(kvp.Value.Value.ToString(), _whiteLabel);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+                    }
+                    GUILayout.EndScrollView();
+                }
+                else
+                {
+                    GUILayout.Label("No stats cached. Click Query.", _grayLabel);
+                }
+
+                // Test stat ingest
+                GUILayout.Space(4);
+                GUILayout.Label("Ingest Test Stat", _grayLabel);
+                GUILayout.BeginHorizontal();
+                _testStatName = GUILayout.TextField(_testStatName, _textFieldStyle, GUILayout.Width(100));
+                if (int.TryParse(GUILayout.TextField(_testStatAmount.ToString(), _textFieldStyle, GUILayout.Width(40)), out int amt))
+                    _testStatAmount = amt;
+                if (GUILayout.Button("+", _smallButton, GUILayout.Width(25)))
+                {
+                    _ = statsManager.IngestStatAsync(_testStatName, _testStatAmount);
+                }
+                GUILayout.EndHorizontal();
+            }
+
+            // Leaderboards
+            if (leaderboardsReady)
+            {
+                GUILayout.Space(6);
+                GUILayout.Label("Leaderboards", _subHeaderStyle);
+
+                if (GUILayout.Button("Refresh Definitions", _smallButton))
+                {
+                    _ = leaderboardsManager.QueryDefinitionsAsync();
+                }
+
+                if (leaderboardsManager.DefinitionCount > 0)
+                {
+                    GUILayout.Label("Select leaderboard:", _grayLabel);
+                    foreach (var def in leaderboardsManager.Definitions)
+                    {
+                        GUILayout.BeginHorizontal();
+                        bool isSelected = _selectedLeaderboardId == def.LeaderboardId;
+                        if (GUILayout.Button(def.LeaderboardId, isSelected ? _actionButton : _smallButton))
+                        {
+                            _selectedLeaderboardId = def.LeaderboardId;
+                            QuerySelectedLeaderboard();
+                        }
+                        GUILayout.Label($"({def.StatName})", _grayLabel);
+                        GUILayout.FlexibleSpace();
+                        GUILayout.EndHorizontal();
+                    }
+
+                    if (_currentLeaderboardEntries.Count > 0)
+                    {
+                        GUILayout.Space(4);
+                        GUILayout.Label($"Top {_currentLeaderboardEntries.Count}", _grayLabel);
+                        _leaderboardScrollPos = GUILayout.BeginScrollView(_leaderboardScrollPos, GUILayout.Height(100));
+                        foreach (var entry in _currentLeaderboardEntries)
+                        {
+                            GUILayout.BeginHorizontal();
+                            GUILayout.Label($"#{entry.Rank}", _grayLabel, GUILayout.Width(30));
+                            GUILayout.Label(entry.DisplayName ?? entry.ShortUserId, _whiteLabel, GUILayout.Width(100));
+                            GUILayout.Label(entry.Score.ToString(), _cyanLabel);
+                            GUILayout.FlexibleSpace();
+                            GUILayout.EndHorizontal();
+                        }
+                        GUILayout.EndScrollView();
                     }
                 }
                 else
                 {
-                    GUILayout.Label("Not connected to Epic Account.", _grayLabel);
-                    GUILayout.Label("Enables: Friends, Presence, Achievements", _grayLabel);
+                    GUILayout.Label("No leaderboards configured in Portal.", _grayLabel);
+                }
+            }
 
-                    GUILayout.Space(4);
-                    if (GUILayout.Button("Login with Epic", _actionButton))
-                    {
-                        _ = mgr.LoginWithEpicAccountAsync();
-                    }
+            GUILayout.EndVertical();
+        }
+
+        private async void QuerySelectedLeaderboard()
+        {
+            var leaderboardsManager = EOSLeaderboards.Instance;
+            if (string.IsNullOrEmpty(_selectedLeaderboardId) || leaderboardsManager == null) return;
+            var (result, entries) = await leaderboardsManager.QueryRanksAsync(_selectedLeaderboardId, 10);
+            if (result == Result.Success && entries != null)
+                _currentLeaderboardEntries = entries;
+        }
+
+        #endregion
+
+        #region Achievements Section
+
+        private void DrawAchievementsSection()
+        {
+            var achievementsManager = EOSAchievements.Instance;
+
+            string title = achievementsManager != null && achievementsManager.IsReady
+                ? $"Achievements ({achievementsManager.UnlockedCount}/{achievementsManager.TotalAchievements})"
+                : "Achievements";
+
+            if (!DrawFoldout(title, ref _foldAchievements)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (achievementsManager == null || !achievementsManager.IsReady)
+            {
+                GUILayout.Label("Waiting for EOS login...", _grayLabel);
+                GUILayout.Label("Achievements require Developer Portal config.", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            if (GUILayout.Button("Refresh Achievements", _smallButton))
+            {
+                _ = achievementsManager.RefreshAsync();
+            }
+
+            if (achievementsManager.TotalAchievements == 0)
+            {
+                GUILayout.Label("No achievements configured in Portal.", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            _achievementsScrollPos = GUILayout.BeginScrollView(_achievementsScrollPos, GUILayout.Height(120));
+
+            foreach (var def in achievementsManager.Definitions)
+            {
+                var playerAch = achievementsManager.GetPlayerAchievement(def.Id);
+                bool unlocked = playerAch?.IsUnlocked ?? false;
+                float progress = (float)(playerAch?.Progress ?? 0);
+
+                GUILayout.BeginHorizontal();
+                string icon = unlocked ? "\u2714" : "\u25CB";
+                GUILayout.Label(icon, unlocked ? _greenLabel : _grayLabel, GUILayout.Width(18));
+                GUILayout.Label(def.DisplayName ?? def.Id, unlocked ? _greenLabel : _whiteLabel, GUILayout.Width(120));
+
+                if (unlocked)
+                {
+                    var unlockTime = playerAch?.UnlockDateTime;
+                    GUILayout.Label(unlockTime?.ToString("MM/dd/yy") ?? "Unlocked", _grayLabel);
+                }
+                else if (progress > 0)
+                {
+                    GUILayout.Label($"{progress * 100:F0}%", _yellowLabel);
                 }
 
-                GUILayout.EndVertical();
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
             }
+
+            GUILayout.EndScrollView();
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Ranked Section
+
+        private void DrawRankedSection()
+        {
+            var rankedManager = EOSRankedMatchmaking.Instance;
+
+            string title = "Ranked";
+            if (rankedManager != null && rankedManager.IsDataLoaded)
+            {
+                string rankDisplay = rankedManager.GetCurrentRankDisplayName();
+                title = $"Ranked ({rankDisplay})";
+            }
+
+            if (!DrawFoldout(title, ref _foldRanked)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (rankedManager == null || !rankedManager.IsDataLoaded)
+            {
+                GUILayout.Label("Loading ranked data...", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            var playerData = rankedManager.PlayerData;
+
+            DrawKeyValue("Rating", $"{playerData.Rating} (Peak: {playerData.PeakRating})");
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Rank:", _grayLabel, GUILayout.Width(90));
+            string rankName = rankedManager.GetCurrentRankDisplayName();
+            GUIStyle rankStyle = rankedManager.CurrentTier switch
+            {
+                RankTier.Grandmaster or RankTier.Master or RankTier.Champion => _orangeLabel,
+                RankTier.Diamond or RankTier.Platinum => _cyanLabel,
+                RankTier.Gold => _yellowLabel,
+                _ => _whiteLabel
+            };
+            GUILayout.Label(rankName, rankStyle);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Record:", _grayLabel, GUILayout.Width(90));
+            GUILayout.Label($"{playerData.Wins}W", _greenLabel);
+            GUILayout.Label(" - ", _grayLabel);
+            GUILayout.Label($"{playerData.Losses}L", _redLabel);
+            if (playerData.GamesPlayed > 0)
+            {
+                float winRate = playerData.WinRate;
+                GUILayout.Label($" ({winRate:F0}%)", winRate >= 50 ? _greenLabel : _redLabel);
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            if (playerData.WinStreak >= 2 || playerData.LossStreak >= 2)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Streak:", _grayLabel, GUILayout.Width(90));
+                if (playerData.WinStreak >= 2)
+                    GUILayout.Label($"{playerData.WinStreak} wins", _greenLabel);
+                else if (playerData.LossStreak >= 2)
+                    GUILayout.Label($"{playerData.LossStreak} losses", _redLabel);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.Space(6);
+
+            // Matchmaking controls
+            var lobbyMgr = EOSLobbyManager.Instance;
+            bool isInLobby = lobbyMgr != null && lobbyMgr.IsInLobby;
+            bool isInQueue = rankedManager.IsInQueue;
+
+            if (!isInLobby && !isInQueue)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Mode:", _grayLabel, GUILayout.Width(40));
+                _rankedGameMode = GUILayout.TextField(_rankedGameMode, _textFieldStyle, GUILayout.Width(80));
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Find Match", _actionButton))
+                {
+                    FindRankedMatchAsync(rankedManager);
+                }
+                if (GUILayout.Button("Host Ranked", _actionButton))
+                {
+                    HostRankedLobbyAsync(rankedManager);
+                }
+                GUILayout.EndHorizontal();
+
+                if (GUILayout.Button("Find or Host", _actionButton))
+                {
+                    FindOrHostRankedAsync(rankedManager);
+                }
+            }
+            else if (isInQueue)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Queue:", _grayLabel, GUILayout.Width(50));
+                GUILayout.Label($"Searching... ({rankedManager.QueueTime:F0}s)", _yellowLabel);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                if (GUILayout.Button("Leave Queue", _actionButton))
+                {
+                    rankedManager.LeaveQueue();
+                    _rankedStatus = "Left queue";
+                }
+            }
+            else
+            {
+                GUILayout.Label("In lobby - leave to find new match", _grayLabel);
+            }
+
+            if (!string.IsNullOrEmpty(_rankedStatus))
+            {
+                GUILayout.Label(_rankedStatus, _grayLabel);
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        private async void FindRankedMatchAsync(EOSRankedMatchmaking mgr)
+        {
+            _rankedStatus = "Searching...";
+            var (result, lobby) = await mgr.FindRankedMatchAsync(_rankedGameMode);
+            _rankedStatus = result == Result.Success && lobby.HasValue ? $"Joined: {lobby.Value.JoinCode}" : $"No match ({result})";
+        }
+
+        private async void HostRankedLobbyAsync(EOSRankedMatchmaking mgr)
+        {
+            _rankedStatus = "Hosting...";
+            var (result, lobby) = await mgr.HostRankedLobbyAsync(_rankedGameMode);
+            _rankedStatus = result == Result.Success && lobby.HasValue ? $"Hosted: {lobby.Value.JoinCode}" : $"Failed ({result})";
+        }
+
+        private async void FindOrHostRankedAsync(EOSRankedMatchmaking mgr)
+        {
+            _rankedStatus = "Finding or hosting...";
+            var (result, lobby, didHost) = await mgr.FindOrHostRankedMatchAsync(_rankedGameMode);
+            _rankedStatus = result == Result.Success && lobby.HasValue
+                ? (didHost ? $"Hosted: {lobby.Value.JoinCode}" : $"Joined: {lobby.Value.JoinCode}")
+                : $"Failed ({result})";
+        }
+
+        #endregion
+
+        #region Cloud Storage Section
+
+        private void DrawCloudStorageSection()
+        {
+            var storageManager = EOSPlayerDataStorage.Instance;
+
+            int fileCount = storageManager?.Files?.Count ?? 0;
+            string title = $"Cloud Storage ({fileCount} files)";
+
+            if (!DrawFoldout(title, ref _foldStorage)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (storageManager == null || !storageManager.IsReady)
+            {
+                GUILayout.Label("Waiting for EOS login...", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            long used = storageManager.GetTotalStorageUsed();
+            GUILayout.Label($"Usage: {EOSPlayerDataStorage.FormatBytes(used)} / 400 MB", _grayLabel);
+
+            if (GUILayout.Button("Refresh File List", _smallButton))
+            {
+                _ = storageManager.QueryFileListAsync();
+            }
+
+            if (storageManager.Files.Count > 0)
+            {
+                _storageScrollPos = GUILayout.BeginScrollView(_storageScrollPos, GUILayout.Height(80));
+                foreach (var file in storageManager.Files)
+                {
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(file.Filename, _whiteLabel, GUILayout.Width(120));
+                    GUILayout.Label(EOSPlayerDataStorage.FormatBytes((long)file.FileSizeBytes), _grayLabel);
+                    if (GUILayout.Button("\u2715", _smallButton, GUILayout.Width(22)))
+                    {
+                        _ = storageManager.DeleteFileAsync(file.Filename);
+                    }
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                }
+                GUILayout.EndScrollView();
+            }
+            else
+            {
+                GUILayout.Label("No cloud files.", _grayLabel);
+            }
+
+            // Test write
+            GUILayout.Space(4);
+            GUILayout.Label("Test Write", _grayLabel);
+            GUILayout.BeginHorizontal();
+            _testFileName = GUILayout.TextField(_testFileName, _textFieldStyle, GUILayout.Width(80));
+            _testFileContent = GUILayout.TextField(_testFileContent, _textFieldStyle, GUILayout.Width(100));
+            if (GUILayout.Button("Write", _smallButton, GUILayout.Width(45)))
+            {
+                _ = storageManager.WriteFileAsync(_testFileName, _testFileContent);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Anti-Cheat Section
+
+        private void DrawAntiCheatSection()
+        {
+            var antiCheatManager = EOSAntiCheatManager.Instance;
+
+            string title = "Anti-Cheat";
+            if (antiCheatManager != null)
+            {
+                title = antiCheatManager.Status switch
+                {
+                    AntiCheatStatus.Protected => "\u2713 Anti-Cheat (Protected)",
+                    AntiCheatStatus.Violated => "\u26A0 Anti-Cheat (VIOLATION)",
+                    AntiCheatStatus.Error => "\u2717 Anti-Cheat (Error)",
+                    _ => "Anti-Cheat (N/A)"
+                };
+            }
+
+            if (!DrawFoldout(title, ref _foldAntiCheat)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (antiCheatManager == null || !antiCheatManager.IsReady)
+            {
+                GUILayout.Label("Anti-cheat not available.", _grayLabel);
+                GUILayout.Label("Configure EAC in EOS Developer Portal.", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            DrawKeyValue("Status", antiCheatManager.Status.ToString());
+            DrawKeyValue("Session", antiCheatManager.IsSessionActive ? "Active" : "Inactive");
+            if (antiCheatManager.IsSessionActive)
+            {
+                DrawKeyValue("Peers", antiCheatManager.RegisteredPeerCount.ToString());
+            }
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Auto-Start:", _grayLabel, GUILayout.Width(90));
+            bool autoStart = GUILayout.Toggle(antiCheatManager.AutoStartSession,
+                antiCheatManager.AutoStartSession ? "ON" : "OFF", _toggleStyle);
+            if (autoStart != antiCheatManager.AutoStartSession)
+                antiCheatManager.AutoStartSession = autoStart;
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            GUI.enabled = !antiCheatManager.IsSessionActive;
+            if (GUILayout.Button("Begin Session", _smallButton))
+                antiCheatManager.BeginSession();
+            GUI.enabled = antiCheatManager.IsSessionActive;
+            if (GUILayout.Button("End Session", _smallButton))
+                antiCheatManager.EndSession();
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Replays Section
+
+        private void DrawReplaysSection()
+        {
+            var replayPlayer = EOSReplayPlayer.Instance;
+            var replayStorage = EOSReplayStorage.Instance;
+            var replayViewer = EOSReplayViewer.Instance;
+
+            string title = "Replays";
+            if (replayViewer != null && replayViewer.IsViewing)
+                title = "\u25B6 Replays (Viewing)";
+            else if (replayStorage != null)
+                title = $"Replays ({replayStorage.LocalReplayCount})";
+
+            if (!DrawFoldout(title, ref _foldReplays)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            // Playback controls (when viewing)
+            if (replayViewer != null && replayViewer.IsViewing)
+            {
+                GUILayout.Label("NOW PLAYING", _subHeaderStyle);
+                var header = replayViewer.CurrentReplay;
+                if (header.HasValue)
+                {
+                    GUILayout.Label($"{header.Value.GameMode} on {header.Value.MapName}", _whiteLabel);
+                    GUILayout.Label($"{header.Value.Participants?.Length ?? 0} players", _grayLabel);
+                }
+
+                // Timeline
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"{EOSReplayStorage.FormatDuration(replayViewer.CurrentTime)}", _grayLabel, GUILayout.Width(45));
+                float progress = replayViewer.Duration > 0 ? replayViewer.CurrentTime / replayViewer.Duration : 0f;
+                float newProgress = GUILayout.HorizontalSlider(progress, 0f, 1f);
+                if (Mathf.Abs(newProgress - progress) > 0.01f)
+                    replayViewer.SeekPercent(newProgress);
+                GUILayout.Label($"{EOSReplayStorage.FormatDuration(replayViewer.Duration)}", _grayLabel, GUILayout.Width(45));
+                GUILayout.EndHorizontal();
+
+                // Controls
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("<<", _smallButton, GUILayout.Width(30)))
+                    replayViewer.Skip(-10f);
+                string playPauseIcon = replayViewer.PlaybackState == PlaybackState.Playing ? "||" : "\u25B6";
+                if (GUILayout.Button(playPauseIcon, _smallButton, GUILayout.Width(30)))
+                    replayViewer.TogglePlayPause();
+                if (GUILayout.Button(">>", _smallButton, GUILayout.Width(30)))
+                    replayViewer.Skip(10f);
+                GUILayout.Space(10);
+                if (GUILayout.Button($"{replayViewer.PlaybackSpeed:F1}x", _smallButton, GUILayout.Width(40)))
+                    replayViewer.CycleSpeed();
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Stop", _smallButton, GUILayout.Width(40)))
+                    replayViewer.StopViewing();
+                GUILayout.EndHorizontal();
+
+                // Target
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Viewing:", _grayLabel, GUILayout.Width(50));
+                GUILayout.Label(replayViewer.GetCurrentTargetName(), _whiteLabel);
+                if (GUILayout.Button("<", _smallButton, GUILayout.Width(25)))
+                    replayViewer.CycleTarget(-1);
+                if (GUILayout.Button(">", _smallButton, GUILayout.Width(25)))
+                    replayViewer.CycleTarget(1);
+                GUILayout.EndHorizontal();
+            }
+
+            // Replay list
+            GUILayout.Space(6);
+
+            if (replayStorage != null && Time.time - _lastReplayRefresh > 5f)
+            {
+                _cachedReplays = replayStorage.GetLocalReplays();
+                _lastReplayRefresh = Time.time;
+            }
+
+            if (GUILayout.Button("Refresh List", _smallButton))
+            {
+                replayStorage?.RefreshLocalReplays();
+                _cachedReplays = replayStorage?.GetLocalReplays() ?? new List<ReplayHeader>();
+                _lastReplayRefresh = Time.time;
+            }
+
+            if (_cachedReplays.Count == 0)
+            {
+                GUILayout.Label("No saved replays.", _grayLabel);
+            }
+            else
+            {
+                GUILayout.Label($"Saved ({_cachedReplays.Count})", _grayLabel);
+                _replayListScroll = GUILayout.BeginScrollView(_replayListScroll, GUILayout.Height(Mathf.Min(150, _cachedReplays.Count * 55 + 10)));
+
+                foreach (var replay in _cachedReplays)
+                {
+                    DrawReplayEntry(replay, replayStorage, replayViewer);
+                }
+
+                GUILayout.EndScrollView();
+            }
+
+            // Export success
+            if (_showExportSuccess && Time.time - _exportSuccessTime < 3f)
+            {
+                GUILayout.Space(4);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("\u2713 Exported!", _greenLabel);
+                if (GUILayout.Button("Open Folder", _smallButton, GUILayout.Width(80)))
+                    replayStorage?.OpenExportFolder();
+                GUILayout.EndHorizontal();
+            }
+            else
+            {
+                _showExportSuccess = false;
+            }
+
+            // Import
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            _importPath = GUILayout.TextField(_importPath, _textFieldStyle);
+            if (GUILayout.Button("Import", _smallButton, GUILayout.Width(50)))
+            {
+                if (!string.IsNullOrWhiteSpace(_importPath))
+                    _ = ImportReplayAsync(_importPath, replayStorage);
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+        }
+
+        private void DrawReplayEntry(ReplayHeader replay, EOSReplayStorage storage, EOSReplayViewer viewer)
+        {
+            bool isFavorite = storage?.IsFavorite(replay.ReplayId) ?? false;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            GUILayout.BeginHorizontal();
+            string starIcon = isFavorite ? "\u2605" : "\u2606";
+            if (GUILayout.Button(starIcon, _smallButton, GUILayout.Width(25)))
+            {
+                storage?.ToggleFavorite(replay.ReplayId);
+                _cachedReplays = storage?.GetLocalReplays() ?? new List<ReplayHeader>();
+            }
+            GUILayout.Label($"{replay.GameMode} on {replay.MapName}", _whiteLabel);
+            GUILayout.FlexibleSpace();
+            GUILayout.Label(EOSReplayStorage.FormatDuration(replay.Duration), _grayLabel);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"{replay.Participants?.Length ?? 0} players", _grayLabel);
+            GUILayout.Label(" - ", _grayLabel);
+            GUILayout.Label(FormatTimeAgo(replay.RecordedAt), _grayLabel);
+            GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button("\u25B6", _smallButton, GUILayout.Width(25)))
+                _ = PlayReplayAsync(replay.ReplayId, storage, viewer);
+            if (GUILayout.Button("\u21E5", _smallButton, GUILayout.Width(25)))
+                _ = ExportReplayAsync(replay.ReplayId, storage);
+            if (GUILayout.Button("\u2715", _smallButton, GUILayout.Width(25)))
+            {
+                storage?.DeleteReplay(replay.ReplayId);
+                _cachedReplays = storage?.GetLocalReplays() ?? new List<ReplayHeader>();
+            }
+
+            GUILayout.EndHorizontal();
+            GUILayout.EndVertical();
+        }
+
+        private async Task PlayReplayAsync(string replayId, EOSReplayStorage storage, EOSReplayViewer viewer)
+        {
+            if (viewer == null || storage == null) return;
+            var replay = await storage.LoadLocalAsync(replayId);
+            if (replay.HasValue)
+                viewer.StartViewing(replay.Value);
+        }
+
+        private async Task ExportReplayAsync(string replayId, EOSReplayStorage storage)
+        {
+            if (storage == null) return;
+            string path = await storage.ExportReplayAsync(replayId);
+            if (!string.IsNullOrEmpty(path))
+            {
+                _showExportSuccess = true;
+                _exportSuccessTime = Time.time;
+            }
+        }
+
+        private async Task ImportReplayAsync(string path, EOSReplayStorage storage)
+        {
+            if (storage == null) return;
+            bool success = await storage.ImportReplayAsync(path);
+            if (success)
+            {
+                _importPath = "";
+                _cachedReplays = storage.GetLocalReplays();
+            }
+        }
+
+        #endregion
+
+        #region Session Metrics Section
+
+        private void DrawSessionMetricsSection()
+        {
+            var metricsManager = EOSMetrics.Instance;
+
+            if (!DrawFoldout("Session Metrics", ref _foldMetrics)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (metricsManager == null || !metricsManager.IsReady)
+            {
+                GUILayout.Label("Waiting for EOS login...", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            bool sessionActive = metricsManager.IsSessionActive;
+
+            DrawKeyValue("Session", sessionActive ? "Active" : "Inactive");
+
+            if (sessionActive)
+            {
+                DrawKeyValue("Duration", metricsManager.SessionDuration.ToString(@"hh\:mm\:ss"));
+                if (!string.IsNullOrEmpty(metricsManager.CurrentSessionId))
+                {
+                    string shortId = metricsManager.CurrentSessionId.Length > 12
+                        ? metricsManager.CurrentSessionId.Substring(0, 12) + "..."
+                        : metricsManager.CurrentSessionId;
+                    DrawKeyValue("ID", shortId);
+                }
+            }
+
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            GUI.enabled = !sessionActive;
+            if (GUILayout.Button("Begin", _smallButton))
+                metricsManager.BeginSession();
+            GUI.enabled = sessionActive;
+            if (GUILayout.Button("End", _smallButton))
+                metricsManager.EndSession();
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region LFG Section
+
+        private void DrawLFGSection()
+        {
+            var lfgManager = EOSLFGManager.Instance;
+
+            string title = "LFG (Looking for Group)";
+            if (lfgManager != null && lfgManager.HasActivePost)
+                title = $"LFG (Active: {lfgManager.ActivePost.CurrentSize}/{lfgManager.ActivePost.DesiredSize})";
+
+            if (!DrawFoldout(title, ref _foldLFG)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (lfgManager == null)
+            {
+                GUILayout.Label("LFG Manager not available.", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            if (lfgManager.HasActivePost)
+            {
+                DrawActiveLFGPost(lfgManager);
+            }
+            else
+            {
+                DrawCreateLFGPost(lfgManager);
+            }
+
+            GUILayout.Space(6);
+            DrawLFGSearch(lfgManager);
+
+            if (!string.IsNullOrEmpty(_lfgStatus))
+            {
+                GUILayout.Label(_lfgStatus, _grayLabel);
+            }
+
+            GUILayout.EndVertical();
+        }
+
+        private void DrawActiveLFGPost(EOSLFGManager lfgManager)
+        {
+            var post = lfgManager.ActivePost;
+            GUILayout.Label("YOUR ACTIVE POST", _subHeaderStyle);
+
+            DrawKeyValue("Title", post.Title);
+            DrawKeyValue("Size", $"{post.CurrentSize}/{post.DesiredSize}");
+            if (!string.IsNullOrEmpty(post.GameMode))
+                DrawKeyValue("Mode", post.GameMode);
+
+            var timeLeft = post.TimeRemaining;
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Expires:", _grayLabel, GUILayout.Width(90));
+            GUILayout.Label($"{timeLeft.Minutes}m {timeLeft.Seconds}s", timeLeft.TotalMinutes < 5 ? _orangeLabel : _whiteLabel);
+            GUILayout.EndHorizontal();
+
+            if (lfgManager.PendingRequests.Count > 0)
+            {
+                GUILayout.Space(4);
+                GUILayout.Label($"Pending Requests: {lfgManager.PendingRequests.Count}", _yellowLabel);
+                foreach (var request in lfgManager.PendingRequests)
+                {
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(request.RequesterName, _grayLabel, GUILayout.Width(100));
+                    if (GUILayout.Button("Accept", _smallButton, GUILayout.Width(55)))
+                        _ = lfgManager.AcceptJoinRequestAsync(request);
+                    if (GUILayout.Button("Reject", _smallButton, GUILayout.Width(55)))
+                        _ = lfgManager.RejectJoinRequestAsync(request);
+                    GUILayout.EndHorizontal();
+                }
+            }
+
+            GUILayout.Space(4);
+            if (GUILayout.Button("Close Post", _actionButton))
+            {
+                CloseLFGPostAsync(lfgManager);
+            }
+        }
+
+        private void DrawCreateLFGPost(EOSLFGManager lfgManager)
+        {
+            GUILayout.Label("CREATE POST", _subHeaderStyle);
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Title:", _grayLabel, GUILayout.Width(45));
+            _lfgTitle = GUILayout.TextField(_lfgTitle, _textFieldStyle, GUILayout.Width(200));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Mode:", _grayLabel, GUILayout.Width(45));
+            _lfgGameMode = GUILayout.TextField(_lfgGameMode, _textFieldStyle, GUILayout.Width(100));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Size:", _grayLabel, GUILayout.Width(45));
+            if (GUILayout.Button("-", _smallButton, GUILayout.Width(25)))
+                _lfgDesiredSize = Mathf.Max(2, _lfgDesiredSize - 1);
+            GUILayout.Label(_lfgDesiredSize.ToString(), _cyanLabel, GUILayout.Width(25));
+            if (GUILayout.Button("+", _smallButton, GUILayout.Width(25)))
+                _lfgDesiredSize = Mathf.Min(64, _lfgDesiredSize + 1);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(4);
+            if (GUILayout.Button("Create LFG Post", _actionButton))
+            {
+                CreateLFGPostAsync(lfgManager);
+            }
+        }
+
+        private void DrawLFGSearch(EOSLFGManager lfgManager)
+        {
+            GUILayout.Label("BROWSE POSTS", _subHeaderStyle);
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Search", _smallButton, GUILayout.Width(60)))
+                SearchLFGPostsAsync(lfgManager);
+            if (GUILayout.Button("Refresh", _smallButton, GUILayout.Width(60)))
+                _ = lfgManager.RefreshSearchAsync();
+            GUILayout.Label($"{lfgManager.SearchResults.Count} posts", _grayLabel);
+            GUILayout.EndHorizontal();
+
+            if (lfgManager.SearchResults.Count > 0)
+            {
+                _lfgSearchScrollPos = GUILayout.BeginScrollView(_lfgSearchScrollPos, GUILayout.Height(120));
+
+                foreach (var post in lfgManager.SearchResults)
+                {
+                    if (post.IsExpired) continue;
+
+                    GUILayout.BeginVertical(_sectionBox);
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(post.Title, _grayLabel, GUILayout.Width(150));
+                    GUILayout.Label($"by {post.OwnerName}", _grayLabel);
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"{post.CurrentSize}/{post.DesiredSize}", _cyanLabel, GUILayout.Width(40));
+                    if (!string.IsNullOrEmpty(post.GameMode))
+                        GUILayout.Label(post.GameMode, _grayLabel, GUILayout.Width(60));
+                    if (post.VoiceRequired)
+                        GUILayout.Label("[Voice]", _yellowLabel, GUILayout.Width(50));
+                    GUILayout.FlexibleSpace();
+
+                    bool alreadySent = lfgManager.SentRequests.Contains(post.PostId);
+                    GUI.enabled = post.IsJoinable && !alreadySent;
+                    if (GUILayout.Button(alreadySent ? "Sent" : "Join", _smallButton, GUILayout.Width(50)))
+                        _ = lfgManager.SendJoinRequestAsync(post.PostId);
+                    GUI.enabled = true;
+                    GUILayout.EndHorizontal();
+
+                    GUILayout.EndVertical();
+                }
+
+                GUILayout.EndScrollView();
+            }
+        }
+
+        private async void CreateLFGPostAsync(EOSLFGManager lfgManager)
+        {
+            _lfgStatus = "Creating post...";
+            var options = new LFGPostOptions()
+                .WithTitle(_lfgTitle)
+                .WithGameMode(_lfgGameMode)
+                .WithDesiredSize(_lfgDesiredSize);
+            var (result, post) = await lfgManager.CreatePostAsync(options);
+            _lfgStatus = result == Result.Success ? "Post created!" : $"Failed: {result}";
+        }
+
+        private async void CloseLFGPostAsync(EOSLFGManager lfgManager)
+        {
+            _lfgStatus = "Closing post...";
+            var result = await lfgManager.ClosePostAsync();
+            _lfgStatus = result == Result.Success ? "Post closed" : $"Failed: {result}";
+        }
+
+        private async void SearchLFGPostsAsync(EOSLFGManager lfgManager)
+        {
+            _lfgStatus = "Searching...";
+            var options = new LFGSearchOptions();
+            if (!string.IsNullOrEmpty(_lfgGameMode))
+                options.WithGameMode(_lfgGameMode);
+            var (result, posts) = await lfgManager.SearchPostsAsync(options);
+            _lfgStatus = result == Result.Success ? $"Found {posts.Count} posts" : $"Search failed: {result}";
+        }
+
+        #endregion
+
+        #region Report Popup
+
+        private void DrawReportPopup()
+        {
+            // Darken background
+            GUI.color = new Color(0, 0, 0, 0.5f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            float popupWidth = 300;
+            float popupHeight = 200;
+            Rect popupRect = new Rect(
+                (Screen.width - popupWidth) / 2,
+                (Screen.height - popupHeight) / 2,
+                popupWidth, popupHeight);
+
+            GUI.Box(popupRect, "", _sectionBox);
+            GUILayout.BeginArea(new Rect(popupRect.x + 10, popupRect.y + 10, popupWidth - 20, popupHeight - 20));
+
+            GUILayout.Label("REPORT PLAYER", _headerStyle);
+
+            string targetDisplay = _reportTargetPuid.Length > 16
+                ? _reportTargetPuid.Substring(0, 8) + "..."
+                : _reportTargetPuid;
+
+            var chatMgr = EOSLobbyChatManager.Instance;
+            if (chatMgr != null)
+            {
+                string displayName = chatMgr.GetDisplayName(_reportTargetPuid);
+                if (!string.IsNullOrEmpty(displayName))
+                    targetDisplay = displayName;
+            }
+
+            GUILayout.Label($"Target: {targetDisplay}", _whiteLabel);
+            GUILayout.Space(10);
+
+            // Category selection
+            GUILayout.Label("Category:", _grayLabel);
+            var categories = EOSReports.GetAllCategories();
+            string[] categoryNames = new string[categories.Length];
+            for (int i = 0; i < categories.Length; i++)
+                categoryNames[i] = EOSReports.GetCategoryDisplayName(categories[i]);
+
+            GUILayout.BeginHorizontal();
+            for (int i = 0; i < Mathf.Min(4, categories.Length); i++)
+            {
+                bool isSelected = _reportCategoryIndex == i;
+                GUIStyle btnStyle = isSelected ? _actionButton : _smallButton;
+                if (GUILayout.Button(categoryNames[i], btnStyle))
+                    _reportCategoryIndex = i;
+            }
+            GUILayout.EndHorizontal();
+
+            if (categories.Length > 4)
+            {
+                GUILayout.BeginHorizontal();
+                for (int i = 4; i < categories.Length; i++)
+                {
+                    bool isSelected = _reportCategoryIndex == i;
+                    GUIStyle btnStyle = isSelected ? _actionButton : _smallButton;
+                    if (GUILayout.Button(categoryNames[i], btnStyle))
+                        _reportCategoryIndex = i;
+                }
+                GUILayout.EndHorizontal();
+            }
+
+            GUILayout.Space(10);
+
+            if (!string.IsNullOrEmpty(_reportStatus))
+                GUILayout.Label(_reportStatus, _grayLabel);
+
+            GUILayout.FlexibleSpace();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Send Report", _actionButton))
+            {
+                SendReport(categories[_reportCategoryIndex]);
+            }
+            if (GUILayout.Button("Cancel", _smallButton))
+            {
+                _showReportPopup = false;
+                _reportTargetPuid = "";
+                _reportStatus = "";
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndArea();
+        }
+
+        private async void SendReport(PlayerReportsCategory category)
+        {
+            var reportsManager = EOSReports.Instance;
+            if (string.IsNullOrEmpty(_reportTargetPuid) || reportsManager == null) return;
+            _reportStatus = "Sending...";
+            var result = await reportsManager.ReportPlayerAsync(_reportTargetPuid, category);
+            if (result == Result.Success)
+            {
+                _reportStatus = "Report sent!";
+                await Task.Delay(1000);
+                _showReportPopup = false;
+                _reportTargetPuid = "";
+                _reportStatus = "";
+            }
+            else
+            {
+                _reportStatus = $"Failed: {result}";
+            }
+        }
+
+        #endregion
+
+        #region Helpers
+
+        private string GetTimeAgo(DateTime dt)
+        {
+            var span = DateTime.Now - dt;
+            if (span.TotalMinutes < 1) return "just now";
+            if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+            if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+            if (span.TotalDays < 7) return $"{(int)span.TotalDays}d ago";
+            return dt.ToString("MM/dd");
+        }
+
+        private static string FormatTimeAgo(long unixTimeMs)
+        {
+            var recordedTime = DateTimeOffset.FromUnixTimeMilliseconds(unixTimeMs);
+            var elapsed = DateTimeOffset.UtcNow - recordedTime;
+            if (elapsed.TotalMinutes < 1) return "just now";
+            if (elapsed.TotalMinutes < 60) return $"{(int)elapsed.TotalMinutes}m ago";
+            if (elapsed.TotalHours < 24) return $"{(int)elapsed.TotalHours}h ago";
+            if (elapsed.TotalDays < 7) return $"{(int)elapsed.TotalDays}d ago";
+            return recordedTime.LocalDateTime.ToString("MMM d");
         }
 
         #endregion

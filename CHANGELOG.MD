@@ -2,6 +2,27 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.2.0] - 2026-02-06
+
+### Added
+
+#### F1 Overlay Expansion (6 tabs, 17 new sections)
+- Expanded F1 overlay from 4 tabs to 6 tabs: Status, Lobbies, Voice, Social, Stats, Tools
+- **Lobbies tab:** Lobby Members section with per-member report button, Lobby Chat section with scrollable log and send input
+- **Voice tab:** Local Mic Level section with mute toggle and level bar
+- **Social tab:** Recently Played (friend/block/invite per player), Local Friends (notes, join, status indicators, cloud sync), Blocked Players (unblock/clear), Invites (send/receive/accept/reject, quick-send to friends), Epic Account status, Epic Friends (query/accept/reject)
+- **Stats tab (new):** Stats query/ingest with test controls, Leaderboard definitions and rankings, Achievements progress list, Ranked Matchmaking (rating, tier, win/loss, find/host/queue)
+- **Tools tab (new):** Cloud Storage (file list, write/delete, usage), Anti-Cheat (status, session, auto-start), Replays (list, playback controls, timeline, export/import), Session Metrics (begin/end, duration), LFG (create/search/browse posts, join requests)
+- Modal report popup overlay with category selection triggered from lobby member list
+- All foldout sections default to expanded
+
+#### Auto-Create Singletons
+- `EOSLobbyChatManager` now auto-creates via singleton pattern (was find-only, now matches other managers)
+
+### Fixed
+- `async void` discard pattern (`_ = method()`) causing CS8209 compile errors on 7 call sites
+- Ranked matchmaking `OnDestroy` crash during application quit (JsonUtility.ToJson null reference when Unity is shutting down)
+
 ## [2.1.0] - 2026-02-06
 
 ### Added
@@ -44,6 +65,8 @@ All notable changes to the EOS-Native package will be documented in this file.
 - XAudio2 DLL path resolution for UPM package layout (multi-path search)
 - Native DLL loading path fix (`Path.GetFullPath()` for Unity virtual paths)
 - Quick Match now auto-hosts when no lobbies found
+- `CompressionLevel` ambiguity in `EOSReplayVoiceRecorder` (fully qualified `System.IO.Compression.CompressionLevel`)
+- Removed CS1998 warnings in `EOSGlobalChatManager` (async methods that don't await)
 
 ## [2.0.0] - 2026-02-06
 

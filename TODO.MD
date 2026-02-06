@@ -41,3 +41,7 @@
 - [x] Port EOSReplayVoiceRecorder from FishNet
 - [x] Port EOSMetrics from FishNet
 - [x] Create CHANGELOG.MD
+- [x] Expand F1 overlay from 4 to 6 tabs (17 new sections ported from FishNet UI)
+- [x] Auto-create EOSLobbyChatManager singleton
+- [x] All foldouts default to expanded
+- [x] Fix ranked matchmaking OnDestroy crash during shutdown

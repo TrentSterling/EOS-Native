@@ -69,10 +69,15 @@ Everything auto-creates. No manual component wiring needed.
 ### Voice Chat
 - **EOSVoiceManager** - RTC lobby-based voice (not P2P)
 - Auto-connects when joining voice-enabled lobbies
+- **Mic/speaker device selection** - runtime switching with hotplug detection
 - Per-participant mute, volume, speaking indicators
 - Raw audio frame access for custom playback
 - Persists through host migration
 - XAudio2 auto-resolution on Windows
+
+### Chat
+- **EOSLobbyChatManager** - In-lobby text chat (persists through host migration)
+- **EOSGlobalChatManager** - Channel-based global chat (join/leave/mute, message history)
 
 ### Social
 - **EOSFriends** - Friends list, requests, block/unblock (requires Epic Account)
@@ -105,19 +110,25 @@ Everything auto-creates. No manual component wiring needed.
 - **EOSReplayStorage** - Local + cloud replay storage
 - **EOSReplayPlayer** - Playback with seek, pause, speed control
 - **EOSReplayViewer** - Browse and manage replays
+- **EOSReplayHighlights** - Auto-detect gameplay highlights (multi-kill, clutch, comeback)
+- **EOSReplayVoiceRecorder** - Record voice chat during gameplay with GZip compression
+- **EOSReplayVoicePlayer** - Voice playback during replay viewing with per-speaker controls
 
 ### Moderation & Safety
 - **EOSAntiCheatManager** - Easy Anti-Cheat integration with peer validation
 - **EOSReports** - Player behavior reporting (to Developer Portal moderation queue)
 - **EOSSanctions** - Query player bans/restrictions
 - **EOSReputationManager** - Player reputation/rating
+- **EOSMetrics** - Player session telemetry for Developer Portal analytics
 
 ### UI
-- **EOSNativeStatusUI** - Runtime overlay (toggle with **F1**) with tabs:
+- **EOSNativeStatusUI** - Dark-themed runtime overlay (toggle with **F1**) with 6 tabs:
   - **Status** - SDK init, login state, interface availability, quick actions
-  - **Lobbies** - Create/join/search, member list, chat
-  - **Voice** - Connection status, mute toggle, participant list with speaking indicators
-  - **Social** - Friends, invites
+  - **Lobbies** - Create/join/search, lobby members with report button, lobby chat
+  - **Voice** - Local mic level, mute, mic/speaker device selection, participant list with level bars
+  - **Social** - Recently played, local friends (notes/join/status), blocked players, invites, Epic friends
+  - **Stats** - Stats query/ingest, leaderboards, achievements, ranked matchmaking
+  - **Tools** - Cloud storage, anti-cheat, replays, session metrics, LFG
 - **EOSToastManager** - Non-intrusive toast notifications
 
 ### Editor Tools

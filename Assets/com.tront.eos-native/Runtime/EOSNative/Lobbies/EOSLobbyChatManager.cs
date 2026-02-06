@@ -31,6 +31,12 @@ namespace EOSNative.Lobbies
 #else
                     _instance = FindObjectOfType<EOSLobbyChatManager>();
 #endif
+                    if (_instance == null)
+                    {
+                        var go = new UnityEngine.GameObject("[EOSLobbyChatManager]");
+                        _instance = go.AddComponent<EOSLobbyChatManager>();
+                        DontDestroyOnLoad(go);
+                    }
                 }
                 return _instance;
             }

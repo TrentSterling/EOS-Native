@@ -25,7 +25,7 @@
   * [Achievements](achievements.md)
 
 * **Replay System**
-  * [Recording & Playback](replays.md)
+  * [Replays & Highlights](replays.md)
 
 * **Advanced**
   * [Anti-Cheat (EAC)](anticheat.md)

@@ -27,12 +27,13 @@ Assets/com.tront.eos-native/
 │       ├── Lobbies/                     EOSLobbyManager, EOSLobbyChatManager
 │       ├── Voice/                       EOSVoiceManager
 │       ├── Party/                       EOSPartyManager
-│       ├── Social/                      Friends, Presence, Invites, LFG, Clans
+│       ├── Social/                      Friends, Presence, Invites, LFG, Clans, GlobalChat
 │       ├── Moderation/                  Achievements, Reports, Sanctions
 │       ├── AntiCheat/                   EOSAntiCheatManager
 │       ├── Storage/                     Player/Title Storage
-│       ├── Replay/                      Recording, Playback, Storage
+│       ├── Replay/                      Recording, Playback, Storage, Highlights, Voice
 │       ├── UI/                          Status overlay, Toasts
+│       ├── Debug/                       Debug settings, logger
 │       └── Logging/                     Debug logger
 └── EOSNative.Editor/                    Setup wizard, menus, inspectors
 ```
