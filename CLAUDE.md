@@ -158,9 +158,9 @@ Most managers use a lazy auto-create singleton pattern: `FindAnyObjectByType<T>(
 
 ## Documentation Site
 
-Full docsify documentation at `docs/` folder (38 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
+Full docsify documentation at `docs/` folder (39 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
 
-Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lfg, invites, discord, ranked, seasons, tournaments, leaderboards, achievements, reputation, match-history, replays, highlights, votekick, mapvote, backfill, rematch, afk, globalchat, parrelsync, anticheat, storage, architecture, platforms, debug, troubleshooting.
+Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lfg, invites, discord, ranked, seasons, tournaments, leaderboards, achievements, reputation, match-history, replays, highlights, votekick, mapvote, backfill, rematch, afk, globalchat, parrelsync, android, anticheat, storage, architecture, platforms, debug, troubleshooting.
 
 Style matches the FishNet EOS Native docs site with the same docsify theme, theme switcher, and code highlighting.
 

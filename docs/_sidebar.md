@@ -46,5 +46,6 @@
   * [Platforms](platforms.md)
 
 * **Reference**
+  * [Android Build Guide](android.md)
   * [Debug Tools](debug.md)
   * [Troubleshooting](troubleshooting.md)
