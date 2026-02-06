@@ -125,6 +125,14 @@ https://github.com/TrentSterling/EOS-Native.git?path=Assets/com.tront.eos-native
 - **Reference:** OpenEOS by RobProductions (similar concept, third-party maintained)
 - **Reference:** eos-unity by dylanh724 (vanilla EOS integration, deprecated)
 
+## Native DLL Loading (Editor)
+
+`LoadNativeLibrary()` in `EOSManager.cs` (line ~1196) uses `AssetDatabase.FindAssets()` to locate the SDK DLL by name, then loads it via platform-specific calls (kernel32 `LoadLibrary` on Windows, `dlopen` on macOS/Linux).
+
+**Critical:** `AssetDatabase.GUIDToAssetPath()` returns Unity virtual paths like `Packages/com.tront.eos-native/...` which native `LoadLibrary` cannot resolve. The path MUST be wrapped with `Path.GetFullPath()` to resolve to the actual filesystem path (e.g. `Library/PackageCache/com.tront.eos-native@<hash>/...`).
+
+In builds, Unity copies DLLs to the output automatically so this is only an editor concern.
+
 ## XAudio2 DLL Path Resolution (Windows Voice/RTC)
 
 The EOS SDK requires `xaudio2_9redist.dll` for RTC/Voice on Windows. The `GetXAudio2DllPath()` method in `EOSManager.cs` searches multiple candidate paths to support different installation layouts:
@@ -148,7 +156,7 @@ Most managers use a lazy auto-create singleton pattern: `FindAnyObjectByType<T>(
 
 ## Documentation Site
 
-Full docsify documentation at `docs/` folder (28 files). Enable GitHub Pages pointing to `/docs` to serve at `trentsterling.github.io/EOS-Native/`.
+Full docsify documentation at `docs/` folder (28 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
 
 Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lfg, invites, discord, ranked, seasons, tournaments, leaderboards, achievements, replays, anticheat, storage, architecture, platforms, debug, troubleshooting.
 
