@@ -214,11 +214,11 @@ All four fields apply to both Host Lobby and Quick Match lobby creation.
 - `SetOutputDevice(deviceId)` - Switches active speaker by `RealDeviceId`
 - `OnAudioDevicesChanged` event - Fires when devices are added/removed
 - `CurrentInputDeviceId` / `CurrentOutputDeviceId` - Track selected device
-- `LocalMicLevel` (float, 0-1) - Smoothed local mic level based on speaking state detection (via `ParticipantUpdated` callback). Ramps up when speaking, decays when silent. Used by both OnGUI and Canvas UI level bars.
+- `LocalMicLevel` (float, 0-1) - Real-time mic level via Unity `Microphone` API (RMS of 256 samples, scaled 8x). Starts capture when voice is connected and unmuted, stops on disconnect/mute. Used by both OnGUI and Canvas UI level bars.
 
-The F1 overlay Voice tab exposes dropdown selectors for input/output devices with a Refresh button.
+The F1 overlay Voice tab exposes dropdown selectors for input/output devices with a Refresh button. The Canvas UI Voice tab also has an Audio Devices section with Refresh button, input/output device selection buttons (green = selected), and real-time mic level bar.
 
-**Note:** `AudioBeforeSend` was tested for real RMS-based mic levels but causes `StackOverflowException` in `PlatformInterface.Tick()` — the EOS C# SDK queues audio frame callbacks and overflows processing them. Use speaking state smoothing instead.
+**Note:** `AudioBeforeSend` was tested for real RMS-based mic levels but causes `StackOverflowException` in `PlatformInterface.Tick()` — the EOS C# SDK queues audio frame callbacks and overflows processing them. `IsSpeaking()` proxy was also tested but unreliable when alone in a lobby (EOS VAD may not trigger). Unity `Microphone` API is the reliable solution.
 
 ## F1 Overlay Tabs (EOSNativeStatusUI)
 
@@ -248,8 +248,8 @@ A Canvas-based runtime UI (`EOSNativeCanvasUI.cs`, ~800 lines) that works on And
 | Tab | Contents |
 |-----|----------|
 | **Status** | SDK status, auth, PUID, platform info, interfaces, login/logout actions |
-| **Lobbies** | Current lobby info, create (name/max/public/voice/migrate), join by code, quick match, search, members, chat |
-| **Voice** | Voice status, mic level bar, mute toggle, participants with speaking indicators |
+| **Lobbies** | Current lobby info, create (name/max/public/voice/migrate), join by code, quick match, search, members, chat (Enter to send) |
+| **Voice** | Voice status, mic level bar, mute toggle, audio device picker (input/output), participants with speaking indicators |
 | **Social** | Player registry, recently played, local friends, blocked players, Epic friends |
 
 **Default visibility:** Mobile = Canvas ON, OnGUI OFF. Editor/Desktop = OnGUI ON, Canvas toggle button always visible.
