@@ -3112,7 +3112,7 @@ namespace EOSNative.UI
             {
                 if (GUILayout.Button("Invite", _smallButton))
                 {
-                    inviteMgr.SendInviteAsync(_profilePuid, "lobby_invite");
+                    _ = inviteMgr.SendInviteAsync(_profilePuid);
                     _profileStatus = "Invite sent!";
                 }
             }
