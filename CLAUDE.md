@@ -1,0 +1,162 @@
+# CLAUDE.md
+
+Guidance for Claude Code working on the **EOS-Native** package.
+
+## What This Is
+
+A Unity Package Manager (UPM) package that bundles the official Epic Online Services (EOS) C# SDK with native libraries for all supported platforms. No wrappers, no middleware - just the raw SDK.
+
+**Package name:** `com.tront.eos-native`
+**Assembly name:** `Epic.OnlineServices`
+**SDK version:** 1.18.1.2
+**Unity minimum:** 2021.3
+
+## Why It Exists
+
+- Epic has no public CDN for the EOS SDK (requires developer portal login to download)
+- OpenEOS exists but depends on a third-party maintainer
+- PlayEveryWare is bloated with middleware we don't need
+- This gives us full control over SDK distribution and versioning
+
+## Who Uses This
+
+The **FishNet EOS Native Transport** (`com.tront.fishnet-eos-native`) depends on this package for the `Epic.OnlineServices` assembly. Any Unity project needing EOS can use it.
+
+## Package Structure
+
+```
+Assets/com.tront.eos-native/
++-- package.json                         (UPM manifest)
++-- README.md
++-- LICENSE.md
++-- Runtime/
+    +-- Epic.OnlineServices.asmdef       (assembly definition)
+    +-- EOSSDK/
+        +-- Source/
+        |   +-- Core/                    (13 files - marshalling, P/Invoke helpers)
+        |   +-- Generated/               (1048+ files - auto-generated API bindings)
+        |       +-- Achievements/
+        |       +-- Auth/
+        |       +-- Connect/
+        |       +-- Lobby/
+        |       +-- P2P/
+        |       +-- RTC/, RTCAudio/, RTCData/
+        |       +-- Friends/, Presence/, UserInfo/
+        |       +-- Stats/, Leaderboards/
+        |       +-- Sessions/, Sanctions/, Reports/
+        |       +-- PlayerDataStorage/, TitleStorage/
+        |       +-- AntiCheatClient/, AntiCheatServer/
+        |       +-- Android/, IOS/, Windows/
+        |       +-- [36 module folders total]
+        +-- Plugins/
+            +-- Windows/x64/             (EOSSDK-Win64-Shipping.dll + xaudio2)
+            +-- Windows/x86/             (EOSSDK-Win32-Shipping.dll + xaudio2)
+            +-- macOS/                   (libEOSSDK-Mac-Shipping.dylib)
+            +-- Linux/                   (x64 + ARM64 .so files)
+            +-- iOS/                     (EOSSDK.framework + .xcframework)
+            +-- Android/                 (eossdk-StaticSTDC-release.aar)
+```
+
+## Assembly Definition
+
+```json
+{
+    "name": "Epic.OnlineServices",
+    "rootNamespace": "Epic.OnlineServices",
+    "allowUnsafeCode": true,
+    "autoReferenced": true,
+    "defineConstraints": ["!EOS_DISABLE"]
+}
+```
+
+- **Assembly name is `Epic.OnlineServices`** - matches what every EOS consumer expects
+- **allowUnsafeCode: true** - required for P/Invoke interop with native DLLs
+- **defineConstraints: `!EOS_DISABLE`** - add `EOS_DISABLE` to scripting defines to strip EOS from compilation (solves chicken-and-egg: transport code can compile without SDK present)
+
+## Installation
+
+**Via UPM git URL:**
+```
+https://github.com/TrentSterling/EOS-Native.git?path=Assets/com.tront.eos-native
+```
+
+**Manual:** Copy `Assets/com.tront.eos-native/` into target project's `Packages/` directory.
+
+## Supported Platforms
+
+| Platform | Library | Size |
+|----------|---------|------|
+| Windows x64 | EOSSDK-Win64-Shipping.dll | 19 MB |
+| Windows x86 | EOSSDK-Win32-Shipping.dll | 15 MB |
+| macOS Universal | libEOSSDK-Mac-Shipping.dylib | 46 MB |
+| Linux x64 | libEOSSDK-Linux-Shipping.so | 26 MB |
+| Linux ARM64 | libEOSSDK-LinuxArm64-Shipping.so | 23 MB |
+| iOS ARM64 | EOSSDK.framework + .xcframework | ~25 MB |
+| Android | eossdk-StaticSTDC-release.aar | 37 MB |
+
+## How To Update The SDK
+
+1. Download new EOS C# SDK from Epic Developer Portal
+2. Replace `Runtime/EOSSDK/Source/` with the new SDK's `SDK/Source/`
+3. Replace native libs in `Runtime/EOSSDK/Plugins/` from the new SDK's `SDK/Bin/`:
+   - `Bin/EOSSDK-Win64-Shipping.dll` -> `Plugins/Windows/x64/`
+   - `Bin/EOSSDK-Win32-Shipping.dll` -> `Plugins/Windows/x86/`
+   - `Bin/x64/xaudio2_9redist.dll` -> `Plugins/Windows/x64/`
+   - `Bin/x86/xaudio2_9redist.dll` -> `Plugins/Windows/x86/`
+   - `Bin/libEOSSDK-Mac-Shipping.dylib` -> `Plugins/macOS/`
+   - `Bin/libEOSSDK-Linux-Shipping.so` -> `Plugins/Linux/`
+   - `Bin/libEOSSDK-LinuxArm64-Shipping.so` -> `Plugins/Linux/`
+   - `Bin/Android/static-stdc++/aar/*.aar` -> `Plugins/Android/`
+   - `Bin/IOS/` -> `Plugins/iOS/`
+4. Open Unity, let it reimport
+5. Verify platform targeting on new DLLs in Inspector
+6. Bump version in `package.json`
+
+## Origin / Provenance
+
+- SDK source: Official Epic Online Services C# SDK v1.18.1.2
+- Downloaded from: Epic Developer Portal (dev.epicgames.com)
+- C# source and native libs are unmodified from Epic's distribution
+- Only additions: package.json, asmdef, README, LICENSE, directory organization
+
+## Related Projects
+
+- **Transport:** `C:\Github\EOSTransport` (FishNet EOS Native Transport - depends on this)
+- **Reference:** OpenEOS by RobProductions (similar concept, third-party maintained)
+- **Reference:** eos-unity by dylanh724 (vanilla EOS integration, deprecated)
+
+## XAudio2 DLL Path Resolution (Windows Voice/RTC)
+
+The EOS SDK requires `xaudio2_9redist.dll` for RTC/Voice on Windows. The `GetXAudio2DllPath()` method in `EOSManager.cs` searches multiple candidate paths to support different installation layouts:
+
+1. **UPM package:** `Packages/com.tront.eos-native/Runtime/EOSSDK/Plugins/Windows/x64/xaudio2_9redist.dll`
+2. **Embedded in Assets:** `Assets/com.tront.eos-native/Runtime/EOSSDK/Plugins/Windows/x64/xaudio2_9redist.dll`
+3. **Legacy flat:** `Assets/Plugins/EOSSDK/Windows/x64/xaudio2_9redist.dll`
+4. **Alternative legacy:** `Assets/Plugins/Windows/x64/xaudio2_9redist.dll`
+
+In builds, Unity copies DLLs to `<GameName>_Data/Plugins/x86_64/`.
+
+If you see "Failed to load custom XAudio2.9 dll", verify the DLL exists at one of the candidate paths and that the path is resolving correctly.
+
+## Singleton Auto-Creation Pattern
+
+Most managers use a lazy auto-create singleton pattern: `FindAnyObjectByType<T>()` first, then `new GameObject + AddComponent<T>() + DontDestroyOnLoad()` if not found. This means consumers don't need to manually place manager components in the scene.
+
+**Auto-create singletons:** EOSLobbyManager, EOSVoiceManager, EOSStats, EOSAchievements, EOSPartyManager, EOSAntiCheatManager, EOSPlayerRegistry, EOSReports, EOSSanctions, EOSCustomInvites, EOSFriends, EOSLeaderboards, EOSPresence, EOSUserInfo, EOSPlayerDataStorage, EOSTitleStorage, and more.
+
+**Find-only singletons (no auto-create):** EOSTournamentManager, EOSClanManager.
+
+## Documentation Site
+
+Full docsify documentation at `docs/` folder (28 files). Enable GitHub Pages pointing to `/docs` to serve at `trentsterling.github.io/EOS-Native/`.
+
+Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lfg, invites, discord, ranked, seasons, tournaments, leaderboards, achievements, replays, anticheat, storage, architecture, platforms, debug, troubleshooting.
+
+Style matches the FishNet EOS Native docs site with the same docsify theme, theme switcher, and code highlighting.
+
+## Rules
+
+- **Do NOT add wrapper code** to this package. It's pure SDK only. Wrapper logic belongs in the transport or consumer projects.
+- **Do NOT modify the C# source** in Source/Core or Source/Generated. These are Epic's auto-generated files.
+- **Do NOT remove platform support.** All platforms stay included.
+- When updating the SDK, preserve the Plugins/ folder organization (by platform subfolder).

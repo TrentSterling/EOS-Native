@@ -1,0 +1,16 @@
+{
+    "name": "Epic.OnlineServices",
+    "rootNamespace": "Epic.OnlineServices",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "!EOS_DISABLE"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

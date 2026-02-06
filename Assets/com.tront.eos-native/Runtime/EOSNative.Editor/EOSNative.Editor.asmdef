@@ -1,0 +1,21 @@
+{
+    "name": "EOSNative.Editor",
+    "rootNamespace": "EOSNative.Editor",
+    "references": [
+        "EOSNative",
+        "Epic.OnlineServices"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "!EOS_DISABLE"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

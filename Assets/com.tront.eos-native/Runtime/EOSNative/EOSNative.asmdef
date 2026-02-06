@@ -1,0 +1,25 @@
+{
+    "name": "EOSNative",
+    "rootNamespace": "EOSNative",
+    "references": [
+        "Epic.OnlineServices",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "!EOS_DISABLE"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.inputsystem",
+            "expression": "",
+            "define": "EOS_HAS_INPUT_SYSTEM"
+        }
+    ],
+    "noEngineReferences": false
+}
