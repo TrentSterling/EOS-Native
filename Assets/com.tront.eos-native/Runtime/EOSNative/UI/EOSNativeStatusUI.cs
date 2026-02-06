@@ -500,10 +500,17 @@ namespace EOSNative.UI
             if (lobbyMgr == null) return;
             _lobbyStatus = "Quick matching...";
 
-            var (result, lobby) = await lobbyMgr.QuickMatchAsync();
+            var options = new LobbyCreateOptions
+            {
+                MaxPlayers = (uint)_maxPlayers,
+                IsPublic = _lobbyPublic,
+                EnableVoice = _lobbyVoice
+            };
+
+            var (result, lobby, didHost) = await lobbyMgr.QuickMatchOrHostAsync(options);
             _lobbyStatus = result == Result.Success
-                ? $"Joined! Code: {lobby.JoinCode}"
-                : $"No lobbies found.";
+                ? (didHost ? $"Hosting! Code: {lobby.JoinCode}" : $"Joined! Code: {lobby.JoinCode}")
+                : $"Quick match failed: {result}";
         }
 
         private async void SearchLobbies(EOSLobbyManager lobbyMgr)

@@ -1541,6 +1541,7 @@ namespace EOSNative
         private string _joinCode = "";
         private string _lobbyStatus = "";
         private bool _lobbyOperationInProgress;
+        private bool _enableVoice = true;
 
         private void InitializeStyles()
         {
@@ -1908,6 +1909,10 @@ namespace EOSNative
                 EditorGUILayout.LabelField("(blank = new)", EditorStyles.miniLabel);
                 EditorGUILayout.EndHorizontal();
 
+                EditorGUILayout.BeginHorizontal();
+                _enableVoice = EditorGUILayout.ToggleLeft("Voice", _enableVoice, GUILayout.Width(60));
+                EditorGUILayout.EndHorizontal();
+
                 EditorGUILayout.Space(5);
 
                 EditorGUILayout.BeginHorizontal();
@@ -2112,7 +2117,7 @@ namespace EOSNative
             {
                 MaxPlayers = 4,
                 IsPublic = true,
-                EnableVoice = true
+                EnableVoice = _enableVoice
             };
 
             var (result, lobby) = await lobbyMgr.CreateLobbyAsync(options);
@@ -2156,15 +2161,22 @@ namespace EOSNative
             _lobbyStatus = "Finding match...";
             Repaint();
 
-            var (result, lobby) = await lobbyMgr.QuickMatchAsync();
+            var options = new LobbyCreateOptions
+            {
+                MaxPlayers = 4,
+                IsPublic = true,
+                EnableVoice = _enableVoice
+            };
+
+            var (result, lobby, didHost) = await lobbyMgr.QuickMatchOrHostAsync(options);
             if (result == Result.Success)
             {
-                _lobbyStatus = $"Matched: {lobby.JoinCode}";
+                _lobbyStatus = didHost ? $"Hosting: {lobby.JoinCode}" : $"Matched: {lobby.JoinCode}";
                 _joinCode = lobby.JoinCode;
             }
             else
             {
-                _lobbyStatus = $"No matches found.";
+                _lobbyStatus = $"Quick match failed: {result}";
             }
 
             _lobbyOperationInProgress = false;

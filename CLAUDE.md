@@ -162,6 +162,19 @@ Covers: quickstart, setup, lobbies, voice, chat, auth, friends, party, clans, lf
 
 Style matches the FishNet EOS Native docs site with the same docsify theme, theme switcher, and code highlighting.
 
+## Inspector Quick Match Behavior
+
+The Inspector's Quick Match button calls `QuickMatchOrHostAsync()` which:
+1. Searches for available lobbies
+2. If found, joins a random one
+3. **If none found, automatically creates and hosts a new lobby**
+
+Both the Inspector (EOSManagerEditor) and the runtime F1 overlay (EOSNativeStatusUI) use this pattern. The Inspector also exposes a Voice toggle that controls `EnableVoice` for both Host and Quick Match lobby creation.
+
+## Bug/TODO Tracking
+
+See `BUGS.MD` and `TODO.MD` in the repo root for known issues and planned work.
+
 ## Rules
 
 - **Do NOT add wrapper code** to this package. It's pure SDK only. Wrapper logic belongs in the transport or consumer projects.
