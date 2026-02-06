@@ -41,6 +41,9 @@ Assets/Scenes.meta
 # Claude Code local settings
 .claude/
 
+# Windows artifacts
+nul
+
 # Builds
 *.apk
 *.aab
