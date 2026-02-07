@@ -219,18 +219,29 @@ var muteOptions = new RTCAdmin.SetParticipantHardMuteOptions
 
 Build a **Fusion Shared Mode-level** networking framework on top of EOS P2P — but easier.
 Not a transport for FishNet/Mirror. A standalone framework that owns the full stack.
+**And it's FREE.** No middleware licenses, no per-CCU fees, no FishNet Pro, no Photon subscriptions.
 
 Key insight: because we own the code top-to-bottom, we can solve problems that
 transport-layer solutions can't (seamless migration, zero-destroy pooling, etc).
 
+Comparable to what Unreal Engine does natively with EOS — but for Unity, and EOS-first.
+
+### Official Target: 16 Players
+
+All features tested and optimized for **16 concurrent players**. EOS lobbies hard cap at 64,
+and the framework can handle more, but 16 is the official target that keeps things sane.
+Voice caps at 16 with lobby-managed (64 with trusted server rooms).
+
 ### Core Principles
 
 1. **Easiest to use ever** — remove all pain points of FishNet/Mirror/Photon setup
-2. **Seamless host migration** — never destroy/recreate objects, just transfer authority
+2. **Seamless host migration** — never destroy/recreate objects, just transfer authority. Already connected to next host via P2P mesh — failover is instant, known ahead of time
 3. **Pooled instantiation** — `PooledInstantiate()` / reuse-reset pattern, no Destroy overhead
 4. **Cross-platform out of the box** — Windows, Android, VR crossplay, zero extra config
 5. **Peer authority (Shared Mode)** — each peer owns their objects, writes directly, no RPCs needed for owned state
 6. **No reflection for migration** — we own the serialization, so SyncVar save/restore is built-in, not hacked on top
+7. **Direct mesh RPCs** — RPCs go straight to each client peer-to-peer, not routed through host like FishNet/Mirror. EOS already uses a relay for everything and allows P2P direct mesh connections
+8. **100% free** — no middleware, no licenses, no per-CCU fees. Just EOS (free) + this package (free)
 
 ### Why Not Just Be a Transport?
 
@@ -238,13 +249,17 @@ FishNet and Mirror:
 - Force `Destroy()` + `Instantiate()` on host migration (flicker, state loss)
 - Require reflection-based SyncVar saving for migration workarounds
 - Client-server authority model doesn't map cleanly to P2P/shared mode
+- All messages routed through host first like a relay — even RPCs between two non-host clients
 - Heavyweight — pull in systems we don't need
 
 Our framework:
 - Objects never get destroyed on migration — authority pointer just changes
+- No flicker/jump from migration, no need to save vars and restore them — the shit just keeps running on the fly
 - SyncVars are first-class: dirty bits, owner-writes, built-in snapshot for late join
 - Pooling is native — objects reset and reuse, no GC pressure
 - P2P mesh topology — no dedicated server needed, lobby IS the session
+- RPCs go direct: peer A can send to peer B without bouncing through host
+- EOS is already using a relay for everything and allows P2P direct mesh connections
 
 ### Architecture Layers
 
@@ -312,14 +327,17 @@ Layer 0: EOS P2P + Lobby (EOSP2PManager, EOSLobbyManager) [DONE]
 
 | Pain Point | FishNet/Mirror | EOS-Native Framework |
 |-----------|---------------|---------------------|
-| Host migration | Destroy all + recreate | Authority transfer, zero destruction |
-| Object pooling | Manual, easy to break | Built-in `PooledInstantiate` |
-| SyncVar migration | Reflection hack | Native serialize/deserialize |
-| Cross-platform setup | Manual platform config | Auto (Android desugaring, XR) |
-| Voice chat | External plugin | Built-in `EOSVoiceManager` |
-| Lobby/matchmaking | External plugin | Built-in `EOSLobbyManager` |
-| Friends/social | Not included | Built-in social stack |
-| Dedicated server | Required for auth model | Optional — P2P mesh works |
+| **Price** | FishNet Pro $$$, Mirror free but limited | **100% free** — no licenses, no CCU fees |
+| **Host migration** | Destroy all + recreate (flicker/state loss) | Authority transfer, zero destruction, instant failover |
+| **RPC routing** | All RPCs route through host (relay bottleneck) | Direct P2P mesh — RPCs go straight to target peer |
+| **Object pooling** | Manual, easy to break | Built-in `PooledInstantiate` |
+| **SyncVar migration** | Reflection hack to save/restore | Native serialize/deserialize, no reflection |
+| **Cross-platform** | Manual platform config per target | Auto (Android desugaring, XR, crossplay) |
+| **Voice chat** | External plugin (Vivox $$, Agora $$) | Built-in `EOSVoiceManager` (free, 16-64 players) |
+| **Lobby/matchmaking** | External plugin or manual | Built-in `EOSLobbyManager` (free) |
+| **Friends/social** | Not included | Built-in social stack (friends, party, presence) |
+| **Dedicated server** | Required for authority model | Optional — P2P mesh works, lobby IS the session |
+| **Next host readiness** | Unknown until migration happens | Already connected via mesh, known ahead of time |
 
 ---
 

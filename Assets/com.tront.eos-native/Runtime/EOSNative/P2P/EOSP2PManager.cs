@@ -4,6 +4,7 @@ using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using EOSNative.Lobbies;
 using EOSNative.Logging;
+using EOSNative.Net;
 using UnityEngine;
 
 namespace EOSNative.P2P
@@ -236,6 +237,7 @@ namespace EOSNative.P2P
                 AllowDelayedDelivery = true
             };
             P2P.SendPacket(ref options);
+            NetworkStats._instance?.RecordBytesSent(peer, data.Length);
         }
 
         /// <summary>Accept a connection from a specific peer and add them.</summary>
@@ -311,6 +313,7 @@ namespace EOSNative.P2P
         {
             if (_peers.Add(data.RemoteUserId))
             {
+                NetworkStats._instance?.RecordConnectionType(data.RemoteUserId, data.NetworkType, data.ConnectionType);
                 OnPeerConnected?.Invoke(data.RemoteUserId);
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager", $"Peer connected: {data.RemoteUserId}");
             }
@@ -358,6 +361,7 @@ namespace EOSNative.P2P
                 {
                     var data = new byte[bytesWritten];
                     Buffer.BlockCopy(_receiveBuffer, 0, data, 0, (int)bytesWritten);
+                    NetworkStats._instance?.RecordBytesReceived(_cachedPeerId, (int)bytesWritten);
                     OnPacketReceived?.Invoke(_cachedPeerId, channel, data);
                 }
             }

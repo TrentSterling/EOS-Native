@@ -8,6 +8,8 @@ using Epic.OnlineServices.RTCAudio;
 using EOSNative.AntiCheat;
 using EOSNative.Lobbies;
 using EOSNative.Logging;
+using EOSNative.Net;
+using EOSNative.P2P;
 using EOSNative.Replay;
 using EOSNative.Social;
 using EOSNative.Storage;
@@ -129,6 +131,7 @@ namespace EOSNative.UI
         private bool _foldReplays = true;
         private bool _foldMetrics = true;
         private bool _foldLFG = true;
+        private bool _foldNetworkStats = true;
 
         // Chat state
         private string _chatInput = "";
@@ -1230,6 +1233,8 @@ namespace EOSNative.UI
                 return;
             }
 
+            DrawNetworkStatsSection();
+            GUILayout.Space(4);
             DrawStatsAndLeaderboardsSection();
             GUILayout.Space(4);
             DrawAchievementsSection();
@@ -2105,6 +2110,163 @@ namespace EOSNative.UI
             }
 
             GUILayout.EndVertical();
+        }
+
+        #endregion
+
+        #region Network Stats Section
+
+        private void DrawNetworkStatsSection()
+        {
+            var stats = NetworkStats._instance;
+            int peerCount = stats?.AllPeerStats.Count ?? 0;
+            string title = $"Network Stats ({peerCount} peers)";
+
+            if (!DrawFoldout(title, ref _foldNetworkStats)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+
+            if (stats == null)
+            {
+                GUILayout.Label("NetworkStats not active.", _grayLabel);
+                GUILayout.EndVertical();
+                return;
+            }
+
+            var global = stats.GetGlobalStats();
+
+            // Summary row 1
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("NAT:", _grayLabel, GUILayout.Width(30));
+            GUILayout.Label(global.LocalNATType.ToString(), NATLabel(global.LocalNATType), GUILayout.Width(70));
+            GUILayout.Label("Peers:", _grayLabel, GUILayout.Width(40));
+            GUILayout.Label(peerCount.ToString(), _whiteLabel, GUILayout.Width(30));
+            GUILayout.Label("Avg RTT:", _grayLabel, GUILayout.Width(55));
+            float avgRtt = global.AverageRTT;
+            GUILayout.Label(avgRtt >= 0 ? $"{avgRtt:F0}ms" : "---", RTTLabel(avgRtt), GUILayout.Width(50));
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            // Summary row 2 — bandwidth
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("BW Out:", _grayLabel, GUILayout.Width(50));
+            GUILayout.Label($"{global.BandwidthOutKBps:F1} KBps", _whiteLabel, GUILayout.Width(80));
+            GUILayout.Label("In:", _grayLabel, GUILayout.Width(20));
+            GUILayout.Label($"{global.BandwidthInKBps:F1} KBps", _whiteLabel, GUILayout.Width(80));
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            // Summary row 3 — queue info
+            if (global.OutgoingQueueMaxBytes > 0 || global.IncomingQueueMaxBytes > 0)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Queue Out:", _grayLabel, GUILayout.Width(65));
+                GUILayout.Label($"{global.OutgoingQueueBytes / 1024f:F1}/{global.OutgoingQueueMaxBytes / 1024f:F0} KB",
+                    _whiteLabel, GUILayout.Width(100));
+                GUILayout.Label("In:", _grayLabel, GUILayout.Width(20));
+                GUILayout.Label($"{global.IncomingQueueBytes / 1024f:F1}/{global.IncomingQueueMaxBytes / 1024f:F0} KB",
+                    _whiteLabel, GUILayout.Width(100));
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+
+            // Per-peer table
+            if (peerCount > 0)
+            {
+                GUILayout.Space(4);
+
+                // Header row
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Name", _grayLabel, GUILayout.Width(90));
+                GUILayout.Label("RTT", _grayLabel, GUILayout.Width(50));
+                GUILayout.Label("Loss", _grayLabel, GUILayout.Width(45));
+                GUILayout.Label("Type", _grayLabel, GUILayout.Width(55));
+                GUILayout.Label("Out", _grayLabel, GUILayout.Width(55));
+                GUILayout.Label("In", _grayLabel, GUILayout.Width(55));
+                GUILayout.Label("Age", _grayLabel, GUILayout.Width(40));
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+
+                foreach (var kvp in stats.AllPeerStats)
+                {
+                    var ps = kvp.Value;
+                    string puidStr = kvp.Key?.ToString() ?? "?";
+                    string displayName = EOSPlayerRegistry.Instance?.GetPlayerName(puidStr)
+                        ?? TruncatePuid(puidStr);
+                    float age = Time.unscaledTime - ps.ConnectedTime;
+
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(displayName, _whiteLabel, GUILayout.Width(90));
+                    GUILayout.Label(ps.RTT >= 0 ? $"{ps.RTT:F0}ms" : "---", RTTLabel(ps.RTT), GUILayout.Width(50));
+                    GUILayout.Label($"{ps.PacketLoss * 100f:F1}%", LossLabel(ps.PacketLoss), GUILayout.Width(45));
+                    GUILayout.Label(ConnectionTypeShort(ps.ConnectionType), ConnectionTypeLabel(ps.ConnectionType), GUILayout.Width(55));
+                    GUILayout.Label($"{ps.BytesSent / 1024f:F1}K", _whiteLabel, GUILayout.Width(55));
+                    GUILayout.Label($"{ps.BytesReceived / 1024f:F1}K", _whiteLabel, GUILayout.Width(55));
+                    GUILayout.Label(FormatAge(age), _grayLabel, GUILayout.Width(40));
+                    GUILayout.FlexibleSpace();
+                    GUILayout.EndHorizontal();
+                }
+            }
+
+            // Reset button
+            GUILayout.Space(2);
+            if (GUILayout.Button("Reset Stats", _smallButton, GUILayout.Width(100)))
+                stats.ResetStats();
+
+            GUILayout.EndVertical();
+        }
+
+        private GUIStyle RTTLabel(float rtt)
+        {
+            if (rtt < 0f) return _grayLabel;
+            if (rtt < 50f) return _greenLabel;
+            if (rtt < 150f) return _yellowLabel;
+            return _redLabel;
+        }
+
+        private GUIStyle LossLabel(float loss)
+        {
+            if (loss < 0.01f) return _greenLabel;
+            if (loss < 0.05f) return _yellowLabel;
+            return _redLabel;
+        }
+
+        private GUIStyle NATLabel(Epic.OnlineServices.P2P.NATType nat)
+        {
+            return nat switch
+            {
+                Epic.OnlineServices.P2P.NATType.Open => _greenLabel,
+                Epic.OnlineServices.P2P.NATType.Moderate => _yellowLabel,
+                Epic.OnlineServices.P2P.NATType.Strict => _redLabel,
+                _ => _grayLabel
+            };
+        }
+
+        private GUIStyle ConnectionTypeLabel(Epic.OnlineServices.P2P.NetworkConnectionType type)
+        {
+            return type == Epic.OnlineServices.P2P.NetworkConnectionType.DirectConnection ? _greenLabel : _yellowLabel;
+        }
+
+        private static string ConnectionTypeShort(Epic.OnlineServices.P2P.NetworkConnectionType type)
+        {
+            return type switch
+            {
+                Epic.OnlineServices.P2P.NetworkConnectionType.DirectConnection => "Direct",
+                Epic.OnlineServices.P2P.NetworkConnectionType.RelayedConnection => "Relayed",
+                _ => "None"
+            };
+        }
+
+        private static string TruncatePuid(string puid)
+        {
+            return puid.Length > 8 ? puid[..8] + ".." : puid;
+        }
+
+        private static string FormatAge(float seconds)
+        {
+            if (seconds < 60f) return $"{seconds:F0}s";
+            if (seconds < 3600f) return $"{seconds / 60f:F0}m";
+            return $"{seconds / 3600f:F1}h";
         }
 
         #endregion

@@ -744,6 +744,58 @@ Inspired by Normcore's EasySync. Sync any public field or property on sibling co
 - `Sync Interval` — How often to check for changes (default 0.1s)
 - Per-property `WriteAccess` (Owner/Host/All) — stored but only Owner enforced in v1. Host/All planned for v2.
 
+## Connection Statistics (NetworkStats)
+
+Singleton manager (`Net/NetworkStats.cs`, ~600 lines) that tracks per-peer and global connection quality metrics. Auto-creates under EOSManager like other singletons. Uses an `internal static _instance` null-check pattern so hooks in EOSP2PManager have zero overhead when stats aren't being used.
+
+### Ping/Pong Protocol
+
+Custom RTT measurement since EOS SDK doesn't provide it. Message IDs 0xA8 (PING) and 0xA9 (PONG) on channel 2, unreliable unordered, sent via `SendToPeerImmediate` to bypass batching.
+
+- **PING** (8 bytes): `[sequence:u32][senderTimestamp:float32]`
+- **PONG** (8 bytes): `[sequence:u32][originalTimestamp:float32]`
+- **RTT** = `(Time.unscaledTime - originalTimestamp) * 1000f` ms, EMA smoothed (alpha=0.2)
+
+### Metrics
+
+| Metric | Method | Frequency |
+|--------|--------|-----------|
+| **RTT** | Ping/pong protocol, EMA smoothed | Every `_pingInterval` (1s) |
+| **Packet Loss** | Rolling window: `1.0 - pongs/pings` | 10s window |
+| **Bandwidth** | Delta between byte snapshots | Every `_sampleInterval` (0.5s) |
+| **NAT Type** | `GetNATType()` + `QueryNATType()` | Once on startup |
+| **Queue Info** | `GetPacketQueueInfo()` | On demand via `GetGlobalStats()` |
+| **Connection Type** | From `OnConnectionEstablished` callback | On peer connect |
+
+### EOSP2PManager Hooks (3 lines)
+
+1. `SendToPeer()` — `NetworkStats._instance?.RecordBytesSent(peer, data.Length)`
+2. `PollPackets()` — `NetworkStats._instance?.RecordBytesReceived(sender, (int)bytesWritten)`
+3. `OnConnectionEstablished()` — `NetworkStats._instance?.RecordConnectionType(peer, networkType, establishedType)`
+
+### Public API
+
+```csharp
+// Per-peer
+PeerStats GetPeerStats(ProductUserId puid)
+float RTT(ProductUserId puid)           // ms, -1 if unknown
+float PacketLoss(ProductUserId puid)    // 0.0 - 1.0
+float ConnectionAge(ProductUserId puid) // seconds
+IReadOnlyDictionary<ProductUserId, PeerStats> AllPeerStats
+
+// Global
+GlobalStats GetGlobalStats()  // includes queue info
+NATType LocalNATType
+float AverageRTT
+float TotalBandwidthOutKBps / InKBps
+void ResetStats()
+event Action OnStatsUpdated   // fires every 0.5s
+```
+
+### F1 Overlay (Stats Tab)
+
+`DrawNetworkStatsSection()` shows NAT type, peer count, average RTT, bandwidth in/out, queue utilization, and a per-peer table with columns: Name, RTT, Loss%, Type, Out, In, Age. Color-coded: RTT green <50ms / yellow <150ms / red >300ms. Loss green <1% / yellow <5% / red >5%. Direct=green, Relayed=yellow.
+
 ## Bug/TODO Tracking
 
 See `BUGS.MD` and `TODO.MD` in the repo root for known issues and planned work.

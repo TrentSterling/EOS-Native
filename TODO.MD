@@ -7,7 +7,10 @@
 - Quick match, lobbies, voice, join by code
 
 ### Lean P2P Networking Layer (aka "DIY Fusion w/ blackjack and hookers")
-Build a lightweight high-level networking layer on top of the raw EOS P2P interface. No FishNet, no Photon, no middleware — just EOS packets and vibes.
+Build a lightweight high-level networking layer on top of the raw EOS P2P interface. No FishNet, no Photon, no middleware — just EOS packets and vibes. **And it's 100% FREE.**
+
+**Official target: 16 players** (EOS lobbies cap at 64, but 16 is the sweet spot for all features).
+RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-first architecture — like what UE does natively with EOS, but for Unity.
 
 **Core transport features:**
 - [x] Packet fragmentation (handle payloads larger than EOS max packet size)
@@ -40,7 +43,7 @@ Build a lightweight high-level networking layer on top of the raw EOS P2P interf
 - [ ] Master client verification (optional server-authority validation)
 - [ ] Spatial hash (interest management — only sync nearby objects)
 - [ ] Tick-based simulation (deterministic tick rate, decoupled from frame rate)
-- [ ] Connection statistics / network profiler (RTT, packet loss, bandwidth)
+- [x] Connection statistics / network profiler (RTT, packet loss, bandwidth)
 - [ ] Auto-reconnect (automatic reconnection with state recovery)
 
 **Migration & Authority:**
@@ -49,11 +52,26 @@ Build a lightweight high-level networking layer on top of the raw EOS P2P interf
 - [x] Late-join snapshots (new peers receive full state dump from host)
 - [ ] P2P direct connections for fast RPCs (skip relay when possible)
 
+**SyncVar LOD System** (community request — AlmightyMikkel):
+- [ ] SyncVar LOD tiers — component where you specify X LOD distances, each defining which components/SyncVars sync and at what rate
+- [ ] Tick-ladder for SyncVars — dynamic sync rate based on distance (like NetworkTransform LOD but for ALL SyncVars)
+- [ ] Per-component LOD checkboxes — Inspector UI to toggle what syncs at each tier
+
+**Multi-Transport & Crossplay:**
+- [ ] Multi-transport support (EOS + Steam crossplay)
+- [ ] FishNet transport thin layer (basic lobbies + host migration, OG repo compile fix)
+- [ ] Spectator mode (read-only observer that receives state but doesn't own objects)
+
 **Prediction & Rollback:**
 - [ ] Client-side prediction (input prediction for owned objects)
 - [ ] Collider rollback (lag compensation for hit detection)
 - [ ] Study Valve networking docs (Source/CS:GO PDFs) for rollback architecture
 - [ ] Study Photon PUN architecture for shared-mode patterns
+
+**Advanced:**
+- [ ] Network rules (PurrNet-style validation rules)
+- [ ] Dedicated server support (server joins lobby, server-authoritative validation)
+- [ ] Cloudscripting via VPS ($5 VPS for cloud validation / Discord bot integration)
 
 **Target projects:**
 - [ ] MonkePortals
@@ -225,3 +243,5 @@ Build a lightweight high-level networking layer on top of the raw EOS P2P interf
 - [x] Inspector lobby name field (was unnamed)
 - [x] Inspector max players field (was hardcoded to 4, now 2-64)
 - [x] ParrelSync docs page (parrelsync.md)
+- [x] Connection statistics / network profiler (NetworkStats.cs — RTT, packet loss, bandwidth, NAT type, per-peer stats)
+- [x] F1 overlay Network Stats section in Stats tab (color-coded RTT/loss/NAT, per-peer table)

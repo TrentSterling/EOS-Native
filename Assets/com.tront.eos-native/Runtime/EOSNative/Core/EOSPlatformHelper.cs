@@ -166,7 +166,6 @@ namespace EOSNative
                 var callbacks = new UnityEngine.Android.PermissionCallbacks();
                 callbacks.PermissionGranted += (perm) => callback?.Invoke(true);
                 callbacks.PermissionDenied += (perm) => callback?.Invoke(false);
-                callbacks.PermissionDeniedAndDontAskAgain += (perm) => callback?.Invoke(false);
                 UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.Microphone, callbacks);
             }
             else
