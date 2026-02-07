@@ -28,6 +28,14 @@ namespace EOSNative.Net
         private const byte MSG_RPC = 0xA6;
         private const byte MSG_AUTHORITY_REQUEST = 0xA7;
 
+        // Scene management (0xAA-0xAC)
+        private const byte MSG_SCENE_LOAD = 0xAA;
+        private const byte MSG_SCENE_UNLOAD = 0xAB;
+        private const byte MSG_SCENE_LOADED_ACK = 0xAC;
+
+        // Chunked snapshot delivery
+        private const int SNAPSHOT_CHUNK_SIZE = 16;
+
         #endregion
 
         #region Singleton
@@ -63,6 +71,21 @@ namespace EOSNative.Net
 
         /// <summary>All active NetworkObjects, keyed by NetworkId.</summary>
         public IReadOnlyDictionary<uint, NetworkObject> Objects => _objects;
+
+        /// <summary>The shared room state object. Null until host creates it (after first peer connects).</summary>
+        public NetworkRoomState RoomState { get; private set; }
+
+        /// <summary>The local player's state object. Null until auto-created on peer connect.</summary>
+        public NetworkPlayerState LocalPlayerState { get; private set; }
+
+        /// <summary>All player states, keyed by owner ProductUserId.</summary>
+        public IReadOnlyDictionary<ProductUserId, NetworkPlayerState> PlayerStates => _playerStates;
+
+        /// <summary>Get a specific player's state by their ProductUserId.</summary>
+        public NetworkPlayerState GetPlayerState(ProductUserId puid)
+        {
+            return _playerStates.TryGetValue(puid, out var state) ? state : null;
+        }
 
         #endregion
 
@@ -353,6 +376,7 @@ namespace EOSNative.Net
         private readonly Dictionary<RPCKey, Action<NetReader>> _rpcHandlers = new();
         private readonly Dictionary<RPCKey, string> _rpcMethodNames = new();
         private readonly List<RPCKey> _rpcKeysToRemove = new();
+        private readonly Dictionary<ProductUserId, NetworkPlayerState> _playerStates = new();
 
         private ushort _localIdCounter;
         private ushort _localIdPrefix;
@@ -456,6 +480,12 @@ namespace EOSNative.Net
             Router.Register(MSG_RPC, HandleRPC);
             Router.Register(MSG_AUTHORITY_REQUEST, HandleAuthorityRequest);
 
+            // Scene management messages
+            var sceneMgr = NetworkSceneManager.Instance;
+            Router.Register(MSG_SCENE_LOAD, sceneMgr.HandleSceneLoad);
+            Router.Register(MSG_SCENE_UNLOAD, sceneMgr.HandleSceneUnload);
+            Router.Register(MSG_SCENE_LOADED_ACK, sceneMgr.HandleSceneLoadedAck);
+
             RecomputeHost();
         }
 
@@ -476,6 +506,16 @@ namespace EOSNative.Net
             _objects.Remove(obj.NetworkId);
             _dirtyObjects.Remove(obj);
             UnregisterRPCs(obj);
+
+            // Clean up RoomState/PlayerState references
+            if (obj.PrefabId == NetworkRoomState.PREFAB_ID && RoomState != null && RoomState.Net == obj)
+                RoomState = null;
+            else if (obj.PrefabId == NetworkPlayerState.PREFAB_ID && obj.OwnerId != null)
+            {
+                _playerStates.Remove(obj.OwnerId);
+                if (LocalPlayerState != null && LocalPlayerState.Net == obj)
+                    LocalPlayerState = null;
+            }
         }
 
         #endregion
@@ -642,6 +682,13 @@ namespace EOSNative.Net
             // Don't re-spawn if we already have it (e.g. we're the owner)
             if (_objects.ContainsKey(networkId)) return;
 
+            // Handle reserved PrefabIds (RoomState / PlayerState)
+            if (prefabId == NetworkRoomState.PREFAB_ID || prefabId == NetworkPlayerState.PREFAB_ID)
+            {
+                SpawnReservedObject(prefabId, networkId, ownerId, destroyWithOwner, syncVarCount, reader);
+                return;
+            }
+
             var prefab = GetPrefab(prefabId);
             if (prefab == null)
             {
@@ -792,17 +839,62 @@ namespace EOSNative.Net
         {
             if (!IsHost) return;
 
-            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Sending snapshot to {sender} ({_objects.Count} objects)");
+            // Priority-ordered chunked snapshot delivery:
+            // 1. RoomState first (so late joiners know game state immediately)
+            // 2. All PlayerStates (so late joiners know about all players)
+            // 3. Remaining objects
+            var ordered = new List<NetworkObject>(_objects.Count);
 
-            var writer = NetWriterPool.Get();
-            writer.WritePackedUInt32((uint)_objects.Count);
+            // Priority 1: RoomState
+            if (RoomState != null && RoomState.Net.IsRegistered)
+                ordered.Add(RoomState.Net);
 
+            // Priority 2: PlayerStates
+            foreach (var ps in _playerStates.Values)
+            {
+                if (ps != null && ps.Net.IsRegistered)
+                    ordered.Add(ps.Net);
+            }
+
+            // Priority 3: Everything else
             foreach (var obj in _objects.Values)
-                WriteSpawnData(writer, obj);
+            {
+                if (obj == null || !obj.IsRegistered) continue;
+                // Skip already-added RoomState and PlayerStates
+                if (obj.PrefabId == NetworkRoomState.PREFAB_ID || obj.PrefabId == NetworkPlayerState.PREFAB_ID)
+                    continue;
+                ordered.Add(obj);
+            }
 
-            Router.SendToPeer(MSG_SNAPSHOT, writer, sender, PacketReliability.ReliableOrdered, 1);
-            NetWriterPool.Return(writer);
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                $"Sending chunked snapshot to {sender} ({ordered.Count} objects, {(ordered.Count + SNAPSHOT_CHUNK_SIZE - 1) / SNAPSHOT_CHUNK_SIZE} chunks)");
+
+            // Send in chunks of SNAPSHOT_CHUNK_SIZE
+            int offset = 0;
+            while (offset < ordered.Count)
+            {
+                int chunkCount = Math.Min(SNAPSHOT_CHUNK_SIZE, ordered.Count - offset);
+
+                var writer = NetWriterPool.Get();
+                writer.WritePackedUInt32((uint)chunkCount);
+
+                for (int i = 0; i < chunkCount; i++)
+                    WriteSpawnData(writer, ordered[offset + i]);
+
+                Router.SendToPeer(MSG_SNAPSHOT, writer, sender, PacketReliability.ReliableOrdered, 1);
+                NetWriterPool.Return(writer);
+
+                offset += chunkCount;
+            }
+
+            // Send an empty sentinel chunk if there are no objects (so receiver knows snapshot is complete)
+            if (ordered.Count == 0)
+            {
+                var writer = NetWriterPool.Get();
+                writer.WritePackedUInt32(0);
+                Router.SendToPeer(MSG_SNAPSHOT, writer, sender, PacketReliability.ReliableOrdered, 1);
+                NetWriterPool.Return(writer);
+            }
         }
 
         private void HandleSnapshot(ProductUserId sender, NetReader reader)
@@ -810,7 +902,7 @@ namespace EOSNative.Net
             uint count = reader.ReadPackedUInt32();
 
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Received snapshot with {count} objects from {sender}");
+                $"Received snapshot chunk with {count} objects from {sender}");
 
             for (uint i = 0; i < count; i++)
             {
@@ -828,6 +920,13 @@ namespace EOSNative.Net
                     var existing = _objects[networkId];
                     if (syncVarCount > 0 && existing.SyncVarCount > 0)
                         existing.DeserializeAll(reader);
+                    continue;
+                }
+
+                // Handle reserved PrefabIds (RoomState / PlayerState)
+                if (prefabId == NetworkRoomState.PREFAB_ID || prefabId == NetworkPlayerState.PREFAB_ID)
+                {
+                    SpawnReservedObject(prefabId, networkId, ownerId, destroyWithOwner, syncVarCount, reader);
                     continue;
                 }
 
@@ -854,6 +953,13 @@ namespace EOSNative.Net
                     netObj.DeserializeAll(reader);
 
                 netObj.NotifyNetworkSpawn();
+            }
+
+            // After snapshot chunks contain our RoomState, ensure our PlayerState exists
+            if (RoomState != null)
+            {
+                EnsureLocalPlayerState();
+                NetworkSceneManager.Instance?.SyncScenesFromRoomState();
             }
         }
 
@@ -942,9 +1048,14 @@ namespace EOSNative.Net
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
                     IsHost ? "Became host" : "No longer host");
 
-                // When we become host, claim any ownerless scene objects
                 if (IsHost)
+                {
+                    // When we become host, claim any ownerless scene objects
                     RegisterSceneObjects();
+
+                    // Ensure RoomState exists (may have been created by previous host)
+                    EnsureRoomState();
+                }
             }
         }
 
@@ -984,10 +1095,31 @@ namespace EOSNative.Net
             // Initialize local ID prefix if not yet set
             InitLocalIdPrefix();
 
-            // If we're the host, a new peer will send us a SNAPSHOT_REQUEST
+            // If we're the host, ensure RoomState exists and create our PlayerState
+            if (IsHost)
+            {
+                EnsureRoomState();
+                EnsureLocalPlayerState();
+
+                // Update player count
+                if (RoomState != null && RoomState.IsOwner)
+                {
+                    var peerList = EOSP2PManager.Instance?.Peers;
+                    RoomState.PlayerCount.Value = (peerList?.Count ?? 0) + 1; // +1 for self
+                }
+            }
+
             // If we're not the host but just connected, request a snapshot
+            // (our PlayerState will be created after we receive the snapshot)
             if (!IsHost && _objects.Count == 0)
+            {
                 RequestSnapshot();
+            }
+            else if (!IsHost)
+            {
+                // Already have objects but new peer joined — ensure our PlayerState
+                EnsureLocalPlayerState();
+            }
         }
 
         private void OnPeerDisconnected(ProductUserId peer)
@@ -999,7 +1131,19 @@ namespace EOSNative.Net
 
             // If we became the host, claim orphaned objects
             if (IsHost)
+            {
                 ClaimOrphanedObjects(peer);
+
+                // Update player count on room state
+                if (RoomState != null && RoomState.IsOwner)
+                {
+                    var peers = EOSP2PManager.Instance?.Peers;
+                    RoomState.PlayerCount.Value = (peers?.Count ?? 0) + 1; // +1 for self
+                }
+            }
+
+            // Clean up disconnected player's state from registry
+            CleanupPlayerState(peer);
 
             // End migration window and flush buffered RPCs
             _migrationInProgress = false;
@@ -1192,6 +1336,173 @@ namespace EOSNative.Net
                 var go = Instantiate(prefab);
                 go.SetActive(false);
                 pool.Enqueue(go);
+            }
+        }
+
+        #endregion
+
+        #region RoomState / PlayerState
+
+        /// <summary>
+        /// Create a NetworkObject from a reserved PrefabId (RoomState or PlayerState).
+        /// These are not in the prefab registry — they're created as empty GameObjects
+        /// with the correct component attached.
+        /// </summary>
+        private void SpawnReservedObject(ushort prefabId, uint networkId, ProductUserId ownerId,
+            bool destroyWithOwner, byte syncVarCount, NetReader reader)
+        {
+            string objName;
+            GameObject go;
+
+            if (prefabId == NetworkRoomState.PREFAB_ID)
+            {
+                objName = "NetworkRoomState";
+                go = new GameObject(objName);
+                if (EOSManager.Instance != null)
+                    go.transform.SetParent(EOSManager.Instance.transform);
+                else
+                    DontDestroyOnLoad(go);
+
+                var roomState = go.AddComponent<NetworkRoomState>();
+                var netObj = roomState.Net;
+                netObj.NetworkId = networkId;
+                netObj.PrefabId = prefabId;
+                netObj.OwnerId = ownerId;
+                netObj.DestroyWithOwner = destroyWithOwner;
+                netObj.IsRegistered = true;
+                _objects[networkId] = netObj;
+
+                if (syncVarCount > 0 && netObj.SyncVarCount > 0)
+                    netObj.DeserializeAll(reader);
+
+                RoomState = roomState;
+                netObj.NotifyNetworkSpawn();
+
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                    $"RoomState received from {ownerId} (id={networkId})");
+            }
+            else if (prefabId == NetworkPlayerState.PREFAB_ID)
+            {
+                objName = $"PlayerState_{ownerId}";
+                go = new GameObject(objName);
+                if (EOSManager.Instance != null)
+                    go.transform.SetParent(EOSManager.Instance.transform);
+                else
+                    DontDestroyOnLoad(go);
+
+                var playerState = go.AddComponent<NetworkPlayerState>();
+                var netObj = playerState.Net;
+                netObj.NetworkId = networkId;
+                netObj.PrefabId = prefabId;
+                netObj.OwnerId = ownerId;
+                netObj.DestroyWithOwner = destroyWithOwner;
+                netObj.IsRegistered = true;
+                _objects[networkId] = netObj;
+
+                if (syncVarCount > 0 && netObj.SyncVarCount > 0)
+                    netObj.DeserializeAll(reader);
+
+                if (ownerId != null)
+                    _playerStates[ownerId] = playerState;
+
+                // Check if this is our own player state
+                var localPuid = EOSManager.Instance?.LocalProductUserId;
+                if (localPuid != null && ownerId == localPuid)
+                    LocalPlayerState = playerState;
+
+                netObj.NotifyNetworkSpawn();
+
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                    $"PlayerState received for {ownerId} (id={networkId})");
+            }
+        }
+
+        /// <summary>
+        /// Ensures the RoomState object exists. Called on the host after first peer connects.
+        /// </summary>
+        private void EnsureRoomState()
+        {
+            if (!IsHost) return;
+            if (RoomState != null) return;
+
+            var localPuid = EOSManager.Instance?.LocalProductUserId;
+            if (localPuid == null) return;
+
+            var go = new GameObject("NetworkRoomState");
+            if (EOSManager.Instance != null)
+                go.transform.SetParent(EOSManager.Instance.transform);
+            else
+                DontDestroyOnLoad(go);
+
+            var roomState = go.AddComponent<NetworkRoomState>();
+            var netObj = roomState.Net;
+            netObj.NetworkId = NetworkRoomState.WELL_KNOWN_ID;
+            netObj.PrefabId = NetworkRoomState.PREFAB_ID;
+            netObj.OwnerId = localPuid;
+            netObj.DestroyWithOwner = false;
+            netObj.IsRegistered = true;
+            _objects[netObj.NetworkId] = netObj;
+            RoomState = roomState;
+            netObj.NotifyNetworkSpawn();
+
+            // Broadcast spawn to all peers
+            BroadcastSpawn(netObj);
+
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                "RoomState created by host");
+        }
+
+        /// <summary>
+        /// Ensures the local player's PlayerState object exists. Called on peer connect.
+        /// </summary>
+        private void EnsureLocalPlayerState()
+        {
+            if (LocalPlayerState != null) return;
+
+            var localPuid = EOSManager.Instance?.LocalProductUserId;
+            if (localPuid == null) return;
+
+            uint networkId = GenerateNetworkId();
+
+            var go = new GameObject($"PlayerState_{localPuid}");
+            if (EOSManager.Instance != null)
+                go.transform.SetParent(EOSManager.Instance.transform);
+            else
+                DontDestroyOnLoad(go);
+
+            var playerState = go.AddComponent<NetworkPlayerState>();
+            var netObj = playerState.Net;
+            netObj.NetworkId = networkId;
+            netObj.PrefabId = NetworkPlayerState.PREFAB_ID;
+            netObj.OwnerId = localPuid;
+            netObj.DestroyWithOwner = true;
+            netObj.IsRegistered = true;
+            _objects[networkId] = netObj;
+            _playerStates[localPuid] = playerState;
+            LocalPlayerState = playerState;
+            netObj.NotifyNetworkSpawn();
+
+            // Initialize display name from registry
+            playerState.AutoInitDisplayName();
+
+            // Broadcast spawn to all peers
+            BroadcastSpawn(netObj);
+
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                $"Local PlayerState created (id={networkId})");
+        }
+
+        /// <summary>
+        /// Clean up a player state when its owner disconnects.
+        /// Called from ClaimOrphanedObjects when DestroyWithOwner is true.
+        /// </summary>
+        private void CleanupPlayerState(ProductUserId disconnectedPeer)
+        {
+            if (_playerStates.TryGetValue(disconnectedPeer, out var ps))
+            {
+                _playerStates.Remove(disconnectedPeer);
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                    $"PlayerState removed for disconnected peer {disconnectedPeer}");
             }
         }
 

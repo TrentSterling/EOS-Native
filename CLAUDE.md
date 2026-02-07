@@ -524,6 +524,9 @@ NetworkManager.Instance.SendRPC(player, "TakeDamage", RPCTarget.Owner, 25f);
 | 0xA5 | SNAPSHOT_REQUEST | Reliable | 1 | empty |
 | 0xA6 | RPC | Reliable | 1 | networkId, methodNameHash, argCount, typed args |
 | 0xA7 | AUTHORITY_REQUEST | Reliable | 1 | networkId |
+| 0xAA | SCENE_LOAD | Reliable | 1 | sceneName, additive (bool) |
+| 0xAB | SCENE_UNLOAD | Reliable | 1 | sceneName |
+| 0xAC | SCENE_LOADED_ACK | Reliable | 1 | sceneName |
 
 ### NetworkId Partitioning
 
@@ -795,6 +798,90 @@ event Action OnStatsUpdated   // fires every 0.5s
 ### F1 Overlay (Stats Tab)
 
 `DrawNetworkStatsSection()` shows NAT type, peer count, average RTT, bandwidth in/out, queue utilization, and a per-peer table with columns: Name, RTT, Loss%, Type, Out, In, Age. Color-coded: RTT green <50ms / yellow <150ms / red >300ms. Loss green <1% / yellow <5% / red >5%. Direct=green, Relayed=yellow.
+
+## NetworkRoomState (Shared Room Data)
+
+Singleton NetworkObject representing the shared room/game state. Well-known ID `0xFFFF0001`, reserved PrefabId `0xFFF0`. Host auto-creates after first peer connects. DestroyWithOwner = false (survives host migration).
+
+**File:** `Net/NetworkRoomState.cs` (~200 lines)
+
+**SyncVars (index 0-7):** GameMode (string), MapName (string), RoundNumber (int), PlayerCount (int), MaxPlayers (int), RoundTimer (float), Phase (byte: 0=Lobby/1=Loading/2=Playing/3=PostMatch), IsInProgress (bool)
+
+**SyncDictionary (index 8):** `Properties` — dynamic string-string for custom room data
+
+**Lobby attribute mirroring:** Rate-limited (1/sec). GameMode, MapName, IsInProgress auto-push to lobby attributes. Add keys to `SearchablePropertyKeys` for custom mirroring.
+
+**Scene properties:** `_scene`, `_addScene_N`, `_addSceneCount` stored in Properties dict. Read by NetworkSceneManager for late-join scene sync.
+
+```csharp
+var room = NetworkManager.Instance.RoomState;
+room.GameMode.Value = "deathmatch";          // host writes
+room.SetProperty("score_limit", "100");       // host writes custom
+int limit = room.GetPropertyInt("score_limit", 50); // typed getter
+room.CurrentPhase = GamePhase.Playing;        // typed enum accessor
+```
+
+## NetworkPlayerState (Per-User Data)
+
+Per-player NetworkObject. Reserved PrefabId `0xFFF1`. Each peer auto-creates their own on connect. DestroyWithOwner = true (destroyed on disconnect). Standard NetworkId generation (PUID partition).
+
+**File:** `Net/NetworkPlayerState.cs` (~170 lines)
+
+**SyncVars (index 0-7):** DisplayName (string), Team (byte), IsReady (bool), Score (int), Deaths (int), Assists (int), Loadout (string), PlayerSlot (byte)
+
+**SyncDictionary (index 8):** `CustomData` — dynamic string-string per player
+
+**Auto-init:** DisplayName populated from EOSPlayerRegistry on spawn.
+
+```csharp
+var me = NetworkManager.Instance.LocalPlayerState;
+me.Team.Value = 1;
+me.IsReady.Value = true;
+me.SetCustom("skin", "gold_armor");
+
+var them = NetworkManager.Instance.GetPlayerState(puid);
+string name = them.DisplayName.Value;
+
+foreach (var kvp in NetworkManager.Instance.PlayerStates) { ... }
+```
+
+## NetworkSceneManager
+
+Singleton manager for networked scene loading. Host calls LoadScene/LoadSceneAdditive/UnloadScene, all peers follow. Scene info stored on NetworkRoomState properties so late joiners load the correct scenes.
+
+**File:** `Net/NetworkSceneManager.cs` (~300 lines)
+
+**Max 8 additive scenes** (matching Fusion).
+
+**Load flow:**
+1. Host calls `LoadScene("Arena_01")`
+2. Updates RoomState scene properties
+3. Broadcasts MSG_SCENE_LOAD (reliable) to all peers
+4. All peers load async via `SceneManager.LoadSceneAsync`
+5. After load: `RegisterSceneObjects()` auto-assigns scene NetworkObjects
+6. Non-host peers send MSG_SCENE_LOADED_ACK to host
+7. Host fires `OnAllPeersLoaded` when all ACKs received
+
+**Late join:** After receiving SNAPSHOT, new peer reads scene info from RoomState and loads the correct scenes.
+
+```csharp
+NetworkSceneManager.Instance.LoadScene("Arena_01");
+NetworkSceneManager.Instance.LoadSceneAdditive("Props_01");
+NetworkSceneManager.Instance.UnloadScene("Props_01");
+
+NetworkSceneManager.Instance.OnSceneLoadCompleted += name => { ... };
+NetworkSceneManager.Instance.OnAllPeersLoaded += () => StartRound();
+```
+
+## Chunked Snapshot Delivery
+
+Snapshots are sent in priority-ordered chunks of 16 objects per message:
+
+1. **Priority 1:** NetworkRoomState (so late joiners know game state immediately)
+2. **Priority 2:** All NetworkPlayerStates (so late joiners know about all players)
+3. **Priority 3:** Remaining objects
+
+Each chunk is a separate MSG_SNAPSHOT message, all reliable ordered. HandleSnapshot already handles multiple SNAPSHOT messages via duplicate guard (`_objects.ContainsKey`). After receiving RoomState, late joiners auto-create their PlayerState and sync scenes.
 
 ## Bug/TODO Tracking
 

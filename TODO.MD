@@ -23,7 +23,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Packet compression (PurrNet-style pickling / LZ4 / similar)
 - [x] BufferLast (only deliver most recent state, drop stale packets)
 - [x] Object pooling (reuse network objects instead of destroy/create)
-- [ ] Scene management (networked scene loading, additive scenes)
+- [x] Scene management (networked scene loading, additive scenes)
 
 **High-level networking:**
 - [x] Generic RPCs — `SendCustomNetworkEvent(string functionName, args...)` (VRChat Udon / Photon PUN style)
@@ -38,8 +38,8 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] EasySync — Normcore-style no-code property sync (Inspector checkboxes, reflection-based)
 - [x] Scene object auto-ownership — pre-existing scene objects auto-assign to host
 - [ ] EasySync v2 — per-property WriteAccess (Host/All), interpolation toggle, "Convert to Code" export
-- [ ] Shared room data (live room properties, like Photon shared mode)
-- [ ] Per-user data (player properties synced across peers)
+- [x] Shared room data (NetworkRoomState — live room properties with lobby attribute mirroring)
+- [x] Per-user data (NetworkPlayerState — per-player synced properties)
 - [ ] Master client verification (optional server-authority validation)
 - [ ] Spatial hash (interest management — only sync nearby objects)
 - [ ] Tick-based simulation (deterministic tick rate, decoupled from frame rate)
@@ -245,3 +245,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] ParrelSync docs page (parrelsync.md)
 - [x] Connection statistics / network profiler (NetworkStats.cs — RTT, packet loss, bandwidth, NAT type, per-peer stats)
 - [x] F1 overlay Network Stats section in Stats tab (color-coded RTT/loss/NAT, per-peer table)
+- [x] NetworkRoomState — shared room data with typed SyncVars, SyncDictionary, lobby attribute mirroring
+- [x] NetworkPlayerState — per-player synced state (name, team, score, custom data), auto-created on connect
+- [x] NetworkSceneManager — networked scene loading (single + additive), late-join scene sync, all-peers-loaded event
+- [x] Chunked snapshot delivery with priority ordering (RoomState first, PlayerStates second, then objects)
