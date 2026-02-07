@@ -220,6 +220,7 @@ namespace EOSNative.Net
                 {
                     Target = target,
                     MethodName = methodName,
+                    MethodHash = FnvHash(methodName),
                     Targets = targets,
                     ArgData = bufWriter.ToArray()
                 });
@@ -306,6 +307,93 @@ namespace EOSNative.Net
             }
         }
 
+        /// <summary>
+        /// Send an RPC directly to a specific peer by their ProductUserId.
+        /// Goes peer-to-peer — no host routing. This is the EOS-native way.
+        /// </summary>
+        public void SendRPC(NetworkObject target, string methodName, ProductUserId peer, params object[] args)
+        {
+            if (target == null || !target.IsRegistered) return;
+            if (peer == null) return;
+
+            uint nameHash = FnvHash(methodName);
+            byte[] argData = SerializeRPCArgs(args);
+            if (argData == null) return;
+
+            // Execute locally if we're the target
+            var localPuid = EOSManager.Instance?.LocalProductUserId;
+            if (localPuid != null && peer == localPuid)
+            {
+                ExecuteRPCLocal(target.NetworkId, nameHash, argData, argData.Length);
+                return;
+            }
+
+            var writer = NetWriterPool.Get();
+            writer.WriteUInt32(target.NetworkId);
+            writer.WriteUInt32(nameHash);
+            writer.WriteBytesRaw(argData, 0, argData.Length);
+            Router.SendToPeer(MSG_RPC, writer, peer, PacketReliability.ReliableOrdered, 1);
+            NetWriterPool.Return(writer);
+        }
+
+        /// <summary>
+        /// Send an RPC to multiple specific peers by their ProductUserIds.
+        /// Each peer gets a direct P2P message — no host routing.
+        /// </summary>
+        public void SendRPC(NetworkObject target, string methodName, IEnumerable<ProductUserId> peers, params object[] args)
+        {
+            if (target == null || !target.IsRegistered) return;
+            if (peers == null) return;
+
+            uint nameHash = FnvHash(methodName);
+            byte[] argData = SerializeRPCArgs(args);
+            if (argData == null) return;
+
+            var localPuid = EOSManager.Instance?.LocalProductUserId;
+
+            foreach (var peer in peers)
+            {
+                if (peer == null) continue;
+
+                if (localPuid != null && peer == localPuid)
+                {
+                    ExecuteRPCLocal(target.NetworkId, nameHash, argData, argData.Length);
+                    continue;
+                }
+
+                var writer = NetWriterPool.Get();
+                writer.WriteUInt32(target.NetworkId);
+                writer.WriteUInt32(nameHash);
+                writer.WriteBytesRaw(argData, 0, argData.Length);
+                Router.SendToPeer(MSG_RPC, writer, peer, PacketReliability.ReliableOrdered, 1);
+                NetWriterPool.Return(writer);
+            }
+        }
+
+        /// <summary>Serialize RPC args into a byte array. Returns null on error.</summary>
+        private byte[] SerializeRPCArgs(object[] args)
+        {
+            var argWriter = NetWriterPool.Get();
+            if (args != null)
+            {
+                for (int i = 0; i < args.Length; i++)
+                {
+                    var arg = args[i];
+                    var type = arg?.GetType() ?? typeof(object);
+                    if (!_typeWriters.TryGetValue(type, out var writeAction))
+                    {
+                        Debug.LogError($"[NetworkManager] RPC arg type {type.Name} not registered in NetSerializers");
+                        NetWriterPool.Return(argWriter);
+                        return null;
+                    }
+                    writeAction(argWriter, arg);
+                }
+            }
+            byte[] data = argWriter.ToArray();
+            NetWriterPool.Return(argWriter);
+            return data;
+        }
+
         // Cached type-to-writer lookup for RPC args (built from NetSerializers)
         private static readonly Dictionary<Type, Action<NetWriter, object>> _typeWriters = new()
         {
@@ -349,6 +437,126 @@ namespace EOSNative.Net
 
             _rpcHandlers[key] = handler;
             _rpcMethodNames[key] = methodName;
+        }
+
+        /// <summary>
+        /// Register an RPC handler by pre-computed hash. Called by weaver-generated __RegisterNetRPCs().
+        /// The hash is computed at compile time to avoid runtime string hashing.
+        /// </summary>
+        public void RegisterRPC(NetworkObject target, uint methodHash, string methodName, Action<NetReader> handler)
+        {
+            var key = new RPCKey { NetworkId = target.NetworkId, MethodHash = methodHash };
+
+            if (_rpcHandlers.ContainsKey(key))
+            {
+                if (_rpcMethodNames.TryGetValue(key, out string existing) && existing != methodName)
+                    throw new InvalidOperationException(
+                        $"RPC hash collision: '{methodName}' collides with '{existing}' on object {target.NetworkId}");
+            }
+
+            _rpcHandlers[key] = handler;
+            _rpcMethodNames[key] = methodName;
+        }
+
+        /// <summary>
+        /// Send a pre-serialized RPC. Called by weaver-generated dispatch stubs.
+        /// Args are already packed into argData by the generated serialization code.
+        /// </summary>
+        public void SendRPCWeaved(NetworkObject target, uint methodHash, RPCTarget targets, byte[] argData)
+        {
+            if (target == null || !target.IsRegistered) return;
+
+            // Buffer host/owner-targeted RPCs during migration window
+            if (_migrationInProgress && (targets == RPCTarget.Host || targets == RPCTarget.Owner))
+            {
+                _migrationBuffer.Add(new BufferedRPC
+                {
+                    Target = target,
+                    MethodName = null,
+                    MethodHash = methodHash,
+                    Targets = targets,
+                    ArgData = argData
+                });
+                return;
+            }
+
+            bool executeLocal = false;
+            bool sendRemote = false;
+
+            switch (targets)
+            {
+                case RPCTarget.All:
+                    executeLocal = true;
+                    sendRemote = true;
+                    break;
+                case RPCTarget.Others:
+                    sendRemote = true;
+                    break;
+                case RPCTarget.Host:
+                    if (IsHost) executeLocal = true;
+                    else sendRemote = true;
+                    break;
+                case RPCTarget.Owner:
+                    if (target.IsOwner) executeLocal = true;
+                    else sendRemote = true;
+                    break;
+            }
+
+            if (executeLocal)
+                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+
+            if (sendRemote)
+            {
+                var writer = NetWriterPool.Get();
+                writer.WriteUInt32(target.NetworkId);
+                writer.WriteUInt32(methodHash);
+                writer.WriteBytesRaw(argData, 0, argData.Length);
+
+                switch (targets)
+                {
+                    case RPCTarget.All:
+                    case RPCTarget.Others:
+                        Router.SendToAll(MSG_RPC, writer, PacketReliability.ReliableOrdered, 1);
+                        break;
+                    case RPCTarget.Host:
+                        if (!IsHost)
+                        {
+                            var hostPuid = GetHostPuid();
+                            if (hostPuid != null)
+                                Router.SendToPeer(MSG_RPC, writer, hostPuid, PacketReliability.ReliableOrdered, 1);
+                        }
+                        break;
+                    case RPCTarget.Owner:
+                        if (!target.IsOwner && target.OwnerId != null)
+                            Router.SendToPeer(MSG_RPC, writer, target.OwnerId, PacketReliability.ReliableOrdered, 1);
+                        break;
+                }
+
+                NetWriterPool.Return(writer);
+            }
+        }
+
+        /// <summary>
+        /// Send a pre-serialized RPC to a specific peer. Called by weaver-generated code.
+        /// </summary>
+        public void SendRPCWeavedToPeer(NetworkObject target, uint methodHash, ProductUserId peer, byte[] argData)
+        {
+            if (target == null || !target.IsRegistered) return;
+            if (peer == null) return;
+
+            var localPuid = EOSManager.Instance?.LocalProductUserId;
+            if (localPuid != null && peer == localPuid)
+            {
+                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                return;
+            }
+
+            var writer = NetWriterPool.Get();
+            writer.WriteUInt32(target.NetworkId);
+            writer.WriteUInt32(methodHash);
+            writer.WriteBytesRaw(argData, 0, argData.Length);
+            Router.SendToPeer(MSG_RPC, writer, peer, PacketReliability.ReliableOrdered, 1);
+            NetWriterPool.Return(writer);
         }
 
         /// <summary>Unregister all RPCs for a NetworkObject.</summary>
@@ -398,7 +606,8 @@ namespace EOSNative.Net
         private struct BufferedRPC
         {
             public NetworkObject Target;
-            public string MethodName;
+            public string MethodName;   // null for weaved RPCs
+            public uint MethodHash;     // pre-computed for weaved RPCs
             public RPCTarget Targets;
             public byte[] ArgData;
         }
@@ -1162,7 +1371,8 @@ namespace EOSNative.Net
                 var buffered = _migrationBuffer[i];
                 if (buffered.Target == null || !buffered.Target.IsRegistered) continue;
 
-                uint nameHash = FnvHash(buffered.MethodName);
+                // Weaved RPCs have MethodName=null and MethodHash pre-computed
+                uint nameHash = buffered.MethodName != null ? FnvHash(buffered.MethodName) : buffered.MethodHash;
 
                 // Determine if this should execute locally now
                 bool executeLocal = false;
@@ -1524,12 +1734,13 @@ namespace EOSNative.Net
             return hash;
         }
 
-        /// <summary>Register a NetworkObject that was created outside of Spawn() (e.g. scene objects).</summary>
+        /// <summary>Register a NetworkObject that was created outside of Spawn() (e.g. scene objects, runtime-created balls).</summary>
         public void RegisterExisting(NetworkObject obj, uint networkId)
         {
             obj.NetworkId = networkId;
             obj.IsRegistered = true;
             _objects[networkId] = obj;
+            obj.NotifyNetworkSpawn();
         }
 
         /// <summary>

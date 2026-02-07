@@ -3,8 +3,12 @@ using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using EOSNative.Lobbies;
 using EOSNative.Logging;
+using EOSNative.Net;
 using EOSNative.P2P;
 using UnityEngine;
+#if EOS_HAS_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 namespace EOSNative.Demo
 {
@@ -56,12 +60,15 @@ namespace EOSNative.Demo
 
         private P2PPlayerBall _localBall;
         private P2PSpringSync _localSync;
+        private DemoBallBehaviour _localBehaviour;
         private Color _localColor;
         private readonly Dictionary<string, P2PPlayerBall> _remoteBalls = new();
         private readonly Dictionary<string, P2PSpringSync> _remoteSyncs = new();
+        private readonly Dictionary<string, DemoBallBehaviour> _remoteBehaviours = new();
         private readonly NetWriter _writer = new();
         private bool _sceneGenerated;
         private bool _localSpawned;
+        private int _colorIndex;
 
         #endregion
 
@@ -223,19 +230,34 @@ namespace EOSNative.Demo
 
             _localColor = UnityEngine.Random.ColorHSV(0f, 1f, 0.7f, 1f, 0.7f, 1f);
 
-            var ball = CreateBall("LocalBall", true);
+            var localPuid = EOSManager.Instance?.LocalProductUserId;
+            var ball = CreateBall("LocalBall", true, localPuid);
             _localBall = ball.GetComponent<P2PPlayerBall>();
             _localSync = ball.GetComponent<P2PSpringSync>();
+            _localBehaviour = ball.GetComponent<DemoBallBehaviour>();
             _localBall.SetColor(_localColor);
+
+            // Set Layer 2 SyncVars
+            _localBehaviour.BallColor.Value = _localColor;
+            string playerName = "Player";
+            if (localPuid != null)
+            {
+                var registry = EOSNative.EOSPlayerRegistry.Instance;
+                if (registry != null)
+                    playerName = registry.GetPlayerName(localPuid.ToString()) ?? localPuid.ToString().Substring(0, 6);
+                else
+                    playerName = localPuid.ToString().Substring(0, 6);
+            }
+            _localBehaviour.DisplayName.Value = playerName;
 
             EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", "Local ball spawned");
         }
 
-        private void SpawnRemoteBall(string puid, Color color)
+        private void SpawnRemoteBall(string puid, Color color, ProductUserId senderPuid = null)
         {
             if (_remoteBalls.ContainsKey(puid)) return;
 
-            var ball = CreateBall($"RemoteBall_{puid}", false);
+            var ball = CreateBall($"RemoteBall_{puid}", false, senderPuid);
             // Offset spawn so balls don't overlap
             ball.transform.position = new Vector3(
                 UnityEngine.Random.Range(-2f, 2f), 1f,
@@ -247,6 +269,7 @@ namespace EOSNative.Demo
 
             _remoteBalls[puid] = playerBall;
             _remoteSyncs[puid] = ball.GetComponent<P2PSpringSync>();
+            _remoteBehaviours[puid] = ball.GetComponent<DemoBallBehaviour>();
 
             EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", $"Remote ball spawned for {puid}");
         }
@@ -258,11 +281,12 @@ namespace EOSNative.Demo
                 if (ball != null) Destroy(ball.gameObject);
                 _remoteBalls.Remove(puid);
                 _remoteSyncs.Remove(puid);
+                _remoteBehaviours.Remove(puid);
                 EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", $"Remote ball destroyed for {puid}");
             }
         }
 
-        private GameObject CreateBall(string name, bool isLocal)
+        private GameObject CreateBall(string name, bool isLocal, ProductUserId ownerPuid = null)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             go.name = name;
@@ -278,6 +302,21 @@ namespace EOSNative.Demo
 
             var sync = go.AddComponent<P2PSpringSync>();
             sync.IsLocal = isLocal;
+
+            // Layer 2: Add NetworkObject + DemoBallBehaviour for SyncVar/RPC demo
+            var netObj = go.AddComponent<NetworkObject>();
+            if (ownerPuid != null)
+                netObj.OwnerId = ownerPuid;
+            netObj.DestroyWithOwner = true;
+
+            go.AddComponent<DemoBallBehaviour>();
+
+            // Generate deterministic NetworkId from PUID
+            if (ownerPuid != null)
+            {
+                uint deterministicId = 0xBB000000u | (NetworkManager.FnvHash(ownerPuid.ToString()) & 0x00FFFFFFu);
+                NetworkManager.Instance.RegisterExisting(netObj, deterministicId);
+            }
 
             return go;
         }
@@ -300,6 +339,7 @@ namespace EOSNative.Demo
             }
             _remoteBalls.Clear();
             _remoteSyncs.Clear();
+            _remoteBehaviours.Clear();
 
             // Destroy local ball
             if (_localBall != null)
@@ -307,6 +347,7 @@ namespace EOSNative.Demo
                 Destroy(_localBall.gameObject);
                 _localBall = null;
                 _localSync = null;
+                _localBehaviour = null;
                 _localSpawned = false;
             }
         }
@@ -351,12 +392,76 @@ namespace EOSNative.Demo
         private void HandleJoin(ProductUserId sender, NetReader reader)
         {
             Color color = new(reader.ReadByte() / 255f, reader.ReadByte() / 255f, reader.ReadByte() / 255f);
-            SpawnRemoteBall(sender.ToString(), color);
+            SpawnRemoteBall(sender.ToString(), color, sender);
         }
 
         private void HandleLeave(ProductUserId sender, NetReader reader)
         {
             DestroyRemoteBall(sender.ToString());
+        }
+
+        #endregion
+
+        #region Input
+
+        private static readonly Color[] _colorPresets = new[]
+        {
+            Color.red, Color.green, Color.blue, Color.yellow,
+            Color.cyan, Color.magenta, new Color(1f, 0.5f, 0f), new Color(0.5f, 0f, 1f)
+        };
+
+        private void Update()
+        {
+            if (_localBall == null || _localBehaviour == null) return;
+
+#if EOS_HAS_INPUT_SYSTEM
+            var keyboard = Keyboard.current;
+            if (keyboard == null) return;
+
+            bool eDown = keyboard.eKey.wasPressedThisFrame;
+            bool qDown = keyboard.qKey.wasPressedThisFrame;
+            bool tDown = keyboard.tKey.wasPressedThisFrame;
+            bool rDown = keyboard.rKey.wasPressedThisFrame;
+#else
+            bool eDown = Input.GetKeyDown(KeyCode.E);
+            bool qDown = Input.GetKeyDown(KeyCode.Q);
+            bool tDown = Input.GetKeyDown(KeyCode.T);
+            bool rDown = Input.GetKeyDown(KeyCode.R);
+#endif
+
+            // E: Cycle color
+            if (eDown)
+            {
+                _colorIndex = (_colorIndex + 1) % _colorPresets.Length;
+                var c = _colorPresets[_colorIndex];
+                _localBehaviour.ChangeColor(c.r, c.g, c.b);
+            }
+
+            // Q: Shockwave impulse — push all nearby balls outward
+            if (qDown)
+            {
+                _localBehaviour.ApplyImpulse(0f, 1f, 0f, 8f);
+                foreach (var kvp in _remoteBehaviours)
+                {
+                    if (kvp.Value != null)
+                    {
+                        Vector3 dir = (kvp.Value.transform.position - _localBall.transform.position).normalized;
+                        kvp.Value.ApplyImpulse(dir.x, dir.y + 0.5f, dir.z, 5f);
+                    }
+                }
+            }
+
+            // T: Chat bubble
+            if (tDown)
+            {
+                _localBehaviour.ChatBubble("Hello!");
+            }
+
+            // R: Play effect
+            if (rDown)
+            {
+                _localBehaviour.PlayEffect((byte)UnityEngine.Random.Range(0, 3));
+            }
         }
 
         #endregion
@@ -372,9 +477,11 @@ namespace EOSNative.Demo
             };
 
             float y = 10f;
-            GUI.Label(new Rect(10, y, 400, 25), "P2P Ball Demo", style);
+            GUI.Label(new Rect(10, y, 500, 25), "P2P Ball Demo (Layer 1 + Layer 2)", style);
             y += 20f;
-            GUI.Label(new Rect(10, y, 400, 25), "WASD: Move | Space: Jump | F1: EOS Overlay", style);
+            GUI.Label(new Rect(10, y, 500, 25), "WASD: Move | Space: Jump | E: Color | Q: Shockwave | T: Chat | R: Effect", style);
+            y += 20f;
+            GUI.Label(new Rect(10, y, 500, 25), "F1: EOS Overlay", style);
             y += 20f;
 
             var lobby = EOSLobbyManager.Instance;
@@ -382,45 +489,31 @@ namespace EOSNative.Demo
             {
                 GUI.Label(new Rect(10, y, 400, 25), $"Lobby: {lobby.CurrentLobby.LobbyId?.Substring(0, Mathf.Min(8, lobby.CurrentLobby.LobbyId?.Length ?? 0))}...", style);
                 y += 20f;
-                GUI.Label(new Rect(10, y, 400, 25), $"Peers: {EOSP2PManager.Instance.Peers.Count}", style);
+                GUI.Label(new Rect(10, y, 400, 25), $"Peers: {EOSP2PManager.Instance.Peers.Count} | Remote balls: {_remoteBalls.Count}", style);
                 y += 20f;
-                GUI.Label(new Rect(10, y, 400, 25), $"Remote balls: {_remoteBalls.Count}", style);
+
+                // Scores
+                if (_localBehaviour != null)
+                {
+                    GUI.Label(new Rect(10, y, 400, 25), $"Your Score: {_localBehaviour.Score.Value}", style);
+                    y += 20f;
+                }
+                foreach (var kvp in _remoteBehaviours)
+                {
+                    if (kvp.Value != null)
+                    {
+                        string name = string.IsNullOrEmpty(kvp.Value.DisplayName.Value)
+                            ? kvp.Key.Substring(0, Mathf.Min(6, kvp.Key.Length))
+                            : kvp.Value.DisplayName.Value;
+                        GUI.Label(new Rect(10, y, 400, 25), $"{name}: {kvp.Value.Score.Value}", style);
+                        y += 20f;
+                    }
+                }
             }
             else
             {
                 GUI.Label(new Rect(10, y, 400, 25), "Join/create a lobby via F1 overlay to start", style);
             }
-
-            // Name labels above balls
-            if (Camera.main != null)
-            {
-                if (_localBall != null)
-                    DrawBallLabel(_localBall.transform.position, "YOU");
-
-                foreach (var kvp in _remoteBalls)
-                {
-                    if (kvp.Value != null)
-                    {
-                        string shortPuid = kvp.Key.Length > 6 ? kvp.Key.Substring(0, 6) : kvp.Key;
-                        DrawBallLabel(kvp.Value.transform.position, shortPuid);
-                    }
-                }
-            }
-        }
-
-        private void DrawBallLabel(Vector3 worldPos, string label)
-        {
-            Vector3 screenPos = Camera.main.WorldToScreenPoint(worldPos + Vector3.up * 1.5f);
-            if (screenPos.z <= 0) return;
-
-            float width = Mathf.Max(60f, label.Length * 9f);
-            var rect = new Rect(screenPos.x - width / 2f, Screen.height - screenPos.y, width, 22f);
-            GUI.Label(rect, label, new GUIStyle(GUI.skin.label)
-            {
-                alignment = TextAnchor.MiddleCenter,
-                fontSize = 13,
-                normal = { textColor = Color.white }
-            });
         }
 
         #endregion

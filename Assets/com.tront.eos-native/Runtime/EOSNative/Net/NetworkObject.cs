@@ -248,15 +248,25 @@ namespace EOSNative.Net
             OnOwnerChanged?.Invoke(oldOwner, newOwner);
         }
 
-        /// <summary>Invoke the OnNetworkSpawn event.</summary>
+        /// <summary>Invoke the OnNetworkSpawn event and NetworkBehaviour lifecycle hooks.</summary>
         internal void NotifyNetworkSpawn()
         {
+            // Register weaver-generated RPCs and fire lifecycle on all behaviours
+            var behaviours = GetComponents<NetworkBehaviour>();
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                behaviours[i].__RegisterNetRPCs();
+                behaviours[i].OnNetworkSpawn();
+            }
             OnNetworkSpawn?.Invoke();
         }
 
-        /// <summary>Invoke the OnNetworkDespawn event.</summary>
+        /// <summary>Invoke the OnNetworkDespawn event and NetworkBehaviour lifecycle hooks.</summary>
         internal void NotifyNetworkDespawn()
         {
+            var behaviours = GetComponents<NetworkBehaviour>();
+            for (int i = 0; i < behaviours.Length; i++)
+                behaviours[i].OnNetworkDespawn();
             OnNetworkDespawn?.Invoke();
         }
 

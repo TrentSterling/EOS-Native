@@ -65,9 +65,9 @@ namespace EOSNative.Net
             // Fallback: INetSerializable
             if (typeof(INetSerializable).IsAssignableFrom(typeof(T)))
             {
-                T instance = Activator.CreateInstance<T>();
+                object instance = Activator.CreateInstance<T>();
                 ((INetSerializable)instance).Deserialize(reader);
-                return instance;
+                return (T)instance;
             }
 
             throw new InvalidOperationException(

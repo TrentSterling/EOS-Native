@@ -26,6 +26,9 @@ namespace EOSNative.Net
         /// <summary>The ProductUserId of the owning peer.</summary>
         public ProductUserId OwnerId => Net?.OwnerId;
 
+        /// <summary>Shortcut to NetworkManager.Instance.</summary>
+        protected NetworkManager Manager => NetworkManager.Instance;
+
         /// <summary>
         /// Create and register a SyncVar on the NetworkObject.
         /// Call in Awake() after base.Awake().
@@ -53,6 +56,24 @@ namespace EOSNative.Net
         {
             return Net.SyncDictionary(initial);
         }
+
+        /// <summary>
+        /// Called by NetworkManager after NetworkId is assigned and the object is registered.
+        /// Override for post-spawn initialization (e.g. subscribing to events that need NetworkId).
+        /// </summary>
+        public virtual void OnNetworkSpawn() { }
+
+        /// <summary>
+        /// Called when the object is about to be despawned from the network.
+        /// Override for cleanup before the object is deactivated/pooled.
+        /// </summary>
+        public virtual void OnNetworkDespawn() { }
+
+        /// <summary>
+        /// Weaver-generated override that registers all [NetRpc] handlers on this behaviour.
+        /// Called by NetworkManager after NetworkId is assigned. Do not call manually.
+        /// </summary>
+        internal virtual void __RegisterNetRPCs() { }
 
         protected virtual void Awake()
         {

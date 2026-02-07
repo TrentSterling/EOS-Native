@@ -883,6 +883,103 @@ Snapshots are sent in priority-ordered chunks of 16 objects per message:
 
 Each chunk is a separate MSG_SNAPSHOT message, all reliable ordered. HandleSnapshot already handles multiple SNAPSHOT messages via duplicate guard (`_objects.ContainsKey`). After receiving RoomState, late joiners auto-create their PlayerState and sync scenes.
 
+## Typed RPCs ([NetRpc] Attribute + IL Post-Processor)
+
+Mark methods on `NetworkBehaviour` subclasses with `[NetRpc]` for zero-boilerplate typed RPCs. The IL post-processor (Mono.Cecil) rewrites method bodies at compile time — same technique as Mirror, FishNet, and Fusion.
+
+```csharp
+[NetRpc(RPCTarget.All)]
+public void TakeDamage(float damage)
+{
+    Health.Value -= damage;
+}
+
+// Calling is transparent — all peers execute TakeDamage:
+player.TakeDamage(19f);
+```
+
+**What the weaver generates (per [NetRpc] method):**
+1. `UserCode_TakeDamage(float)` — original method body, moved here
+2. `TakeDamage(float)` — dispatch stub: serialize args via `NetSerializers.Write<T>()`, call `SendRPCWeaved()`
+3. `__InvokeNetRpc_TakeDamage(NetReader)` — deserializer: `NetSerializers.Read<T>()` each param, call `UserCode_`
+4. `__RegisterNetRPCs()` override — registers invoke handlers after NetworkId is assigned
+
+**NetworkBehaviour lifecycle hooks (called by NetworkObject.NotifyNetworkSpawn/Despawn):**
+- `OnNetworkSpawn()` — called after NetworkId assigned, RPCs registered. Override for post-spawn init.
+- `OnNetworkDespawn()` — called before object deactivated/pooled. Override for cleanup.
+- `__RegisterNetRPCs()` — weaver-generated, registers all `[NetRpc]` handlers. Do not call manually.
+
+**NetworkManager new overloads (weaver calls these):**
+- `RegisterRPC(target, uint hash, string name, handler)` — hash-based registration (compile-time hash)
+- `SendRPCWeaved(target, uint hash, RPCTarget, byte[] argData)` — pre-serialized dispatch
+- `SendRPCWeavedToPeer(target, uint hash, ProductUserId, byte[] argData)` — peer-targeted pre-serialized dispatch
+
+**Supported parameter types:** byte, bool, short, ushort, int, uint, long, ulong, float, double, string, Vector2, Vector3, Quaternion, Color, Color32, ProductUserId, byte[], NetworkObject, INetSerializable
+
+**Constraints:** void return only, no ref/out, no generics, no abstract. Violations produce compiler errors from the weaver.
+
+**Backward compatible:** Existing string-based `RegisterRPC`/`SendRPC` API unchanged and fully functional.
+
+**CodeGen assembly:** `EOSNative.CodeGen/` — Editor-only, `noEngineReferences: true`, references Mono.Cecil precompiled DLLs. Depends on `com.unity.nuget.mono-cecil` (1.11.6) in manifest.json.
+
+**Files:**
+
+| File | Description |
+|------|-------------|
+| `Net/NetRpcAttribute.cs` | `[NetRpc(RPCTarget)]` attribute definition |
+| `EOSNative.CodeGen/EOSNative.CodeGen.asmdef` | Assembly def for the IL post-processor |
+| `EOSNative.CodeGen/EOSNetRpcPostProcessor.cs` | `ILPostProcessor` entry point |
+| `EOSNative.CodeGen/PostProcessorAssemblyResolver.cs` | Custom Cecil assembly resolver |
+| `EOSNative.CodeGen/WeaverTypes.cs` | Resolves all Cecil type/method references |
+| `EOSNative.CodeGen/RpcWeaver.cs` | Core weaving logic (~400 lines) |
+
+## DemoBallBehaviour (Layer 2 Demo)
+
+NetworkBehaviour component added to each ball in the P2P demo. Demonstrates SyncVars and `[NetRpc]` typed RPCs on runtime-created objects registered via `RegisterExisting()` (no prefabs needed).
+
+**File:** `Demo/DemoBallBehaviour.cs` (~170 lines)
+
+**SyncVars:** Score (int), DisplayName (string), BallColor (Color)
+
+**[NetRpc] Methods:**
+- `ApplyImpulse(float dirX, float dirY, float dirZ, float force)` — applies physics impulse (RPCTarget.All)
+- `ChangeColor(float r, float g, float b)` — changes ball color, updates SyncVar + renderer (RPCTarget.All)
+- `ChatBubble(string message)` — shows floating text above ball for 3s (RPCTarget.All)
+- `PlayEffect(byte effectId)` — shows brief visual indicator (RPCTarget.All)
+- `RequestScorePoint(int amount)` — asks owner to add score (RPCTarget.Owner)
+
+**Demo controls (in P2PDemoManager):**
+- **E** — cycle through color presets
+- **Q** — shockwave impulse (pushes self up + all nearby balls outward)
+- **T** — chat bubble ("Hello!")
+- **R** — random visual effect
+
+**Registration pattern:** Each ball gets `NetworkObject` + `DemoBallBehaviour` added at creation time. A deterministic NetworkId is generated as `0xBB000000 | (FnvHash(puid) & 0x00FFFFFF)`, then registered via `NetworkManager.Instance.RegisterExisting()`.
+
+**`RegisterExisting()` fix (v2.14.0):** Now calls `NotifyNetworkSpawn()` after registration, so `__RegisterNetRPCs()` and `OnNetworkSpawn()` fire correctly on objects created outside of `Spawn()`.
+
+## Automated Tests
+
+Editor-mode unit tests for core networking primitives. Uses Unity Test Framework (`com.unity.test-framework`).
+
+**Location:** `Tests/Editor/` with `EOSNative.Tests.Editor.asmdef`
+
+**Test assembly:** References `EOSNative` and `Epic.OnlineServices` assemblies. Editor-only, `UNITY_INCLUDE_TESTS` define constraint.
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `NetWriterReaderTests.cs` | ~25 | All primitives, packed varints, strings, Unity types, byte arrays, pooling, auto-grow, bounds checking |
+| `FnvHashTests.cs` | ~8 | Known values, empty/null, consistency, case sensitivity, collision resistance |
+| `NetSerializersTests.cs` | ~20 | All 18 built-in types round-trip, INetSerializable, boxed read/write, type IDs |
+| `SyncVarTests.cs` | ~20 | Dirty tracking, OnChanged, owner-write guard, SetInternal bypass, serialize round-trip, multiple SyncVars, dirty mask |
+| `SyncListTests.cs` | ~18 | Add/Set/RemoveAt/Insert/Clear, delta serialization, full state, OnChanged, enumerate |
+| `SyncDictionaryTests.cs` | ~16 | Set/Remove/Clear, delta serialization, full state, OnChanged, TryGetValue, enumerate |
+| `PacketFragmenterTests.cs` | ~12 | Single-fragment fast path, multi-fragment round-trip, out-of-order, stale cleanup, max payload, duplicate ignore |
+| `NetworkIdTests.cs` | ~8 | Partition generation, scene object IDs, demo ball IDs, well-known IDs, reserved PrefabIds |
+| `CompressionTests.cs` | ~12 | Vector3Half accuracy, compressed rotation (smallest-three) round-trip, edge cases, many angles |
+
+**Run:** Window > General > Test Runner > EditMode > Run All
+
 ## Bug/TODO Tracking
 
 See `BUGS.MD` and `TODO.MD` in the repo root for known issues and planned work.

@@ -37,6 +37,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] NetworkAnimator — packed SyncVar for float/int/bool params, trigger RPCs
 - [x] EasySync — Normcore-style no-code property sync (Inspector checkboxes, reflection-based)
 - [x] Scene object auto-ownership — pre-existing scene objects auto-assign to host
+- [x] [NetRpc] attribute + IL post-processor — typed RPCs with zero-boilerplate (Mirror/FishNet/Fusion style)
 - [ ] EasySync v2 — per-property WriteAccess (Host/All), interpolation toggle, "Convert to Code" export
 - [x] Shared room data (NetworkRoomState — live room properties with lobby attribute mirroring)
 - [x] Per-user data (NetworkPlayerState — per-player synced properties)
@@ -50,7 +51,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Zero-hitch host migration (no scene takedown, own the object lifetime)
 - [x] Peer-authority model (each peer owns their objects, master client arbitrates)
 - [x] Late-join snapshots (new peers receive full state dump from host)
-- [ ] P2P direct connections for fast RPCs (skip relay when possible)
+- [x] P2P direct connections for fast RPCs (EOS SDK handles relay vs direct automatically, NetworkStats tracks connection type)
 
 **SyncVar LOD System** (community request — AlmightyMikkel):
 - [ ] SyncVar LOD tiers — component where you specify X LOD distances, each defining which components/SyncVars sync and at what rate
@@ -144,6 +145,11 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Ball despawn on peer disconnect (leave packet)
 - [ ] 3+ player mesh (all peers see all balls)
 - [ ] Works with both Input System and legacy Input
+- [ ] Layer 2 SyncVars sync (Score, DisplayName, BallColor visible on late-join)
+- [ ] Layer 2 RPCs work (E=color, Q=shockwave, T=chat, R=effect)
+
+**Automated Unit Tests:**
+- [ ] All ~140 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
 
 **UI — F1 OnGUI Overlay (EOSNativeStatusUI):**
 - [ ] F1 toggle opens/closes overlay
@@ -249,3 +255,10 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] NetworkPlayerState — per-player synced state (name, team, score, custom data), auto-created on connect
 - [x] NetworkSceneManager — networked scene loading (single + additive), late-join scene sync, all-peers-loaded event
 - [x] Chunked snapshot delivery with priority ordering (RoomState first, PlayerStates second, then objects)
+- [x] [NetRpc] IL post-processor with Mono.Cecil (typed RPCs, auto-serialize params, compile-time hash)
+- [x] DemoBallBehaviour — Layer 2 demo with SyncVars (Score, DisplayName, BallColor) and [NetRpc] methods on runtime-created balls
+- [x] Fix RegisterExisting() to call NotifyNetworkSpawn() (RPCs and OnNetworkSpawn now fire for objects registered outside Spawn())
+- [x] Automated unit tests — 9 test files (157 tests) for NetWriter/Reader, FnvHash, NetSerializers, SyncVar, SyncList, SyncDictionary, PacketFragmenter, NetworkId, Compression
+- [x] Fix INetSerializable struct boxing bug in NetSerializers.Read (Deserialize mutated boxed copy, not original)
+- [x] Fix Input System compatibility in P2PDemoManager (EOS_HAS_INPUT_SYSTEM guard for E/Q/T/R keys)
+- [x] Add InternalsVisibleTo for test assembly (AssemblyInfo.cs)
