@@ -121,6 +121,10 @@ namespace EOSNative
         [Tooltip("Show a Canvas-based runtime console (captures Debug.Log on mobile)")]
         [SerializeField] private bool _showConsole = true;
 
+        [Header("P2P Demo")]
+        [Tooltip("Auto-create the P2P Ball Demo manager (WASD ball game with spring physics sync)")]
+        [SerializeField] private bool _enableP2PDemo = true;
+
         /// <summary>
         /// The config currently assigned or loaded from Resources.
         /// </summary>
@@ -464,6 +468,13 @@ namespace EOSNative
             {
                 // Force-create the Canvas UI singleton (it lives on its own GameObject)
                 var _ = EOSNativeCanvasUI.Instance;
+            }
+
+            // Auto-create P2P demo (P2P mesh manager + ball demo)
+            if (_enableP2PDemo)
+            {
+                var _p2p = global::EOSNative.P2P.EOSP2PManager.Instance;
+                var _demo = global::EOSNative.Demo.P2PDemoManager.Instance;
             }
 
             Debug.Log("[EOS-Native] Startup complete.");

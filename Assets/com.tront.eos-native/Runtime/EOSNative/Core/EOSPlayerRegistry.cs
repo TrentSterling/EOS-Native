@@ -32,8 +32,11 @@ namespace EOSNative
                     if (_instance == null)
                     {
                         var go = new GameObject("EOSPlayerRegistry");
+                        if (EOSManager.Instance != null)
+                            go.transform.SetParent(EOSManager.Instance.transform);
+                        else
+                            DontDestroyOnLoad(go);
                         _instance = go.AddComponent<EOSPlayerRegistry>();
-                        DontDestroyOnLoad(go);
                     }
                 }
                 return _instance;
@@ -165,7 +168,8 @@ namespace EOSNative
                 return;
             }
             _instance = this;
-            DontDestroyOnLoad(gameObject);
+            if (transform.parent == null)
+                DontDestroyOnLoad(gameObject);
 
             LoadFromPrefs();
             LoadFriends();

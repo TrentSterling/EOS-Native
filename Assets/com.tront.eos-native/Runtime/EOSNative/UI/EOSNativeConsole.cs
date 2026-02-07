@@ -26,8 +26,11 @@ namespace EOSNative.UI
 #endif
                 if (_instance != null) return _instance;
                 var go = new GameObject("[EOSNativeConsole]");
+                if (EOSManager.Instance != null)
+                    go.transform.SetParent(EOSManager.Instance.transform);
+                else
+                    DontDestroyOnLoad(go);
                 _instance = go.AddComponent<EOSNativeConsole>();
-                DontDestroyOnLoad(go);
                 return _instance;
             }
         }
@@ -104,7 +107,8 @@ namespace EOSNative.UI
                 return;
             }
             _instance = this;
-            DontDestroyOnLoad(gameObject);
+            if (transform.parent == null)
+                DontDestroyOnLoad(gameObject);
         }
 
         private void OnEnable()

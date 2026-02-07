@@ -30,8 +30,11 @@ namespace EOSNative.Storage
                     if (_instance == null)
                     {
                         var go = new GameObject("EOSPlayerDataStorage");
+                        if (EOSManager.Instance != null)
+                            go.transform.SetParent(EOSManager.Instance.transform);
+                        else
+                            DontDestroyOnLoad(go);
                         _instance = go.AddComponent<EOSPlayerDataStorage>();
-                        DontDestroyOnLoad(go);
                     }
                 }
                 return _instance;
@@ -80,7 +83,8 @@ namespace EOSNative.Storage
                 return;
             }
             _instance = this;
-            DontDestroyOnLoad(gameObject);
+            if (transform.parent == null)
+                DontDestroyOnLoad(gameObject);
         }
 
         private void Start()

@@ -734,10 +734,27 @@
       border-radius: 8px;
       margin: 0.5rem 0;
       padding: 0.75rem;
+      overflow: hidden;
+      word-break: break-word;
+      overflow-wrap: break-word;
     }
 
     .matching-post a {
       color: var(--accent) !important;
+      word-break: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .matching-post p {
+      word-break: break-word;
+      overflow-wrap: break-word;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Prevent search results container from causing horizontal scroll */
+    .search .results-panel {
+      overflow-x: hidden;
     }
 
     /* Main content */

@@ -39,8 +39,11 @@ namespace EOSNative.Voice
                     if (_instance == null)
                     {
                         var go = new GameObject("EOSVoiceManager");
+                        if (EOSManager.Instance != null)
+                            go.transform.SetParent(EOSManager.Instance.transform);
+                        else
+                            DontDestroyOnLoad(go);
                         _instance = go.AddComponent<EOSVoiceManager>();
-                        DontDestroyOnLoad(go);
                         EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", "Auto-created singleton instance");
                     }
                 }

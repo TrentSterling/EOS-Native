@@ -33,8 +33,11 @@ namespace EOSNative.Lobbies
                     if (_instance == null)
                     {
                         var go = new GameObject("EOSLobbyManager");
+                        if (EOSManager.Instance != null)
+                            go.transform.SetParent(EOSManager.Instance.transform);
+                        else
+                            DontDestroyOnLoad(go);
                         _instance = go.AddComponent<EOSLobbyManager>();
-                        DontDestroyOnLoad(go);
                         EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", "Auto-created singleton instance");
                     }
                 }

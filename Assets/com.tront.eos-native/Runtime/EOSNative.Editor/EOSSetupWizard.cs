@@ -1,11 +1,13 @@
 using UnityEngine;
 using UnityEditor;
+using System.IO;
 using System.Text;
 
 namespace EOSNative.Editor
 {
     /// <summary>
-    /// Setup wizard window for configuring EOS credentials with helpful tooltips and instructions.
+    /// Setup wizard window for configuring EOS credentials, managing dependencies,
+    /// and providing help/about info.
     /// </summary>
     public class EOSSetupWizard : EditorWindow
     {
@@ -14,16 +16,24 @@ namespace EOSNative.Editor
         private bool _showAdvanced = false;
         private string _validationMessage = "";
         private MessageType _validationMessageType = MessageType.None;
+        private int _currentTab = 0;
 
         // Styles
         private GUIStyle _headerStyle;
         private GUIStyle _subHeaderStyle;
         private GUIStyle _instructionStyle;
         private GUIStyle _linkStyle;
+        private GUIStyle _versionStyle;
         private bool _stylesInitialized;
 
         private const string PORTAL_URL = "https://dev.epicgames.com/portal";
         private const string DOCS_URL = "https://dev.epicgames.com/docs/game-services/eos-get-started/services-quick-start";
+        private const string GITHUB_URL = "https://github.com/TrentSterling/EOS-Native";
+        private const string DOCS_SITE_URL = "https://tront.xyz/EOS-Native/";
+        private const string PARRELSYNC_URL = "https://github.com/VeriorPies/ParrelSync.git?path=/ParrelSync";
+        private const string PARRELSYNC_PACKAGE = "com.veriorpies.parrelsync";
+
+        private static readonly string[] TabNames = { "Setup", "Dependencies", "About" };
 
         [MenuItem("Tools/EOS Native/Setup Wizard", priority = -100)]
         public static void ShowWindow()
@@ -40,7 +50,6 @@ namespace EOSNative.Editor
 
         private void FindOrCreateConfig()
         {
-            // Try to find existing config
             var guids = AssetDatabase.FindAssets("t:EOSConfig");
             if (guids.Length > 0)
             {
@@ -79,6 +88,12 @@ namespace EOSNative.Editor
                 margin = new RectOffset(0, 0, 5, 5)
             };
 
+            _versionStyle = new GUIStyle(EditorStyles.label)
+            {
+                fontSize = 12,
+                normal = { textColor = new Color(0.6f, 0.6f, 0.6f) }
+            };
+
             _stylesInitialized = true;
         }
 
@@ -97,9 +112,27 @@ namespace EOSNative.Editor
         {
             InitStyles();
 
+            // Tab bar
+            _currentTab = GUILayout.Toolbar(_currentTab, TabNames, GUILayout.Height(30));
+            EditorGUILayout.Space(5);
+
             _scrollPos = EditorGUILayout.BeginScrollView(_scrollPos);
 
-            // Header
+            switch (_currentTab)
+            {
+                case 0: DrawSetupTab(); break;
+                case 1: DrawDependenciesTab(); break;
+                case 2: DrawAboutTab(); break;
+            }
+
+            EditorGUILayout.Space(20);
+            EditorGUILayout.EndScrollView();
+        }
+
+        #region Setup Tab
+
+        private void DrawSetupTab()
+        {
             EditorGUILayout.LabelField("EOS Setup Wizard", _headerStyle);
             EditorGUILayout.Space(5);
 
@@ -119,7 +152,6 @@ namespace EOSNative.Editor
             if (_config == null)
             {
                 EditorGUILayout.HelpBox("Create or select an EOSConfig to continue.", MessageType.Warning);
-                EditorGUILayout.EndScrollView();
                 return;
             }
 
@@ -135,9 +167,6 @@ namespace EOSNative.Editor
 
             // Validation
             DrawValidation();
-
-            EditorGUILayout.Space(20);
-            EditorGUILayout.EndScrollView();
         }
 
         private void DrawConfigSection()
@@ -217,25 +246,21 @@ namespace EOSNative.Editor
 
             EditorGUI.BeginChangeCheck();
 
-            // Product Name
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Product Name", "A friendly name for your game. Used in SDK logging."), GUILayout.Width(120));
             _config.ProductName = EditorGUILayout.TextField(_config.ProductName);
             EditorGUILayout.EndHorizontal();
 
-            // Product ID
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Product ID *", "Found in: Product Settings > SDK Credentials\nFormat: xxxxxxxxxxxxxxxx..."), GUILayout.Width(120));
             _config.ProductId = EditorGUILayout.TextField(_config.ProductId);
             EditorGUILayout.EndHorizontal();
 
-            // Sandbox ID
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Sandbox ID *", "Found in: Product Settings > SDK Credentials\nUsually starts with your product name"), GUILayout.Width(120));
             _config.SandboxId = EditorGUILayout.TextField(_config.SandboxId);
             EditorGUILayout.EndHorizontal();
 
-            // Deployment ID
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Deployment ID *", "Found in: Product Settings > Deployment\nCreate one if none exist (e.g., 'dev', 'live')"), GUILayout.Width(120));
             _config.DeploymentId = EditorGUILayout.TextField(_config.DeploymentId);
@@ -264,13 +289,11 @@ namespace EOSNative.Editor
 
             EditorGUI.BeginChangeCheck();
 
-            // Client ID
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Client ID *", "Found in: Product Settings > Clients\nThe ID of your client policy"), GUILayout.Width(120));
             _config.ClientId = EditorGUILayout.TextField(_config.ClientId);
             EditorGUILayout.EndHorizontal();
 
-            // Client Secret
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Client Secret *", "Found in: Product Settings > Clients\nKeep this secret! Don't commit to public repos."), GUILayout.Width(120));
             _config.ClientSecret = EditorGUILayout.PasswordField(_config.ClientSecret);
@@ -304,13 +327,11 @@ namespace EOSNative.Editor
 
             EditorGUI.BeginChangeCheck();
 
-            // Encryption Key
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Encryption Key *", "64 hex characters for AES-256 encryption\nExample: 1111111111111111111111111111111111111111111111111111111111111111"), GUILayout.Width(120));
             _config.EncryptionKey = EditorGUILayout.TextField(_config.EncryptionKey);
             EditorGUILayout.EndHorizontal();
 
-            // Show character count
             int keyLength = _config.EncryptionKey?.Length ?? 0;
             Color oldColor = GUI.color;
             GUI.color = keyLength == 64 ? Color.green : (keyLength > 0 ? Color.yellow : Color.gray);
@@ -348,7 +369,6 @@ namespace EOSNative.Editor
 
             EditorGUI.BeginChangeCheck();
 
-            // Default Display Name
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Display Name", "Default name for DeviceID login (max 32 chars)\nPlayers see this before setting their own name"), GUILayout.Width(120));
             _config.DefaultDisplayName = EditorGUILayout.TextField(_config.DefaultDisplayName);
@@ -356,13 +376,11 @@ namespace EOSNative.Editor
 
             EditorGUILayout.Space(10);
 
-            // Is Server
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Is Server", "Enable for dedicated server builds\nDisables overlay and some client features"), GUILayout.Width(120));
             _config.IsServer = EditorGUILayout.Toggle(_config.IsServer);
             EditorGUILayout.EndHorizontal();
 
-            // Tick Budget
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(new GUIContent("Tick Budget (ms)", "Max time for SDK work per frame (0 = unlimited)\nIncrease if you see hitches, decrease for more responsive callbacks"), GUILayout.Width(120));
             _config.TickBudgetInMilliseconds = (uint)EditorGUILayout.IntField((int)_config.TickBudgetInMilliseconds);
@@ -410,6 +428,351 @@ namespace EOSNative.Editor
             EditorGUILayout.EndVertical();
         }
 
+        #endregion
+
+        #region Dependencies Tab
+
+        private void DrawDependenciesTab()
+        {
+            EditorGUILayout.LabelField("Dependencies", _headerStyle);
+
+            EditorGUILayout.LabelField(
+                "Optional packages that enhance EOS Native functionality.\n" +
+                "Click Install to add them via Unity Package Manager.",
+                _instructionStyle
+            );
+
+            EditorGUILayout.Space(10);
+
+            // ParrelSync
+            DrawDependencyRow(
+                "ParrelSync",
+                PARRELSYNC_PACKAGE,
+                PARRELSYNC_URL,
+                "Run multiple Unity Editor instances from the same project for local multiplayer testing. " +
+                "Essential for testing P2P, lobbies, and voice chat without building.",
+                "https://github.com/VeriorPies/ParrelSync"
+            );
+
+            EditorGUILayout.Space(10);
+
+            // Input System (already required but show status)
+            DrawDependencyStatus(
+                "Input System",
+                "com.unity.inputsystem",
+                "Required for WASD ball controls in the P2P demo. Already referenced by EOSNative.asmdef."
+            );
+
+            EditorGUILayout.Space(10);
+
+            // Unity UI
+            DrawDependencyStatus(
+                "Unity UI (uGUI)",
+                "com.unity.ugui",
+                "Required for Canvas-based runtime UI (EOSNativeCanvasUI, EOSNativeConsole)."
+            );
+        }
+
+        private void DrawDependencyRow(string name, string packageId, string gitUrl, string description, string infoUrl)
+        {
+            bool installed = IsPackageInstalled(packageId);
+
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(name, _subHeaderStyle);
+            GUILayout.FlexibleSpace();
+
+            Color oldColor = GUI.color;
+            if (installed)
+            {
+                GUI.color = Color.green;
+                EditorGUILayout.LabelField("Installed", _versionStyle, GUILayout.Width(70));
+                GUI.color = oldColor;
+            }
+            else
+            {
+                GUI.color = Color.yellow;
+                EditorGUILayout.LabelField("Not Installed", _versionStyle, GUILayout.Width(90));
+                GUI.color = oldColor;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.LabelField(description, EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.Space(5);
+
+            EditorGUILayout.BeginHorizontal();
+
+            if (!installed)
+            {
+                Color oldBg = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(0.3f, 0.8f, 0.4f);
+                if (GUILayout.Button("Install", GUILayout.Height(25), GUILayout.Width(100)))
+                {
+                    InstallPackage(packageId, gitUrl);
+                }
+                GUI.backgroundColor = oldBg;
+            }
+            else
+            {
+                if (GUILayout.Button("Remove", GUILayout.Height(25), GUILayout.Width(100)))
+                {
+                    if (EditorUtility.DisplayDialog("Remove Package",
+                        $"Remove {name} from the project?", "Remove", "Cancel"))
+                    {
+                        RemovePackage(packageId);
+                    }
+                }
+            }
+
+            if (GUILayout.Button("GitHub", GUILayout.Height(25), GUILayout.Width(80)))
+            {
+                Application.OpenURL(infoUrl);
+            }
+
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawDependencyStatus(string name, string packageId, string description)
+        {
+            bool installed = IsPackageInstalled(packageId);
+
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(name, _subHeaderStyle);
+            GUILayout.FlexibleSpace();
+
+            Color oldColor = GUI.color;
+            GUI.color = installed ? Color.green : Color.red;
+            EditorGUILayout.LabelField(installed ? "Installed" : "Missing", _versionStyle, GUILayout.Width(70));
+            GUI.color = oldColor;
+
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.LabelField(description, EditorStyles.wordWrappedMiniLabel);
+
+            EditorGUILayout.EndVertical();
+        }
+
+        private bool IsPackageInstalled(string packageId)
+        {
+            string manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
+            if (!File.Exists(manifestPath)) return false;
+            string manifest = File.ReadAllText(manifestPath);
+            return manifest.Contains($"\"{packageId}\"");
+        }
+
+        private void InstallPackage(string packageId, string gitUrl)
+        {
+            string manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
+            if (!File.Exists(manifestPath))
+            {
+                Debug.LogError("[EOS Setup] manifest.json not found!");
+                return;
+            }
+
+            string manifest = File.ReadAllText(manifestPath);
+            if (manifest.Contains($"\"{packageId}\""))
+            {
+                Debug.Log($"[EOS Setup] {packageId} is already installed.");
+                return;
+            }
+
+            // Insert after "dependencies": {
+            string insertAfter = "\"dependencies\": {";
+            int idx = manifest.IndexOf(insertAfter);
+            if (idx < 0)
+            {
+                Debug.LogError("[EOS Setup] Could not parse manifest.json");
+                return;
+            }
+
+            int insertPos = idx + insertAfter.Length;
+            string entry = $"\n    \"{packageId}\": \"{gitUrl}\",";
+            manifest = manifest.Insert(insertPos, entry);
+
+            File.WriteAllText(manifestPath, manifest);
+            Debug.Log($"[EOS Setup] Added {packageId} to manifest.json. Unity will resolve it now...");
+
+            AssetDatabase.Refresh();
+            // Trigger UPM resolution
+            UnityEditor.PackageManager.Client.Resolve();
+        }
+
+        private void RemovePackage(string packageId)
+        {
+            UnityEditor.PackageManager.Client.Remove(packageId);
+            Debug.Log($"[EOS Setup] Removing {packageId}...");
+        }
+
+        #endregion
+
+        #region About Tab
+
+        private void DrawAboutTab()
+        {
+            EditorGUILayout.LabelField("EOS Native", _headerStyle);
+
+            string version = GetPackageVersion();
+            EditorGUILayout.LabelField($"Version {version}", _versionStyle);
+            EditorGUILayout.LabelField("EOS SDK 1.18.1.2", _versionStyle);
+            EditorGUILayout.Space(10);
+
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.LabelField(
+                "Epic Online Services SDK + high-level wrapper for Unity.\n\n" +
+                "Provides the raw Epic.OnlineServices namespace plus EOSNative managers " +
+                "for lobbies, voice chat, P2P networking, social features, storage, " +
+                "anti-cheat, replays, and more.\n\n" +
+                "Framework-agnostic - works with any networking solution (FishNet, Mirror, Netcode, or standalone).",
+                EditorStyles.wordWrappedLabel
+            );
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(10);
+
+            // Links
+            EditorGUILayout.LabelField("Links", _subHeaderStyle);
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            DrawLinkButton("Documentation Site", DOCS_SITE_URL);
+            DrawLinkButton("GitHub Repository", GITHUB_URL);
+            DrawLinkButton("Epic Developer Portal", PORTAL_URL);
+            DrawLinkButton("EOS SDK Documentation", DOCS_URL);
+
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(10);
+
+            // Features
+            EditorGUILayout.LabelField("Included Features", _subHeaderStyle);
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            string[] features = {
+                "Lobbies (create, join, search, quick match, host migration)",
+                "Voice Chat (RTC, mic/speaker selection, mute, level meters)",
+                "P2P Networking (raw P2P mesh, spring physics sync demo)",
+                "Lobby Chat (text messaging with lobby members)",
+                "Friends & Social (friends list, presence, user info, invites)",
+                "Stats, Leaderboards & Achievements",
+                "Player Data Storage & Title Storage (cloud saves)",
+                "Replays (recording, playback, ghost visualization)",
+                "Anti-Cheat (client/server integration)",
+                "Moderation (reports, sanctions)",
+                "Party System, Clans, Tournaments, Seasons",
+                "Vote Kick, Map Vote, Rematch, Backfill, AFK Detection",
+                "Runtime UI (OnGUI overlay + Canvas UI for mobile)",
+                "Android Build Processor (desugaring, native libs)"
+            };
+
+            foreach (var feature in features)
+            {
+                EditorGUILayout.LabelField($"  {feature}", EditorStyles.wordWrappedMiniLabel);
+            }
+
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(10);
+
+            // Platforms
+            EditorGUILayout.LabelField("Supported Platforms", _subHeaderStyle);
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            DrawPlatformRow("Windows x64", true);
+            DrawPlatformRow("Windows x86", true);
+            DrawPlatformRow("macOS (Universal)", true);
+            DrawPlatformRow("Linux x64", true);
+            DrawPlatformRow("Linux ARM64", true);
+            DrawPlatformRow("iOS (ARM64)", true);
+            DrawPlatformRow("Android", true);
+
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.Space(10);
+
+            // Credits
+            EditorGUILayout.LabelField("Credits", _subHeaderStyle);
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            EditorGUILayout.LabelField("Trent Sterling (tront.xyz) - EOS Native package", EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.LabelField("Epic Games - EOS SDK", EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.LabelField("DrewMileham - Spring physics sync method", EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.LabelField("Skylar/CometDev - Mirror spring sync implementation", EditorStyles.wordWrappedMiniLabel);
+
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawLinkButton(string label, string url)
+        {
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(label, GUILayout.Height(24)))
+            {
+                Application.OpenURL(url);
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        private void DrawPlatformRow(string platform, bool supported)
+        {
+            EditorGUILayout.BeginHorizontal();
+            Color oldColor = GUI.color;
+            GUI.color = supported ? Color.green : Color.red;
+            EditorGUILayout.LabelField(supported ? "  +" : "  -", GUILayout.Width(20));
+            GUI.color = oldColor;
+            EditorGUILayout.LabelField(platform);
+            EditorGUILayout.EndHorizontal();
+        }
+
+        private string GetPackageVersion()
+        {
+            // Try to read from package.json
+            string[] guids = AssetDatabase.FindAssets("package t:TextAsset", new[] { "Assets/com.tront.eos-native" });
+            foreach (var guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (path.EndsWith("package.json"))
+                {
+                    string json = File.ReadAllText(path);
+                    // Simple parse for "version": "x.y.z"
+                    int vIdx = json.IndexOf("\"version\"");
+                    if (vIdx >= 0)
+                    {
+                        int colon = json.IndexOf(':', vIdx);
+                        int firstQuote = json.IndexOf('"', colon + 1);
+                        int secondQuote = json.IndexOf('"', firstQuote + 1);
+                        if (firstQuote >= 0 && secondQuote > firstQuote)
+                            return json.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
+                    }
+                }
+            }
+
+            // Fallback: try direct path
+            string directPath = Path.Combine(Application.dataPath, "com.tront.eos-native", "package.json");
+            if (File.Exists(directPath))
+            {
+                string json = File.ReadAllText(directPath);
+                int vIdx = json.IndexOf("\"version\"");
+                if (vIdx >= 0)
+                {
+                    int colon = json.IndexOf(':', vIdx);
+                    int firstQuote = json.IndexOf('"', colon + 1);
+                    int secondQuote = json.IndexOf('"', firstQuote + 1);
+                    if (firstQuote >= 0 && secondQuote > firstQuote)
+                        return json.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
+                }
+            }
+
+            return "unknown";
+        }
+
+        #endregion
+
+        #region Helpers
+
         private void DrawStatusRow(string label, bool isValid)
         {
             EditorGUILayout.BeginHorizontal();
@@ -417,7 +780,7 @@ namespace EOSNative.Editor
 
             Color oldColor = GUI.color;
             GUI.color = isValid ? Color.green : Color.red;
-            EditorGUILayout.LabelField(isValid ? "✓" : "✗", GUILayout.Width(20));
+            EditorGUILayout.LabelField(isValid ? "+" : "-", GUILayout.Width(20));
             GUI.color = oldColor;
 
             EditorGUILayout.EndHorizontal();
@@ -466,5 +829,7 @@ namespace EOSNative.Editor
 
             return sb.ToString();
         }
+
+        #endregion
     }
 }

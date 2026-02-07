@@ -2,6 +2,7 @@
   * [Overview](/)
   * [Quick Start](quickstart.md)
   * [Setup Guide](setup.md)
+  * [EOS Service Limits](eos-limits.md)
 
 * **Core Features**
   * [Lobbies](lobbies.md)
@@ -46,6 +47,21 @@
   * [Platforms](platforms.md)
 
 * **Reference**
+  * [EOS Service Limits](eos-limits.md)
   * [Android Build Guide](android.md)
   * [Debug Tools](debug.md)
   * [Troubleshooting](troubleshooting.md)
+
+* **EOS Official Docs (Mirror)**
+  * [Multiplayer Overview](ref-multiplayer.md)
+  * [Platform Interface](ref-platform.md)
+  * [C# SDK / Unity](ref-csharp.md)
+  * [SDK Conventions & Limitations](ref-conventions.md)
+  * [Lobby Interface API](ref-lobby-api.md)
+  * [Lobbies Reference](ref-lobbies.md)
+  * [Sessions Reference](ref-sessions.md)
+  * [Voice Interface](ref-voice.md)
+  * [Voice Web API](ref-voice-webapi.md)
+  * [RTC Data Interface](ref-rtcdata.md)
+  * [Stats Reference](ref-stats.md)
+  * [EGS Requirements](ref-egs-requirements.md)
