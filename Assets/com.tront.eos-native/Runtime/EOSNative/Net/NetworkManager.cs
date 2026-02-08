@@ -41,10 +41,12 @@ namespace EOSNative.Net
         #region Singleton
 
         private static NetworkManager _instance;
+        private static bool _shuttingDown;
         public static NetworkManager Instance
         {
             get
             {
+                if (_shuttingDown) return _instance;
                 if (_instance == null)
                 {
                     _instance = FindAnyObjectByType<NetworkManager>();
@@ -686,6 +688,7 @@ namespace EOSNative.Net
 
         private void Awake()
         {
+            _shuttingDown = false;
             if (_instance != null && _instance != this)
             {
                 Destroy(gameObject);
@@ -695,6 +698,8 @@ namespace EOSNative.Net
             if (transform.parent == null)
                 DontDestroyOnLoad(gameObject);
         }
+
+        private void OnApplicationQuit() => _shuttingDown = true;
 
         private void OnEnable()
         {

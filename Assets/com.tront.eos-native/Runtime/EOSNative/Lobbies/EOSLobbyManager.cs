@@ -21,10 +21,12 @@ namespace EOSNative.Lobbies
         #region Singleton
 
         private static EOSLobbyManager _instance;
+        private static bool _shuttingDown;
         public static EOSLobbyManager Instance
         {
             get
             {
+                if (_shuttingDown) return _instance;
                 if (_instance == null)
                 {
                     _instance = FindAnyObjectByType<EOSLobbyManager>();
@@ -138,6 +140,7 @@ namespace EOSNative.Lobbies
 
         private void Awake()
         {
+            _shuttingDown = false;
             if (_instance != null && _instance != this)
             {
                 Destroy(gameObject);
@@ -149,6 +152,8 @@ namespace EOSNative.Lobbies
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
 #endif
         }
+
+        private void OnApplicationQuit() => _shuttingDown = true;
 
         private void OnDestroy()
         {

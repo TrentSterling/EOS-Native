@@ -19,10 +19,12 @@ namespace EOSNative.P2P
         #region Singleton
 
         private static EOSP2PManager _instance;
+        private static bool _shuttingDown;
         public static EOSP2PManager Instance
         {
             get
             {
+                if (_shuttingDown) return _instance;
                 if (_instance == null)
                 {
                     _instance = FindAnyObjectByType<EOSP2PManager>();
@@ -99,6 +101,7 @@ namespace EOSNative.P2P
 
         private void Awake()
         {
+            _shuttingDown = false;
             if (_instance != null && _instance != this)
             {
                 Destroy(gameObject);
@@ -108,6 +111,8 @@ namespace EOSNative.P2P
             if (transform.parent == null)
                 DontDestroyOnLoad(gameObject);
         }
+
+        private void OnApplicationQuit() => _shuttingDown = true;
 
         private void OnEnable()
         {

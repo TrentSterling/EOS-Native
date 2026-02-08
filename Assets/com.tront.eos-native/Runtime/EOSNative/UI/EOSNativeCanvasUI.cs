@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Epic.OnlineServices;
+using Epic.OnlineServices.RTCAudio;
 using EOSNative.Lobbies;
 using EOSNative.Social;
 using EOSNative.Voice;
@@ -109,6 +110,7 @@ namespace EOSNative.UI
         private Transform _voiceStatusContainer;
         private Transform _voiceParticipantsContainer;
         private Transform _audioDevicesContainer;
+        private Transform _voiceDiagContainer;
         private Image _micLevelFill;
         private Text _micLevelText;
         private int _selectedInputDevice = -1;
@@ -665,9 +667,12 @@ namespace EOSNative.UI
             var participantsSection = CreateSection(parent, "Participants");
             _voiceParticipantsContainer = participantsSection.transform;
 
+            var diagSection = CreateSection(parent, "Voice Diagnostics");
+            _voiceDiagContainer = diagSection.transform;
+
             var helpSection = CreateSection(parent, "Voice Info");
             AddLabel(helpSection.transform, "Voice is lobby-based. Create a lobby with Voice enabled.", 13, ColDimText);
-            AddLabel(helpSection.transform, "Voice auto-connects and persists through host migration.", 13, ColDimText);
+            AddLabel(helpSection.transform, "Devices auto-queried on connect. Press Refresh to re-scan.", 13, ColDimText);
         }
 
         #endregion
@@ -980,6 +985,7 @@ namespace EOSNative.UI
 
             RefreshAudioDevices(voice);
             RefreshVoiceParticipants();
+            RefreshVoiceDiagnostics(voice);
         }
 
         private void RefreshAudioDevices(EOSVoiceManager voice)
@@ -1076,6 +1082,37 @@ namespace EOSNative.UI
                     speaking ? ColGreen : ColDimText, 80);
                 AddLabel(row.transform, displayName, 14, ColText);
                 AddLabel(row.transform, audioStatus.ToString(), 12, ColDimText, 75);
+            }
+        }
+
+        private void RefreshVoiceDiagnostics(EOSVoiceManager voice)
+        {
+            if (_voiceDiagContainer == null) return;
+            ClearChildren(_voiceDiagContainer, 1);
+
+            var eosMgr = EOSManager.Instance;
+
+            AddStatusRow(_voiceDiagContainer, "RTC Interface", eosMgr?.RTCInterface != null, "OK", "NULL");
+            AddStatusRow(_voiceDiagContainer, "RTCAudio Interface", eosMgr?.RTCAudioInterface != null, "OK", "NULL");
+            AddKVRow(_voiceDiagContainer, "Local AudioStatus", voice.LocalAudioStatus.ToString());
+            AddKVRow(_voiceDiagContainer, "UpdateSending", voice.LastUpdateSendingResult.ToString());
+            AddKVRow(_voiceDiagContainer, "Devices Queried", voice.AudioDevicesQueried ? "Yes" : "No");
+            AddKVRow(_voiceDiagContainer, "Input Devices", voice.InputDevices.Count.ToString());
+            AddKVRow(_voiceDiagContainer, "Output Devices", voice.OutputDevices.Count.ToString());
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+            AddStatusRow(_voiceDiagContainer, "Android Java Init", eosMgr?.AndroidJavaInitSuccess ?? false, "OK", "FAILED");
+#endif
+
+            if (voice.LocalAudioStatus == RTCAudioStatus.Unsupported)
+            {
+                AddLabel(_voiceDiagContainer, "! AudioStatus=Unsupported means no audio devices.", 13, ColYellow);
+                AddLabel(_voiceDiagContainer, "  Java audio pipeline may not have initialized.", 13, ColYellow);
+            }
+            if (voice.AudioDevicesQueried && voice.InputDevices.Count == 0 && voice.OutputDevices.Count == 0)
+            {
+                AddLabel(_voiceDiagContainer, "! No audio devices found by EOS SDK.", 13, ColYellow);
+                AddLabel(_voiceDiagContainer, "  Platform audio API may not be available.", 13, ColYellow);
             }
         }
 
