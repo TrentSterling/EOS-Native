@@ -135,7 +135,21 @@ namespace EOSNative.Demo
             };
 
             // Name
-            string name = string.IsNullOrEmpty(DisplayName.Value) ? (IsOwner ? "YOU" : "???") : DisplayName.Value;
+            string name = DisplayName.Value;
+            if (string.IsNullOrEmpty(name))
+            {
+                if (IsOwner)
+                    name = "YOU";
+                else if (Net != null && Net.OwnerId != null)
+                {
+                    var registry = EOSNative.EOSPlayerRegistry.Instance;
+                    name = registry != null
+                        ? registry.GetOrGenerateName(Net.OwnerId.ToString())
+                        : Net.OwnerId.ToString().Substring(0, Mathf.Min(6, Net.OwnerId.ToString().Length));
+                }
+                else
+                    name = "???";
+            }
             float nameWidth = Mathf.Max(80f, name.Length * 9f);
             GUI.Label(new Rect(x - nameWidth / 2f, y - 20f, nameWidth, 20f), name, nameStyle);
 

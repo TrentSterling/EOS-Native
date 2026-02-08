@@ -386,31 +386,14 @@ namespace EOSNative.P2P
 
         private void SendFragmented(ArraySegment<byte> data, ProductUserId target, PacketReliability reliability, byte channel)
         {
-            if (!PacketFragmenter.NeedsFragmentation(data.Count))
+            _fragmenter.Fragment(data, _fragmentBuffer);
+            foreach (var frag in _fragmentBuffer)
             {
-                // Wrap in single fragment (add header)
-                _fragmenter.Fragment(data, _fragmentBuffer);
-                foreach (var frag in _fragmentBuffer)
-                {
-                    var fragArray = ToArray(frag);
-                    if (target == null)
-                        _p2p.SendToAll(channel, fragArray, reliability);
-                    else
-                        _p2p.SendToPeer(target, channel, fragArray, reliability);
-                }
-            }
-            else
-            {
-                // Fragment and send each piece
-                _fragmenter.Fragment(data, _fragmentBuffer);
-                foreach (var frag in _fragmentBuffer)
-                {
-                    var fragArray = ToArray(frag);
-                    if (target == null)
-                        _p2p.SendToAll(channel, fragArray, reliability);
-                    else
-                        _p2p.SendToPeer(target, channel, fragArray, reliability);
-                }
+                var fragArray = ToArray(frag);
+                if (target == null)
+                    _p2p.SendToAll(channel, fragArray, reliability);
+                else
+                    _p2p.SendToPeer(target, channel, fragArray, reliability);
             }
         }
 

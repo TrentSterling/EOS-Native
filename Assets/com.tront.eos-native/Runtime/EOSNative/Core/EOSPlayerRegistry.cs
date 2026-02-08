@@ -1509,17 +1509,24 @@ namespace EOSNative
             {
                 EditorGUILayout.Space(5);
 
+                using (new EditorGUI.DisabledGroupScope(true))
+                {
+                    EditorGUILayout.IntField("Friends", registry.FriendCount);
+                    EditorGUILayout.IntField("Blocked", registry.BlockedCount);
+                }
+
                 _showPlayers = EditorGUILayout.Foldout(_showPlayers, $"Players ({registry.CachedPlayerCount})", true);
                 if (_showPlayers && registry.CachedPlayerCount > 0)
                 {
-                    _scrollPos = EditorGUILayout.BeginScrollView(_scrollPos, GUILayout.Height(150));
+                    _scrollPos = EditorGUILayout.BeginScrollView(_scrollPos, GUILayout.Height(200));
 
                     var recent = registry.GetRecentPlayers(30);
                     foreach (var (puid, name, lastSeen) in recent)
                     {
+                        string puidShort = puid.Length > 16 ? puid.Substring(0, 16) + "..." : puid;
                         EditorGUILayout.BeginHorizontal();
-                        EditorGUILayout.LabelField(name, GUILayout.Width(120));
-                        EditorGUILayout.LabelField(puid.Substring(0, 8) + "...", EditorStyles.miniLabel, GUILayout.Width(80));
+                        EditorGUILayout.LabelField(name, GUILayout.Width(140));
+                        EditorGUILayout.SelectableLabel(puidShort, EditorStyles.miniLabel, GUILayout.Width(140), GUILayout.Height(16));
                         EditorGUILayout.LabelField(lastSeen.ToString("MM/dd HH:mm"), EditorStyles.miniLabel);
                         EditorGUILayout.EndHorizontal();
                     }

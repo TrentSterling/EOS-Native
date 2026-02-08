@@ -27,6 +27,12 @@ namespace EOSNative.Demo
         /// <summary>Set by demo manager. Only local balls read input.</summary>
         public bool IsLocal { get; set; }
 
+        /// <summary>External input from virtual joystick (mobile). Added to keyboard input.</summary>
+        public Vector2 MobileInput { get; set; }
+
+        /// <summary>External jump request from mobile button.</summary>
+        public bool MobileJump { get; set; }
+
         private Rigidbody _rb;
         private Vector2 _input;
         private bool _wantsJump;
@@ -113,30 +119,40 @@ namespace EOSNative.Demo
 
         private void ReadInput()
         {
+            _input = Vector2.zero;
+
 #if EOS_HAS_INPUT_SYSTEM
             var keyboard = Keyboard.current;
-            if (keyboard == null) return;
+            if (keyboard != null)
+            {
+                if (keyboard.wKey.isPressed) _input.y += 1f;
+                if (keyboard.sKey.isPressed) _input.y -= 1f;
+                if (keyboard.aKey.isPressed) _input.x -= 1f;
+                if (keyboard.dKey.isPressed) _input.x += 1f;
 
-            _input = Vector2.zero;
-            if (keyboard.wKey.isPressed) _input.y += 1f;
-            if (keyboard.sKey.isPressed) _input.y -= 1f;
-            if (keyboard.aKey.isPressed) _input.x -= 1f;
-            if (keyboard.dKey.isPressed) _input.x += 1f;
-            _input = Vector2.ClampMagnitude(_input, 1f);
-
-            if (keyboard.spaceKey.wasPressedThisFrame && Time.time >= _lastJumpTime + _jumpCooldown)
-                _wantsJump = true;
+                if (keyboard.spaceKey.wasPressedThisFrame && Time.time >= _lastJumpTime + _jumpCooldown)
+                    _wantsJump = true;
+            }
 #else
-            _input = Vector2.zero;
             if (Input.GetKey(KeyCode.W)) _input.y += 1f;
             if (Input.GetKey(KeyCode.S)) _input.y -= 1f;
             if (Input.GetKey(KeyCode.A)) _input.x -= 1f;
             if (Input.GetKey(KeyCode.D)) _input.x += 1f;
-            _input = Vector2.ClampMagnitude(_input, 1f);
 
             if (Input.GetKeyDown(KeyCode.Space) && Time.time >= _lastJumpTime + _jumpCooldown)
                 _wantsJump = true;
 #endif
+
+            // Combine keyboard + mobile joystick input
+            _input += MobileInput;
+            _input = Vector2.ClampMagnitude(_input, 1f);
+
+            // Mobile jump button
+            if (MobileJump && Time.time >= _lastJumpTime + _jumpCooldown)
+            {
+                _wantsJump = true;
+                MobileJump = false;
+            }
         }
     }
 }

@@ -67,13 +67,18 @@ namespace EOSNative.P2P
 
         /// <summary>
         /// Typed message router with batching, fragmentation, and dispatch.
-        /// Lazy-created on first access. Subscribe Router.ProcessIncoming to OnPacketReceived to enable.
+        /// Lazy-created on first access. Auto-subscribes to OnPacketReceived.
         /// </summary>
         public MessageRouter Router
         {
             get
             {
-                _router ??= new MessageRouter(this);
+                if (_router == null)
+                {
+                    _router = new MessageRouter(this);
+                    // Auto-subscribe router to raw packet events
+                    OnPacketReceived += _router.ProcessIncoming;
+                }
                 return _router;
             }
         }
@@ -93,6 +98,12 @@ namespace EOSNative.P2P
         private ProductUserId _cachedPeerId;
         private SocketId _cachedSocketId = new();
         private MessageRouter _router;
+
+        // Handshake retry: periodically re-send handshakes if in a lobby but no peers connected
+        private float _handshakeRetryTimer;
+        private int _handshakeRetryCount;
+        private const float HANDSHAKE_RETRY_INTERVAL = 2f;
+        private const int MAX_HANDSHAKE_RETRIES = 5;
 
         private P2PInterface P2P => EOSManager.Instance?.P2PInterface;
         private ProductUserId LocalUserId => EOSManager.Instance?.LocalProductUserId;
@@ -124,6 +135,13 @@ namespace EOSNative.P2P
                 lobby.OnMemberJoined += OnMemberJoined;
                 lobby.OnMemberLeft += OnMemberLeftHandler;
             }
+
+            // Re-subscribe router if it was previously created (handles OnDisable/OnEnable cycles)
+            if (_router != null)
+            {
+                OnPacketReceived -= _router.ProcessIncoming;
+                OnPacketReceived += _router.ProcessIncoming;
+            }
         }
 
         private void OnDisable()
@@ -136,6 +154,10 @@ namespace EOSNative.P2P
                 lobby.OnMemberJoined -= OnMemberJoined;
                 lobby.OnMemberLeft -= OnMemberLeftHandler;
             }
+
+            if (_router != null)
+                OnPacketReceived -= _router.ProcessIncoming;
+
             Shutdown();
         }
 
@@ -143,6 +165,7 @@ namespace EOSNative.P2P
         {
             if (P2P == null || LocalUserId == null) return;
             PollPackets();
+            CheckHandshakeRetry();
         }
 
         private void LateUpdate()
@@ -155,7 +178,12 @@ namespace EOSNative.P2P
         /// <summary>Start listening for P2P connections.</summary>
         public void Initialize()
         {
-            if (P2P == null || LocalUserId == null) return;
+            if (P2P == null || LocalUserId == null)
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "EOSP2PManager",
+                    $"Initialize skipped: P2P={(P2P != null ? "ok" : "NULL")}, LocalUserId={(LocalUserId != null ? LocalUserId.ToString() : "NULL")}");
+                return;
+            }
             if (_connectionRequestNotifyId != 0) return;
 
             var requestOptions = new AddNotifyPeerConnectionRequestOptions
@@ -179,12 +207,16 @@ namespace EOSNative.P2P
             };
             _connectionClosedNotifyId = P2P.AddNotifyPeerConnectionClosed(ref closedOptions, null, OnConnectionClosed);
 
-            EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager", "P2P mesh initialized");
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager",
+                $"P2P mesh initialized (LocalUserId={LocalUserId})");
         }
 
         /// <summary>Stop listening and close all connections.</summary>
         public void Shutdown()
         {
+            _handshakeRetryCount = 0;
+            _handshakeRetryTimer = 0f;
+
             if (P2P == null) return;
 
             if (_connectionRequestNotifyId != 0)
@@ -241,14 +273,21 @@ namespace EOSNative.P2P
                 Reliability = reliability,
                 AllowDelayedDelivery = true
             };
-            P2P.SendPacket(ref options);
+            var result = P2P.SendPacket(ref options);
+            if (result != Result.Success)
+                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "EOSP2PManager", $"SendPacket to {peer} ch={channel} failed: {result}");
             NetworkStats._instance?.RecordBytesSent(peer, data.Length);
         }
 
         /// <summary>Accept a connection from a specific peer and add them.</summary>
         public void AcceptPeer(ProductUserId remotePeer)
         {
-            if (P2P == null || LocalUserId == null) return;
+            if (P2P == null || LocalUserId == null)
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "EOSP2PManager",
+                    $"AcceptPeer skipped for {remotePeer}: P2P={(P2P != null ? "ok" : "NULL")}, LocalUserId={(LocalUserId != null ? "ok" : "NULL")}");
+                return;
+            }
 
             var acceptOpts = new AcceptConnectionOptions
             {
@@ -256,7 +295,9 @@ namespace EOSNative.P2P
                 RemoteUserId = remotePeer,
                 SocketId = _socketId
             };
-            P2P.AcceptConnection(ref acceptOpts);
+            var result = P2P.AcceptConnection(ref acceptOpts);
+            if (result != Result.Success)
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager", $"AcceptConnection({remotePeer}): {result}");
         }
 
         #endregion
@@ -265,7 +306,17 @@ namespace EOSNative.P2P
 
         private void OnLobbyJoined(LobbyData lobby)
         {
+            // Reset retry state for fresh lobby join
+            _handshakeRetryCount = 0;
+            _handshakeRetryTimer = 0f;
+
             Initialize();
+
+            // Pre-accept all existing lobby members and send a handshake to kick-start connections.
+            // OnMemberJoined only fires for NEW members joining after us, so existing members
+            // must be handled here — otherwise the joiner never calls AcceptPeer and no
+            // P2P connection is established (the host-order join bug).
+            SendHandshakeToLobbyMembers("OnLobbyJoined");
         }
 
         private void OnLobbyLeft()
@@ -281,6 +332,11 @@ namespace EOSNative.P2P
 
             // Pre-accept connection from this lobby member
             AcceptPeer(puid);
+
+            // Send a handshake to kick-start the P2P connection from our side too.
+            // Without this, the host only accepts but never sends, so the connection
+            // may not establish if the joiner's handshake is delayed.
+            SendHandshakeToPeer(puid, "OnMemberJoined");
         }
 
         private void OnMemberLeftHandler(string puid)
@@ -303,6 +359,74 @@ namespace EOSNative.P2P
             }
         }
 
+        /// <summary>
+        /// Send handshake packets to all non-connected lobby members.
+        /// Used by OnLobbyJoined and the retry mechanism.
+        /// </summary>
+        private int SendHandshakeToLobbyMembers(string context)
+        {
+            var lobbyMgr = EOSLobbyManager.Instance;
+            if (lobbyMgr == null || !lobbyMgr.IsInLobby)
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "EOSP2PManager",
+                    $"[{context}] Cannot send handshakes: lobby={(lobbyMgr != null ? "exists" : "NULL")}, inLobby={(lobbyMgr?.IsInLobby ?? false)}");
+                return 0;
+            }
+
+            var members = lobbyMgr.GetMemberPuids();
+            int handshakesSent = 0;
+
+            foreach (var puid in members)
+            {
+                if (puid == null || puid == LocalUserId) continue;
+                if (_peers.Contains(puid)) continue; // already connected
+
+                AcceptPeer(puid);
+                SendHandshakeToPeer(puid, context);
+                handshakesSent++;
+            }
+
+            if (handshakesSent > 0)
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager",
+                    $"[{context}] Sent {handshakesSent} handshakes (lobby has {members.Count} total members, {_peers.Count} already connected)");
+            else if (members.Count <= 1)
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager",
+                    $"[{context}] No remote members in lobby (only self)");
+
+            return handshakesSent;
+        }
+
+        /// <summary>Send a handshake packet (msgId 0xFE) to trigger EOS P2P connection establishment.</summary>
+        private void SendHandshakeToPeer(ProductUserId puid, string context)
+        {
+            var writer = NetWriterPool.Get();
+            writer.Reset();
+            Router.SendToPeerImmediate(0xFE, writer, puid, PacketReliability.ReliableOrdered, 0);
+            NetWriterPool.Return(writer);
+        }
+
+        /// <summary>
+        /// Periodically retries handshakes if we're in a lobby but have no P2P peers connected.
+        /// Handles timing issues where the initial handshake may fail, get lost, or the
+        /// remote side wasn't ready yet.
+        /// </summary>
+        private void CheckHandshakeRetry()
+        {
+            // Only retry if: mesh active, still have retries left, not all connected
+            if (!IsActive || _handshakeRetryCount >= MAX_HANDSHAKE_RETRIES) return;
+            if (_peers.Count > 0) return; // at least one peer connected, mesh is working
+
+            var lobbyMgr = EOSLobbyManager.Instance;
+            if (lobbyMgr == null || !lobbyMgr.IsInLobby) return;
+
+            _handshakeRetryTimer += Time.deltaTime;
+            if (_handshakeRetryTimer < HANDSHAKE_RETRY_INTERVAL) return;
+            _handshakeRetryTimer = 0f;
+            _handshakeRetryCount++;
+
+            SendHandshakeToLobbyMembers($"Retry {_handshakeRetryCount}/{MAX_HANDSHAKE_RETRIES}");
+        }
+
         #endregion
 
         #region EOS Callbacks
@@ -311,7 +435,8 @@ namespace EOSNative.P2P
         {
             // Auto-accept connections on our socket
             AcceptPeer(data.RemoteUserId);
-            EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager", $"Accepted connection from {data.RemoteUserId}");
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager",
+                $"Incoming connection request from {data.RemoteUserId} — auto-accepted");
         }
 
         private void OnConnectionEstablished(ref OnPeerConnectionEstablishedInfo data)
@@ -320,7 +445,8 @@ namespace EOSNative.P2P
             {
                 NetworkStats._instance?.RecordConnectionType(data.RemoteUserId, data.NetworkType, data.ConnectionType);
                 OnPeerConnected?.Invoke(data.RemoteUserId);
-                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager", $"Peer connected: {data.RemoteUserId}");
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager",
+                    $"Peer connected: {data.RemoteUserId} (type={data.ConnectionType}, net={data.NetworkType})");
             }
         }
 
@@ -328,9 +454,17 @@ namespace EOSNative.P2P
         {
             if (_peers.Remove(data.RemoteUserId))
             {
+                // Allow retries again if all peers disconnected
+                if (_peers.Count == 0)
+                {
+                    _handshakeRetryCount = 0;
+                    _handshakeRetryTimer = 0f;
+                }
+
                 _router?.OnPeerDisconnected(data.RemoteUserId);
                 OnPeerDisconnected?.Invoke(data.RemoteUserId);
-                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager", $"Peer disconnected: {data.RemoteUserId}");
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager",
+                    $"Peer disconnected: {data.RemoteUserId} (reason={data.Reason})");
             }
         }
 

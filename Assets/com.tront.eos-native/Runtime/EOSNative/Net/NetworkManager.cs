@@ -115,6 +115,55 @@ namespace EOSNative.Net
             return _playerStates.TryGetValue(puid, out var state) ? state : null;
         }
 
+        /// <summary>
+        /// Get a player's NetworkObject by their ProductUserId.
+        /// Returns the first owned object that is not a PlayerState or RoomState.
+        /// Useful for finding a player's avatar/character object.
+        /// </summary>
+        public NetworkObject GetPlayerObject(ProductUserId puid)
+        {
+            if (puid == null) return null;
+            foreach (var obj in _objects.Values)
+            {
+                if (obj.OwnerId == puid && obj.PrefabId != NetworkPlayerState.PREFAB_ID && obj.PrefabId != NetworkRoomState.PREFAB_ID)
+                    return obj;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// All connected player ProductUserIds (includes self if connected).
+        /// </summary>
+        public IReadOnlyList<ProductUserId> ConnectedPlayers
+        {
+            get
+            {
+                var list = new List<ProductUserId>();
+                var localPuid = EOSManager.Instance?.LocalProductUserId;
+                if (localPuid != null) list.Add(localPuid);
+                var peers = EOSP2PManager.Instance?.Peers;
+                if (peers != null)
+                {
+                    foreach (var peer in peers)
+                        list.Add(peer);
+                }
+                return list;
+            }
+        }
+
+        /// <summary>
+        /// True if connected to at least one peer via P2P.
+        /// Quick check for "am I in a networked session".
+        /// </summary>
+        public bool IsOnline
+        {
+            get
+            {
+                var peers = EOSP2PManager.Instance?.Peers;
+                return peers != null && peers.Count > 0;
+            }
+        }
+
         #endregion
 
         #region Prefab Registry
@@ -738,9 +787,7 @@ namespace EOSNative.Net
             if (_routerSubscribed) return;
             _routerSubscribed = true;
 
-            var p2p = EOSP2PManager.Instance;
-            p2p.OnPacketReceived += Router.ProcessIncoming;
-
+            // Router.ProcessIncoming is auto-subscribed by EOSP2PManager.Router getter — no manual wiring needed
             Router.Register(MSG_STATE_UPDATE, HandleStateUpdate);
             Router.Register(MSG_SPAWN, HandleSpawn);
             Router.Register(MSG_DESPAWN, HandleDespawn);

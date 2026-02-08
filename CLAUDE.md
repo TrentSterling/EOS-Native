@@ -223,6 +223,17 @@ All four fields apply to both Host Lobby and Quick Match lobby creation.
 
 `CreateLobbyAsync` includes automatic voice fallback logic. If the EOS SDK returns an error when creating a lobby with `EnableRTCRoom = true` (e.g., on platforms where RTC isn't available), it automatically retries without voice. This prevents `InvalidRequest` errors on Android and other platforms where the RTC module may not be initialized. Diagnostic logging prints all `CreateLobbyOptions` parameters before the SDK call for debugging.
 
+### Voice Audio Output Mode (UseManualAudioOutput)
+
+Both `CreateLobbyInternal` and `JoinLobbyByIdAsync` set `LocalRTCOptions.UseManualAudioOutput` from `EOSVoiceManager.Instance.UseManualAudioOutput`.
+
+- **`false` (default)** — SDK auto-plays received voice audio. Works out of the box for any lobby/demo without needing `EOSVoicePlayer` components. `AddNotifyAudioBeforeRender` callbacks still fire for speaking indicators, VU meters, and custom audio processing.
+- **`true`** — SDK does NOT auto-play. Audio frames are delivered only via `OnAudioBeforeRender` callback. Requires `EOSVoicePlayer`/`NetworkVoicePlayer` components with `AudioSource` for playback. Use this for spatial 3D voice.
+
+Set `EOSVoiceManager.Instance.UseManualAudioOutput = true` **before** creating or joining a lobby when using `NetworkVoicePlayer` on player prefabs.
+
+**History:** Previously `UseManualAudioOutput` was hardcoded to `true` on lobby creation and not set on join, causing the lobby creator to hear nothing (no `EOSVoicePlayer` in the demo) while the joiner got SDK auto-play. This manifested as "PC creates lobby, Android joins, no voice" but "Android creates lobby, PC joins, voice works" — the asymmetry was purely about who was creator (manual, broken) vs joiner (auto-play, working).
+
 ## Audio Device Selection (Mic/Speaker)
 
 `EOSVoiceManager` provides runtime mic/speaker device switching via EOS RTCAudio APIs:
@@ -242,6 +253,76 @@ The F1 overlay Voice tab exposes dropdown selectors for input/output devices wit
 
 **Note:** `AudioBeforeSend` was tested for real RMS-based mic levels but causes `StackOverflowException` in `PlatformInterface.Tick()` — the EOS C# SDK queues audio frame callbacks and overflows processing them. `IsSpeaking()` proxy was also tested but unreliable when alone in a lobby (EOS VAD may not trigger). Unity `Microphone` API is the reliable solution.
 
+## Spatial Voice System (Voice Zones + NetworkVoicePlayer)
+
+Three components for immersive spatial voice chat. All files in `Runtime/EOSNative/Voice/`.
+
+### EOSVoiceZoneManager
+
+Singleton that controls WHO you hear and at WHAT volume. Works alongside `EOSVoiceManager` to adjust per-participant volumes dynamically.
+
+**5 Voice Zone Modes:**
+
+| Mode | Behavior |
+|------|----------|
+| Global | Everyone hears everyone at full volume |
+| Proximity | Distance-based falloff (configurable exponent, fade start/end) |
+| Team | Same team = full volume, cross-team = muted or reduced |
+| TeamProximity | Team filter + distance falloff combined |
+| Custom | Zone-name matching (via trigger volumes or API) |
+
+**Volume Calculation:**
+- Proximity: `t = pow((dist - fadeStart) / (max - fadeStart), exponent)`, lerp(maxVol, minVol, t)
+- Team: sameTeam → maxVol, crossTeam → maxVol * crossMultiplier (or 0)
+- Custom: sameZone → maxVol, differentZone → 0
+
+**Volume Ducking:** Opt-in feature that auto-reduces incoming voice when local player is speaking. `MoveTowards` fade with configurable multiplier and speed.
+
+**Auto-discover:** Scans `NetworkManager.Instance.Objects` for tagged objects, registers transforms by PUID.
+
+**Update loop:** Every `_updateInterval` (0.1s), iterate participants, calculate volume, call `EOSVoiceManager.SetParticipantVolume()` if change > threshold.
+
+```csharp
+// Set mode
+EOSVoiceZoneManager.Instance.SetZoneMode(VoiceZoneMode.Proximity);
+EOSVoiceZoneManager.Instance.ConfigureProximity(maxDistance: 30f, fadeStart: 10f);
+
+// Team mode
+EOSVoiceZoneManager.Instance.SetZoneMode(VoiceZoneMode.Team);
+EOSVoiceZoneManager.Instance.SetTeam(1);
+EOSVoiceZoneManager.Instance.SetPlayerTeam(remotePuid, 2);
+
+// Events
+EOSVoiceZoneManager.Instance.OnPlayerEnteredRange += puid => Debug.Log($"{puid} in range");
+EOSVoiceZoneManager.Instance.OnPlayerExitedRange += puid => Debug.Log($"{puid} out of range");
+```
+
+### EOSVoiceTriggerZone
+
+Collider-based trigger volumes for Custom zone mode. Attach to a GameObject with a trigger Collider.
+
+- `OnTriggerEnter`: Detects player via `NetworkObject`, calls `SetLocalZone()` or `SetPlayerZone()`
+- `OnTriggerExit`: Resets to default zone
+- Editor gizmo visualization (Box, Sphere, Capsule)
+- Tag-based player filtering
+
+### NetworkVoicePlayer
+
+`NetworkBehaviour` wrapper that auto-wires `EOSVoicePlayer` to the correct participant based on `NetworkObject` ownership.
+
+**Usage:** Add to a player prefab alongside an `AudioSource`. Everything is automatic:
+- Local player: disables voice playback (don't hear yourself), registers with zone manager
+- Remote player: sets participant PUID, applies 3D audio settings, creates speaking indicator
+
+**Speaking Indicator:** Animated blue sphere above the player's head that appears when speaking. Uses `SmoothDamp` for bounce-ease animation, subtle sine pulse while talking, fades out when silent. Configurable color, height, and size via Inspector.
+
+```csharp
+// Just add these components to your player prefab:
+// - AudioSource
+// - NetworkVoicePlayer (auto-adds EOSVoicePlayer + NetworkObject)
+// Everything else is automatic.
+```
+
 ## F1 Overlay Tabs (EOSNativeStatusUI)
 
 The runtime F1 overlay (`EOSNativeStatusUI.cs`, ~3100 lines) provides 6 tabs:
@@ -259,20 +340,26 @@ Also includes a modal report popup triggered from lobby member list and a player
 
 ## Canvas UI (EOSNativeCanvasUI)
 
-A Canvas-based runtime UI (`EOSNativeCanvasUI.cs`, ~800 lines) that works on Android/iOS where OnGUI may not render. Uses `UnityEngine.UI` (no TextMeshPro). All UI elements created at runtime in code — no prefabs, no scene objects.
+A Canvas-based runtime UI (`EOSNativeCanvasUI.cs`, ~3500 lines) that works on Android/iOS where OnGUI may not render. Uses `UnityEngine.UI` (no TextMeshPro). All UI elements created at runtime in code — no prefabs, no scene objects. Full feature parity with the OnGUI overlay.
 
 **Toggle:** Bottom-right corner "EOS" button (80x80), or 3-finger tap on mobile.
 
-**Canvas setup:** `ScreenSpaceOverlay`, `sortingOrder: 9999`, `CanvasScaler` with `ScaleWithScreenSize` (1080x1920 reference, match 0.5).
+**Canvas setup:** `ScreenSpaceOverlay`, `sortingOrder: 9999`, `CanvasScaler` with `ScaleWithScreenSize` (540x960 reference, match 0.5).
 
-**4 Tabs:** Status, Lobbies, Voice, Social (mirrors OnGUI sections).
+**6 Tabs:** Status, Lobbies, Voice, Social, Stats, Tools (mirrors OnGUI overlay).
 
 | Tab | Contents |
 |-----|----------|
 | **Status** | SDK status, auth, PUID, platform info, interfaces, login/logout actions |
-| **Lobbies** | Current lobby info, create (name/max/public/voice/migrate), join by code, quick match, search, members, chat (Enter to send) |
-| **Voice** | Voice status, mic level bar, mute toggle, audio device picker (input/output), participants with speaking indicators |
-| **Social** | Player registry, recently played, local friends, blocked players, Epic friends |
+| **Lobbies** | Current lobby info, create (name/max/public/voice/migrate), join by code, quick match, search, members (with profile info button), chat (Enter to send) |
+| **Voice** | Voice status, mic level bar, mute toggle, audio device picker (input/output), participants with speaking indicators, voice diagnostics |
+| **Social** | Player registry, recently played (with block/invite), local friends (notes editing, join, invite, cloud sync), blocked players (clear all), invites (send/receive/accept/reject, quick send), Epic Account (login/logout), Epic Friends (accept/reject invites) |
+| **Stats** | Network stats (NAT, RTT, loss, bandwidth, per-peer table), Stats & Leaderboards (query, ingest, rankings), Achievements (progress, unlocks), Ranked Matchmaking (rating, rank, find/host) |
+| **Tools** | Cloud Storage (files, write, delete), Anti-Cheat (status, session), Replays (list, play, export, import, favorites), Session Metrics (begin/end), LFG (create/browse/join posts) |
+
+**Popups:**
+- **Player Profile** — Triggered from lobby member info button. Name, platform, PUID, last seen, badges, editable notes, action buttons (friend/block/report/invite/kick). Dark overlay + centered panel.
+- **Report** — Category selection from `EOSReports.GetAllCategories()`, send with status feedback. Triggered from profile popup.
 
 **Default visibility:** Mobile = Canvas ON, OnGUI OFF. Editor/Desktop = OnGUI ON, Canvas toggle button always visible.
 
@@ -405,9 +492,37 @@ A simple multiplayer demo using the raw EOS P2P interface (no FishNet, no high-l
 | Join | 0x02 | 1 | Reliable | R(1) + G(1) + B(1) = 3 bytes |
 | Leave | 0x03 | 1 | Reliable | 0 bytes |
 
+**Mobile controls:** Virtual joystick (bottom-left) and jump button (bottom-right) always created. Joystick uses EventSystem drag handlers (`IPointerDownHandler`/`IDragHandler`/`IPointerUpHandler`) — works with both mouse and touch. Keyboard input combines with joystick input seamlessly.
+
+**HUD diagnostics:** OnGUI overlay shows P2P peer count, remote ball count, local ball status, voice connection/participant/mute state, and per-player scores.
+
 **Flow:** Join/create lobby via F1 overlay -> EOSP2PManager detects lobby -> P2P connections form -> exchange join packets -> spring-sync positions every FixedUpdate.
 
 **Credits:** Spring physics ported from PhysicsNetworkTransform.cs (DrewMileham original method, Skylar/CometDev Mirror implementation).
+
+## P2P Connection Establishment (Host-Order Fix + Retry)
+
+EOS P2P requires **both sides** to call `AcceptConnection()` AND at least one side to call `SendPacket()` for a connection to establish. `AcceptConnection()` alone is passive — it only tells the SDK "I'll accept data from this peer if they send something."
+
+**The race condition (fixed in v2.17.1):** When joining an existing lobby, `OnMemberJoined` only fires for **new** members joining after you. Existing members are already there — no event fires. Without pre-accepting existing members, the joiner never calls `AcceptPeer()`, and since `SendToAll` only iterates established peers (`_peers`), nobody sends data either. The connection deadlocks.
+
+**Fix in `EOSP2PManager`:**
+1. **`OnLobbyJoined`:** After `Initialize()`, enumerate all existing lobby members via `EOSLobbyManager.GetMemberPuids()`, call `AcceptPeer()` for each, and send a handshake packet (msgId 0xFE via Router, silently ignored by receiver) to trigger the P2P connection request.
+2. **`OnMemberJoined`:** In addition to the existing `AcceptPeer()`, also send a handshake packet so the host kick-starts the connection to new joiners.
+3. **Handshake retry (v2.17.2):** If `IsActive` and in a lobby but `_peers.Count == 0`, re-enumerate members and re-send handshakes every 2 seconds, up to 5 times. Handles timing issues where the initial handshake fails or the remote side isn't ready yet. Retries stop when any peer connects or max retries reached. Reset on lobby leave, new lobby join, or when all peers disconnect.
+
+**Diagnostic logging (v2.17.2):**
+- `Initialize()` logs a warning if P2P interface or LocalUserId is null (was a silent early return)
+- `AcceptPeer()` logs a warning if skipped, and logs the Result from `P2P.AcceptConnection()`
+- `SendToPeer()` logs a warning if `P2P.SendPacket()` returns non-Success
+- `OnConnectionEstablished` logs connection type (Direct/Relayed) and network type
+- `OnConnectionClosed` logs the disconnection reason
+- Handshake sends log member count, context (OnLobbyJoined/OnMemberJoined/Retry N), and peer state
+
+**Router auto-subscription (v2.17.2):**
+`Router.ProcessIncoming` is now auto-subscribed to `OnPacketReceived` when the Router property is first accessed (lazy creation). External code no longer needs to manually wire `OnPacketReceived += Router.ProcessIncoming`. The `-= +=` pattern in `OnEnable`/`OnDisable` prevents stale subscriptions across enable/disable cycles.
+
+**`GetMemberPuids()` on EOSLobbyManager:** New public method that enumerates all member `ProductUserId`s in the current lobby via `LobbyDetails.GetMemberByIndex()`. Returns empty list if not in a lobby.
 
 ## Android Build (Core Library Desugaring + AndroidX + Native Libs)
 

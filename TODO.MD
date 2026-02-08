@@ -53,10 +53,26 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Late-join snapshots (new peers receive full state dump from host)
 - [x] P2P direct connections for fast RPCs (EOS SDK handles relay vs direct automatically, NetworkStats tracks connection type)
 
+**QOL & API Polish** (community request — CometDev):
+- [x] `NetworkManager.GetPlayerObject(puid)` — lookup a player's NetworkObject by their PUID (v2.16.1)
+- [x] `NetworkManager.ConnectedPlayers` — easy-access list of connected player PUIDs (v2.16.1)
+- [x] `NetworkManager.IsOnline` property — simple bool for "am I connected to a session" (v2.16.1)
+- [ ] Consider moving RPC registration onto NetworkObject itself (shoulder it on netobj, drop NetworkBehaviour requirement)
+- [ ] Explore NetworkBehaviour-only architecture (each NB gets its own ID, no separate NetworkObject needed)
+
 **SyncVar LOD System** (community request — AlmightyMikkel):
 - [ ] SyncVar LOD tiers — component where you specify X LOD distances, each defining which components/SyncVars sync and at what rate
 - [ ] Tick-ladder for SyncVars — dynamic sync rate based on distance (like NetworkTransform LOD but for ALL SyncVars)
 - [ ] Per-component LOD checkboxes — Inspector UI to toggle what syncs at each tier
+
+**Spatial Voice:**
+- [x] EOSVoiceZoneManager — 5 modes (Global, Proximity, Team, TeamProximity, Custom), volume ducking, auto-discover
+- [x] EOSVoiceTriggerZone — Collider-based zone triggers with gizmos
+- [x] NetworkVoicePlayer — NetworkBehaviour auto-wiring EOSVoicePlayer to NetworkObject ownership
+- [x] VOIP speaking indicator — Animated sphere above player head when talking
+- [ ] Audio occlusion (raycast-based wall muting)
+- [ ] Grid-based spatial partitioning (for 100+ players)
+- [ ] Voice priority system (bandwidth management at scale)
 
 **Multi-Transport & Crossplay:**
 - [ ] Multi-transport support (EOS + Steam crossplay)
@@ -166,7 +182,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 **UI — Canvas UI (EOSNativeCanvasUI):**
 - [ ] EOS button toggle (bottom-right, 80x80)
 - [ ] 3-finger tap toggle (mobile)
-- [ ] All 4 tabs render without errors (Status, Lobbies, Voice, Social)
+- [ ] All 6 tabs render without errors (Status, Lobbies, Voice, Social, Stats, Tools)
 - [ ] InputField text visible while typing (chat, lobby name)
 - [ ] Lobby chat scroll + Enter-to-send
 - [ ] Mic level bar animates smoothly
@@ -266,3 +282,18 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Master client verification — OnRPCValidation callback on NetworkManager, EnableOwnerOnlyRPCValidation() convenience helper
 - [x] Spectator mode — IsSpectator flag, RPCTarget.Players (skips spectators), spectator-aware host election, spawn guard, PlayerState _spectator custom data
 - [x] Android VOIP — 12-chapter JNI/classloader saga: desugaring, AndroidX, extractNativeLibs, RTCOptions, AndroidInitializeOptions, ProGuard, System.loadLibrary from Java, runtime RECORD_AUDIO permission, Unity Microphone AudioRecord conflict fix. Phone-to-PC voice confirmed working in v2.15.8.
+- [x] Spatial voice system — EOSVoiceZoneManager (5 modes), EOSVoiceTriggerZone (collider zones), NetworkVoicePlayer (Layer 2 auto-wiring + speaking indicator)
+- [x] Canvas UI scroll fix — Clamped movement, reduced sensitivity from 40 to 15 (v2.16.1)
+- [x] Mobile controls for P2P Ball Demo — Virtual joystick + jump button on Android/iOS (v2.16.1)
+- [x] Player lookup API — GetPlayerObject, ConnectedPlayers, IsOnline on NetworkManager (v2.16.1)
+- [x] Custom inspectors for runtime components — NetworkManager, NetworkObject, NetworkRoomState, NetworkPlayerState, EOSP2PManager, NetworkSceneManager, EOSNativeConsole (v2.16.1)
+- [x] Player Registry inspector improved — 16-char PUID with selectable label, friend/blocked counts (v2.16.1)
+- [x] Mobile controls work on PC + mobile — Removed platform gate, replaced raw touch with EventSystem drag handlers (v2.16.2)
+- [x] Console stack traces for all log types — file:line info visible for Debug.Log in dev builds (v2.16.2)
+- [x] HUD diagnostics in P2P Ball Demo — P2P peers, voice status, remote ball count in OnGUI (v2.16.2)
+- [x] Canvas UI full parity — Expanded from 4 to 6 tabs (Stats + Tools), social enhancements (invites, epic account, notes, block/invite per-player), profile/report popups, VOIP safety guard on EOSVoiceZoneManager (v2.17.0)
+- [x] P2P connection race fix — Joiner pre-accepts + handshakes existing lobby members in OnLobbyJoined, host also sends handshake in OnMemberJoined. Fixes host-order join bug (v2.17.1)
+- [x] Canvas UI Tools tab NullRef fix — LFG Browse section guarded by lfgMgr null check (v2.17.1)
+- [x] P2P handshake retry — Up to 5 retries at 2s intervals when in lobby but no peers connected. Handles timing/race conditions automatically (v2.17.2)
+- [x] Fix double Router.ProcessIncoming subscription — Auto-subscribe in EOSP2PManager.Router getter, removed manual wiring from P2PDemoManager and NetworkManager (v2.17.2)
+- [x] P2P diagnostic logging — Result checking on AcceptConnection/SendPacket, null-state warnings on Initialize/AcceptPeer, connection type/reason in events (v2.17.2)

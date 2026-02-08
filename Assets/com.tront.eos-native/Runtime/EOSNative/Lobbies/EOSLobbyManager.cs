@@ -310,7 +310,7 @@ namespace EOSNative.Lobbies
                 EnableRTCRoom = enableVoice,
                 LocalRTCOptions = enableVoice ? new LocalRTCOptions
                 {
-                    UseManualAudioOutput = true
+                    UseManualAudioOutput = EOSVoiceManager.Instance?.UseManualAudioOutput ?? false
                 } : null,
                 PresenceEnabled = false,
                 DisableHostMigration = !options.AllowHostMigration,
@@ -882,12 +882,17 @@ namespace EOSNative.Lobbies
                 EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", $" Couldn't get lobby details ({detailsResult}), attempting direct join...");
             }
 
-            // Join the lobby
+            // Join the lobby (set LocalRTCOptions to match create path)
+            bool manualAudio = EOSVoiceManager.Instance?.UseManualAudioOutput ?? false;
             var joinOptions = new JoinLobbyByIdOptions
             {
                 LocalUserId = LocalProductUserId,
                 LobbyId = lobbyId,
-                PresenceEnabled = false
+                PresenceEnabled = false,
+                LocalRTCOptions = new LocalRTCOptions
+                {
+                    UseManualAudioOutput = manualAudio
+                }
             };
 
             var tcs = new TaskCompletionSource<JoinLobbyByIdCallbackInfo>();
@@ -1324,6 +1329,39 @@ namespace EOSNative.Lobbies
 
             details.Release();
             return value;
+        }
+
+        /// <summary>
+        /// Gets the ProductUserIds of all members in the current lobby.
+        /// Returns an empty list if not in a lobby or details unavailable.
+        /// </summary>
+        public List<ProductUserId> GetMemberPuids()
+        {
+            var result = new List<ProductUserId>();
+            if (!IsInLobby) return result;
+
+            var options = new CopyLobbyDetailsHandleOptions
+            {
+                LocalUserId = LocalProductUserId,
+                LobbyId = CurrentLobby.LobbyId
+            };
+
+            var detailsResult = LobbyInterface.CopyLobbyDetailsHandle(ref options, out LobbyDetails details);
+            if (detailsResult != Result.Success || details == null) return result;
+
+            var countOptions = new LobbyDetailsGetMemberCountOptions();
+            uint count = details.GetMemberCount(ref countOptions);
+
+            for (uint i = 0; i < count; i++)
+            {
+                var memberOptions = new LobbyDetailsGetMemberByIndexOptions { MemberIndex = i };
+                var member = details.GetMemberByIndex(ref memberOptions);
+                if (member != null)
+                    result.Add(member);
+            }
+
+            details.Release();
+            return result;
         }
 
         private async Task<LobbyData> GetLobbyDataAsync(string lobbyId)

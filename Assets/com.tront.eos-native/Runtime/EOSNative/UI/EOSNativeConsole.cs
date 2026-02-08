@@ -78,6 +78,21 @@ namespace EOSNative.UI
         private int _warningCount;
         private int _errorCount;
 
+        /// <summary>Total number of log entries captured.</summary>
+        public int EntryCount => _entries.Count;
+
+        /// <summary>Number of log-level messages.</summary>
+        public int LogCount => _logCount;
+
+        /// <summary>Number of warning messages.</summary>
+        public int WarningCount => _warningCount;
+
+        /// <summary>Number of error messages.</summary>
+        public int ErrorCount => _errorCount;
+
+        /// <summary>Whether the console panel is currently visible.</summary>
+        public bool IsVisible => _panelVisible;
+
         // UI references
         private Canvas _canvas;
         private GameObject _toggleButton;
@@ -510,10 +525,9 @@ namespace EOSNative.UI
                 string msg = entry.Message;
                 if (msg.Length > 300) msg = msg.Substring(0, 300) + "...";
 
-                // Show stack trace for errors/exceptions
+                // Show stack trace for all log types (file:line info in dev builds)
                 string trace = "";
-                if ((entry.Type == LogType.Error || entry.Type == LogType.Exception || entry.Type == LogType.Assert)
-                    && !string.IsNullOrEmpty(entry.StackTrace))
+                if (!string.IsNullOrEmpty(entry.StackTrace))
                 {
                     string st = entry.StackTrace;
                     if (st.Length > 500) st = st.Substring(0, 500) + "...";

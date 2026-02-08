@@ -126,6 +126,15 @@ namespace EOSNative.Voice
         /// </summary>
         public bool AudioDevicesQueried { get; private set; }
 
+        /// <summary>
+        /// When true, the SDK will NOT auto-play received voice audio.
+        /// Audio frames are delivered via OnAudioBeforeRender for manual playback
+        /// through EOSVoicePlayer/NetworkVoicePlayer components with AudioSource.
+        /// When false (default), the SDK handles audio playback automatically.
+        /// Set this BEFORE creating or joining a lobby.
+        /// </summary>
+        public bool UseManualAudioOutput { get; set; } = false;
+
         #endregion
 
         #region Private Fields

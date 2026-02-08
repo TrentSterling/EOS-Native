@@ -2,6 +2,77 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.17.3] - 2026-02-08
+
+### Fixed
+- **VOIP broken when PC creates lobby and Android joins** - Lobby creator set `UseManualAudioOutput = true` (manual audio playback mode) but the P2P demo has no `EOSVoicePlayer` components to play audio. The joiner got SDK auto-play by default (no `LocalRTCOptions` set), creating an asymmetry: joiner could hear creator, but creator couldn't hear joiner. After host migration both sides became joiners and audio worked. Fixed by making `UseManualAudioOutput` default to `false` (SDK auto-play) and reading from `EOSVoiceManager.UseManualAudioOutput` property on both create and join paths.
+- **Join path missing `LocalRTCOptions`** - `JoinLobbyByIdAsync` now sets `LocalRTCOptions` to match the create path, ensuring consistent audio mode for both lobby creators and joiners.
+
+### Added
+- **`EOSVoiceManager.UseManualAudioOutput` property** - Controls whether the EOS SDK auto-plays voice audio or delivers frames for manual playback via `EOSVoicePlayer`/`NetworkVoicePlayer`. Default `false` (SDK auto-play). Set to `true` before creating/joining a lobby when using spatial audio with `EOSVoicePlayer` components.
+
+## [2.17.2] - 2026-02-08
+
+### Fixed
+- **P2P connection reliability** - Added handshake retry mechanism (up to 5 retries at 2s intervals) when in a lobby but no P2P peers connect. Fixes timing issues where initial handshake may fail or arrive before the remote side is ready.
+- **Double packet dispatch** - Router.ProcessIncoming was subscribed twice to OnPacketReceived (once by P2PDemoManager, once by NetworkManager), causing every incoming packet to be dispatched twice. Router now auto-subscribes when first accessed via EOSP2PManager.Router getter — external manual wiring removed.
+
+### Improved
+- **P2P diagnostic logging** - Initialize(), AcceptPeer(), SendToPeer() now log when P2P interface or LocalUserId is null instead of returning silently. AcceptConnection and SendPacket result codes are checked and logged on failure. Connection established/closed events log connection type and reason. Handshake sends log member counts and context.
+
+## [2.17.1] - 2026-02-08
+
+### Fixed
+- **P2P connection race on lobby join** - When joining an existing lobby, the joiner never called `AcceptPeer` for existing members because `OnMemberJoined` only fires for NEW members. Added `GetMemberPuids()` to EOSLobbyManager and pre-accept + handshake for all existing members in `OnLobbyJoined`. Also send handshake from host side in `OnMemberJoined`. Fixes the "host-order join bug" where Android joining PC's lobby showed 0 P2P peers and no remote balls.
+- **Canvas UI NullReferenceException in Tools tab** - The LFG "Browse Posts" section was outside the `if (lfgMgr == null)` guard, causing NullReferenceException x6 on every refresh when EOSLFGManager was unavailable.
+
+## [2.17.0] - 2026-02-08
+
+### Added
+- **Canvas UI full parity with OnGUI overlay** - Canvas UI expanded from 4 tabs to 6 tabs (Status, Lobbies, Voice, Social, Stats, Tools), matching the OnGUI overlay's full feature set. Mobile users now have access to all features.
+  - **Stats tab** — Network stats (NAT, RTT, loss, bandwidth, per-peer table), Stats & Leaderboards (query, ingest, rankings), Achievements (progress, unlock dates), Ranked Matchmaking (rating, rank, find/host match)
+  - **Tools tab** — Cloud Storage (file list, write, delete), Anti-Cheat (status, session control), Replays (list, play, export, import, favorites), Session Metrics (begin/end), LFG (create/browse/join posts with size spinner)
+  - **Social enhancements** — Block/invite buttons on recently played, friend notes editing (inline), join friend lobby, cloud sync button, invites section (send/receive/accept/reject, quick send to friends), Epic Account login/logout, Epic Friends with accept/reject for invites
+  - **Player Profile popup** — Triggered from lobby member info button. Shows name, platform, PUID, last seen, status badges, editable notes, action buttons (friend/block/report/invite/kick)
+  - **Report popup** — Category selection from EOSReports, send report with status feedback
+- **VOIP safety guard** — `EOSVoiceZoneManager.Instance` no longer auto-creates until voice is actually connected. Prevents premature initialization on platforms where voice isn't ready.
+
+### Fixed
+- Canvas UI tab font size reduced from 17 to 15 to fit 6 tabs without overflow
+
+## [2.16.2] - 2026-02-08
+
+### Fixed
+- **Mobile controls work on PC + mobile** - Removed `#if UNITY_ANDROID || UNITY_IOS` compile-time gate that hid virtual joystick/jump button in Editor. Controls now always created. Replaced raw `Input.GetTouch()` joystick with EventSystem drag handlers (`IPointerDownHandler`/`IDragHandler`/`IPointerUpHandler`) — works with both mouse and touch.
+- **Console shows stack traces for all log types** - Previously only errors/exceptions showed file:line stack traces. Now all log entries (including `Debug.Log`) show stack traces in dev builds.
+
+### Added
+- **HUD diagnostics in P2P Ball Demo** - OnGUI overlay now shows P2P peer count, remote ball count, voice connection status, participant count, and mute state for quick troubleshooting.
+
+## [2.16.1] - 2026-02-08
+
+### Fixed
+- **Canvas UI scroll** - Changed scroll movement type from Elastic to Clamped and reduced sensitivity from 40 to 15 for sane mouse wheel speed
+- **NetworkObject.IsRegistered** - Changed from internal to public getter for inspector access
+
+### Added
+- **Mobile controls for P2P Ball Demo** - Virtual joystick (left) and jump button (right) auto-created on Android/iOS. Keyboard input still works alongside touch.
+- **Player lookup API on NetworkManager** - `GetPlayerObject(puid)`, `ConnectedPlayers`, `IsOnline` convenience methods (community request)
+- **Custom inspectors** - Runtime status inspectors for NetworkManager, NetworkObject, NetworkRoomState, NetworkPlayerState, EOSP2PManager, NetworkSceneManager, and EOSNativeConsole. No more blank inspector panels.
+- **EOSNativeConsole** public properties - `EntryCount`, `LogCount`, `WarningCount`, `ErrorCount`, `IsVisible` exposed for editor/API access
+
+### Improved
+- **Player Registry inspector** - Shows full PUID (16 chars) with selectable label, friend/blocked counts, taller scroll area
+
+## [2.16.0] - 2026-02-08
+
+### Added
+- **Spatial Voice System** — Three new components for immersive voice chat:
+  - **EOSVoiceZoneManager** — Controls who you hear and at what volume. 5 modes: Global (everyone full volume), Proximity (distance-based falloff with configurable exponent), Team (same team = full, cross-team = muted/reduced), TeamProximity (team + distance combined), Custom (zone-name matching via trigger volumes). Volume ducking option auto-reduces incoming voice when local player is speaking. Auto-discovers players from Layer 2 NetworkManager objects.
+  - **EOSVoiceTriggerZone** — Collider-based trigger volumes for Custom zone mode. Attach to any GameObject with a trigger collider — players entering the zone are assigned to it. Supports default zones, tag filtering, and editor gizmo visualization.
+  - **NetworkVoicePlayer** — NetworkBehaviour wrapper for player prefabs. Auto-wires EOSVoicePlayer to the correct participant based on NetworkObject ownership, disables playback for local player, applies 3D audio settings, registers with zone manager. Includes animated speaking indicator sphere (blue pulsing orb above player head when talking).
+- **VOIP speaking indicator** — Animated sphere above player's head that appears when speaking. Bounce-ease scale animation, subtle pulse while talking, fades out when silent. Configurable color, height, and size.
+
 ## [2.15.9] - 2026-02-08
 
 ### Fixed

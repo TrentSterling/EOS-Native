@@ -68,7 +68,7 @@ namespace EOSNative.Net
         internal bool IsDirty => _isDirty;
 
         /// <summary>Whether this object has been registered with the NetworkManager.</summary>
-        internal bool IsRegistered { get; set; }
+        public bool IsRegistered { get; internal set; }
 
         /// <summary>Number of registered SyncVars.</summary>
         public int SyncVarCount => _syncVars.Count;

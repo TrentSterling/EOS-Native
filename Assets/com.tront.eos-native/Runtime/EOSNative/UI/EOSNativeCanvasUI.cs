@@ -1,10 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading.Tasks;
 using Epic.OnlineServices;
+using Epic.OnlineServices.Reports;
 using Epic.OnlineServices.RTCAudio;
+using EOSNative.AntiCheat;
 using EOSNative.Lobbies;
+using EOSNative.Net;
+using EOSNative.Replay;
 using EOSNative.Social;
+using EOSNative.Storage;
 using EOSNative.Voice;
 using UnityEngine;
 using UnityEngine.UI;
@@ -77,7 +83,7 @@ namespace EOSNative.UI
 
         private bool _panelVisible;
         private int _currentTab;
-        private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social" };
+        private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social", "Stats", "Tools" };
 
         // Canvas hierarchy
         private Canvas _canvas;
@@ -121,6 +127,54 @@ namespace EOSNative.UI
 
         // Social tab state
         private Transform _socialContainer;
+        private string _editingNotePuid;
+        private string _editingNoteText = "";
+        private InputField _editingNoteInput;
+        private string _inviteRecipientPuid = "";
+        private string _inviteStatus = "";
+
+        // Stats tab state
+        private Transform _statsContainer;
+        private string _selectedLeaderboardId = "";
+        private List<LeaderboardEntry> _currentLeaderboardEntries = new List<LeaderboardEntry>();
+        private string _testStatName = "test_stat";
+        private int _testStatAmount = 1;
+        private InputField _testStatNameInput;
+        private InputField _testStatAmountInput;
+        private string _rankedGameMode = "ranked";
+        private string _rankedStatus = "";
+        private InputField _rankedModeInput;
+
+        // Tools tab state
+        private Transform _toolsContainer;
+        private string _testFileName = "test.txt";
+        private string _testFileContent = "Hello, EOS!";
+        private InputField _testFileNameInput;
+        private InputField _testFileContentInput;
+        private List<ReplayHeader> _cachedReplays = new List<ReplayHeader>();
+        private float _lastReplayRefresh;
+        private string _importPath = "";
+        private InputField _importPathInput;
+        private bool _showExportSuccess;
+        private float _exportSuccessTime;
+        private string _lfgTitle = "Looking for players";
+        private string _lfgGameMode = "";
+        private int _lfgDesiredSize = 4;
+        private string _lfgStatus = "";
+        private InputField _lfgTitleInput;
+        private InputField _lfgModeInput;
+        private Text _lfgSizeLabel;
+
+        // Popup state
+        private string _profilePuid = "";
+        private string _profileNote = "";
+        private bool _profileEditingNote;
+        private string _profileStatus = "";
+        private string _reportTargetPuid = "";
+        private string _reportStatus = "";
+        private int _reportCategoryIndex;
+        private GameObject _popupOverlay;
+        private GameObject _popupPanel;
 
         // Shared
         private Font _defaultFont;
@@ -406,7 +460,7 @@ namespace EOSNative.UI
                 var tabTxt = tabTxtGo.AddComponent<Text>();
                 tabTxt.text = TabNames[i];
                 tabTxt.font = _defaultFont;
-                tabTxt.fontSize = 17;
+                tabTxt.fontSize = 15;
                 tabTxt.fontStyle = FontStyle.Bold;
                 tabTxt.color = ColText;
                 tabTxt.alignment = TextAnchor.MiddleCenter;
@@ -437,9 +491,8 @@ namespace EOSNative.UI
             var scrollRect = scrollGo.AddComponent<ScrollRect>();
             scrollRect.horizontal = false;
             scrollRect.vertical = true;
-            scrollRect.movementType = ScrollRect.MovementType.Elastic;
-            scrollRect.elasticity = 0.1f;
-            scrollRect.scrollSensitivity = 40f;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+            scrollRect.scrollSensitivity = 15f;
 
             // Viewport with Mask
             var viewport = new GameObject("Viewport");
@@ -500,6 +553,8 @@ namespace EOSNative.UI
             BuildLobbiesTab(_tabContents[1].transform);
             BuildVoiceTab(_tabContents[2].transform);
             BuildSocialTab(_tabContents[3].transform);
+            BuildStatsTab(_tabContents[4].transform);
+            BuildToolsTab(_tabContents[5].transform);
         }
 
         #endregion
@@ -686,6 +741,24 @@ namespace EOSNative.UI
 
         #endregion
 
+        #region Tab Building - Stats
+
+        private void BuildStatsTab(Transform parent)
+        {
+            _statsContainer = parent;
+        }
+
+        #endregion
+
+        #region Tab Building - Tools
+
+        private void BuildToolsTab(Transform parent)
+        {
+            _toolsContainer = parent;
+        }
+
+        #endregion
+
         #region Tab Selection
 
         private void SelectTab(int index)
@@ -724,6 +797,8 @@ namespace EOSNative.UI
                 case 1: RefreshLobbiesTab(); break;
                 case 2: RefreshVoiceTab(); break;
                 case 3: RefreshSocialTab(); break;
+                case 4: RefreshStatsTab(); break;
+                case 5: RefreshToolsTab(); break;
             }
 
             // Force layout rebuild so ContentSizeFitter recalculates
@@ -910,6 +985,12 @@ namespace EOSNative.UI
                     // Truncated PUID
                     string shortPuid = memberPuid.Length > 12 ? memberPuid.Substring(0, 12) + "..." : memberPuid;
                     AddLabel(row.transform, shortPuid, 11, ColDimText);
+
+                    if (!isLocal)
+                    {
+                        string infoPuid = memberPuid;
+                        AddButton(row.transform, "i", ColButton, () => ShowProfilePopup(infoPuid), -1, 30);
+                    }
 
                     if (!isLocal && lobbyMgr.IsOwner)
                     {
@@ -1161,14 +1242,27 @@ namespace EOSNative.UI
                     int shown = 0;
                     foreach (var (puid, name, lastSeen) in recent)
                     {
+                        if (registry.IsBlocked(puid)) continue;
                         if (shown++ >= 10) break;
                         var row = CreateRow(recentSection.transform);
                         AddLabel(row.transform, name, 14, ColText);
                         bool isFriend = registry.IsFriend(puid);
                         string friendPuid = puid;
                         AddButton(row.transform, isFriend ? "Unfriend" : "Friend",
-                            isFriend ? ColButtonDanger : ColButton, () => registry.ToggleFriend(friendPuid), -1, 80);
+                            isFriend ? ColButtonDanger : ColButton, () => registry.ToggleFriend(friendPuid), -1, 70);
+                        AddButton(row.transform, "Block", ColButtonDanger, () => registry.BlockPlayer(friendPuid), -1, 55);
+
+                        var invitesManager = EOSCustomInvites.Instance;
+                        if (invitesManager != null && invitesManager.IsReady && !string.IsNullOrEmpty(invitesManager.CurrentPayload))
+                        {
+                            string invPuid = puid;
+                            string invName = name;
+                            AddButton(row.transform, "Inv", ColButton, () => SendInviteToPuid(invPuid, invName), -1, 40);
+                        }
                     }
+
+                    var clearRow = CreateRow(recentSection.transform, 30);
+                    AddButton(clearRow.transform, "Clear", ColButtonDanger, () => registry.ClearCache(), 28, 70);
                 }
 
                 // Local Friends
@@ -1182,26 +1276,97 @@ namespace EOSNative.UI
                 {
                     foreach (var (puid, name) in friends)
                     {
-                        var row = CreateRow(friendSection.transform);
-                        var status = registry.GetFriendStatus(puid);
+                        var (status, lobbyCode) = registry.GetFriendStatusWithLobby(puid);
                         Color statusColor = status switch
                         {
                             FriendStatus.InGame => ColGreen,
                             FriendStatus.InLobby => ColHeader,
-                            FriendStatus.Offline => ColDimText,
                             _ => ColDimText
                         };
-                        string icon = status switch
-                        {
-                            FriendStatus.InGame => "\u25CF",
-                            FriendStatus.InLobby => "\u25CF",
-                            _ => "\u25CB"
-                        };
+                        string icon = status == FriendStatus.InLobby || status == FriendStatus.InGame ? "\u25CF" : "\u25CB";
+
+                        var row = CreateRow(friendSection.transform);
                         AddLabel(row.transform, $"{icon} {name}", 14, statusColor);
+
+                        // Note display
+                        string note = registry.GetNote(puid);
+                        bool isEditingThis = _editingNotePuid == puid;
+                        if (!isEditingThis)
+                        {
+                            string noteDisplay = !string.IsNullOrEmpty(note)
+                                ? (note.Length > 6 ? note.Substring(0, 5) + ".." : note)
+                                : "--";
+                            Color noteColor = !string.IsNullOrEmpty(note) ? ColHeader : ColDimText;
+                            AddLabel(row.transform, noteDisplay, 12, noteColor, 45);
+                            string editPuid = puid;
+                            AddButton(row.transform, "\u270E", ColButton, () =>
+                            {
+                                _editingNotePuid = editPuid;
+                                _editingNoteText = note ?? "";
+                            }, -1, 28);
+                        }
+
+                        // Join friend lobby
+                        if (!isEditingThis && status == FriendStatus.InGame && !string.IsNullOrEmpty(lobbyCode))
+                        {
+                            string joinCode = lobbyCode;
+                            AddButton(row.transform, "Join", ColButton, () => JoinFriendLobbyAsync(joinCode), -1, 45);
+                        }
+
+                        // Invite
+                        if (!isEditingThis)
+                        {
+                            var invMgr = EOSCustomInvites.Instance;
+                            if (status != FriendStatus.InLobby && invMgr != null && invMgr.IsReady && !string.IsNullOrEmpty(invMgr.CurrentPayload))
+                            {
+                                string invPuid = puid;
+                                string invName = name;
+                                AddButton(row.transform, "Inv", ColButton, () => SendInviteToPuid(invPuid, invName), -1, 35);
+                            }
+                        }
+
                         string removePuid = puid;
-                        AddButton(row.transform, "Remove", ColButtonDanger, () => registry.RemoveFriend(removePuid), -1, 75);
+                        if (!isEditingThis)
+                            AddButton(row.transform, "X", ColButtonDanger, () => registry.RemoveFriend(removePuid), -1, 28);
+
+                        // Inline note edit row
+                        if (isEditingThis)
+                        {
+                            var editRow = CreateRow(friendSection.transform, 30);
+                            _editingNoteInput = AddInputField(editRow.transform, "Note...");
+                            _editingNoteInput.text = _editingNoteText;
+                            string savePuid = puid;
+                            AddButton(editRow.transform, "Save", ColButton, () =>
+                            {
+                                registry.SetNote(savePuid, _editingNoteInput?.text ?? "");
+                                _editingNotePuid = null;
+                                _editingNoteText = "";
+                            }, -1, 50);
+                            AddButton(editRow.transform, "X", ColButtonDanger, () =>
+                            {
+                                _editingNotePuid = null;
+                                _editingNoteText = "";
+                            }, -1, 28);
+                        }
                     }
                 }
+
+                // Friends footer
+                var friendFooter = CreateRow(friendSection.transform, 30);
+                AddButton(friendFooter.transform, "Refresh", ColButton, () =>
+                {
+                    _ = registry.RefreshAllFriendStatusesAsync();
+                }, 28, 70);
+                var storageForSync = EOSPlayerDataStorage.Instance;
+                bool canSync = storageForSync != null && storageForSync.IsReady && !registry.IsCloudSyncInProgress;
+                if (canSync)
+                {
+                    AddButton(friendFooter.transform, "Cloud Sync", ColButton, () =>
+                    {
+                        _ = registry.FullCloudSyncAsync();
+                    }, 28, 90);
+                }
+                AddButton(friendFooter.transform, "Clear", ColButtonDanger, () => registry.ClearFriends(), 28, 55);
 
                 // Blocked Players
                 var blockedSection = CreateSection(_socialContainer, "Blocked Players");
@@ -1219,7 +1384,130 @@ namespace EOSNative.UI
                         string unblockPuid = puid;
                         AddButton(row.transform, "Unblock", ColButton, () => registry.UnblockPlayer(unblockPuid), -1, 80);
                     }
+                    AddButton(blockedSection.transform, "Clear All", ColButtonDanger, () => registry.ClearBlocked(), 28);
                 }
+
+                // Invites
+                var invitesManager2 = EOSCustomInvites.Instance;
+                if (invitesManager2 != null)
+                {
+                    var invSection = CreateSection(_socialContainer, "Invites");
+
+                    if (!invitesManager2.IsReady)
+                    {
+                        AddLabel(invSection.transform, "Waiting for EOS login...", 14, ColDimText);
+                    }
+                    else
+                    {
+                        // Payload
+                        string payload = invitesManager2.CurrentPayload;
+                        AddKVRow(invSection.transform, "Payload", string.IsNullOrEmpty(payload) ? "(not set)" : payload);
+
+                        var lobbyMgrInv = EOSLobbyManager.Instance;
+                        if (lobbyMgrInv != null && lobbyMgrInv.IsInLobby)
+                        {
+                            AddButton(invSection.transform, "Set Lobby Code", ColButton, () =>
+                            {
+                                invitesManager2.SetLobbyPayload();
+                                _inviteStatus = "Payload set";
+                            }, 28);
+                        }
+
+                        // Send invite
+                        var sendRow = CreateRow(invSection.transform, 32);
+                        AddLabel(sendRow.transform, "To:", 14, ColDimText, 25);
+                        var recipientInput = AddInputField(sendRow.transform, "PUID...");
+                        recipientInput.text = _inviteRecipientPuid;
+                        recipientInput.onEndEdit.AddListener(t => _inviteRecipientPuid = t);
+                        bool canSend = !string.IsNullOrWhiteSpace(_inviteRecipientPuid) && !string.IsNullOrEmpty(payload);
+                        var sendBtn = AddButton(sendRow.transform, "Send", ColButton, () =>
+                        {
+                            _inviteRecipientPuid = recipientInput.text;
+                            SendInviteToRecipient();
+                        }, -1, 55);
+                        sendBtn.GetComponent<Button>().interactable = canSend;
+
+                        // Quick send to friends
+                        if (registry.FriendCount > 0 && !string.IsNullOrEmpty(payload))
+                        {
+                            var quickRow = CreateRow(invSection.transform, 28);
+                            int fShown = 0;
+                            foreach (var (fpuid, fname) in registry.GetFriends())
+                            {
+                                if (fShown++ >= 4) break;
+                                string btnText = fname.Length > 10 ? fname.Substring(0, 8) + ".." : fname;
+                                string iFpuid = fpuid;
+                                string iFname = fname;
+                                AddButton(quickRow.transform, btnText, ColButton, () => SendInviteToPuid(iFpuid, iFname), 26, 75);
+                            }
+                        }
+
+                        // Received invites
+                        if (invitesManager2.PendingInvites.Count > 0)
+                        {
+                            AddLabel(invSection.transform, $"Received ({invitesManager2.PendingInvites.Count})", 15, ColYellow);
+                            foreach (var kvp in invitesManager2.PendingInvites)
+                            {
+                                var invite = kvp.Value;
+                                string shortSender = invite.SenderId?.ToString();
+                                if (shortSender?.Length > 16) shortSender = shortSender.Substring(0, 8) + "...";
+                                var iRow = CreateRow(invSection.transform, 28);
+                                AddLabel(iRow.transform, $"From: {shortSender}", 13, ColDimText);
+                                if (!string.IsNullOrEmpty(invite.Payload))
+                                    AddLabel(iRow.transform, invite.Payload, 13, ColHeader, 50);
+                                string iKey = kvp.Key;
+                                var iData = invite;
+                                AddButton(iRow.transform, "Accept", ColButton, () => AcceptInviteAndJoin(iKey, iData), -1, 60);
+                                AddButton(iRow.transform, "Reject", ColButtonDanger, () => invitesManager2.RejectInvite(iKey), -1, 60);
+                            }
+                        }
+
+                        // Join requests
+                        if (invitesManager2.PendingRequests.Count > 0)
+                        {
+                            AddLabel(invSection.transform, $"Join Requests ({invitesManager2.PendingRequests.Count})", 15, ColYellow);
+                            foreach (var kvp in invitesManager2.PendingRequests)
+                            {
+                                var request = kvp.Value;
+                                string shortFrom = request.FromUserId?.ToString();
+                                if (shortFrom?.Length > 16) shortFrom = shortFrom.Substring(0, 8) + "...";
+                                var rRow = CreateRow(invSection.transform, 28);
+                                AddLabel(rRow.transform, $"From: {shortFrom}", 13, ColDimText);
+                                AddButton(rRow.transform, "Accept", ColButton, () =>
+                                {
+                                    _ = invitesManager2.AcceptRequestToJoinAsync(request.FromUserId);
+                                }, -1, 60);
+                                AddButton(rRow.transform, "Reject", ColButtonDanger, () =>
+                                {
+                                    _ = invitesManager2.RejectRequestToJoinAsync(request.FromUserId);
+                                }, -1, 60);
+                            }
+                        }
+
+                        if (!string.IsNullOrEmpty(_inviteStatus))
+                            AddLabel(invSection.transform, _inviteStatus, 13, ColOrange);
+                    }
+                }
+            }
+
+            // Epic Account
+            var epicAcctSection = CreateSection(_socialContainer, "Epic Account");
+            if (mgr.IsEpicAccountLoggedIn)
+            {
+                AddStatusRow(epicAcctSection.transform, "Status", true, "Connected", "Disconnected");
+                AddButton(epicAcctSection.transform, "Logout Epic Account", ColButtonDanger, () =>
+                {
+                    _ = mgr.LogoutEpicAccountAsync();
+                }, 30);
+            }
+            else
+            {
+                AddStatusRow(epicAcctSection.transform, "Status", false, "Connected", "Not Connected");
+                AddLabel(epicAcctSection.transform, "Enables: Friends, Presence, Achievements", 13, ColDimText);
+                AddButton(epicAcctSection.transform, "Login with Epic", ColButton, () =>
+                {
+                    _ = mgr.LoginWithEpicAccountAsync();
+                }, 34);
             }
 
             // Epic Friends
@@ -1238,9 +1526,26 @@ namespace EOSNative.UI
                     {
                         var row = CreateRow(epicSection.transform);
                         string displayName = friend.DisplayName ?? friend.AccountId?.ToString() ?? "Unknown";
+                        string statusIcon = friend.Status switch
+                        {
+                            Epic.OnlineServices.Friends.FriendsStatus.Friends => "\u2714",
+                            Epic.OnlineServices.Friends.FriendsStatus.InviteSent => "\u27A1",
+                            Epic.OnlineServices.Friends.FriendsStatus.InviteReceived => "\u2709",
+                            _ => "\u2022"
+                        };
                         Color friendColor = friend.Status == Epic.OnlineServices.Friends.FriendsStatus.Friends ? ColGreen : ColDimText;
-                        AddLabel(row.transform, displayName, 14, friendColor);
-                        AddLabel(row.transform, friend.Status.ToString(), 12, ColDimText, 85);
+                        AddLabel(row.transform, $"{statusIcon} {displayName}", 14, friendColor);
+
+                        if (friend.Status == Epic.OnlineServices.Friends.FriendsStatus.InviteReceived)
+                        {
+                            var fAcctId = friend.AccountId;
+                            AddButton(row.transform, "Accept", ColButton, () => { _ = epicFriends.AcceptInviteAsync(fAcctId); }, -1, 60);
+                            AddButton(row.transform, "Reject", ColButtonDanger, () => { _ = epicFriends.RejectInviteAsync(fAcctId); }, -1, 60);
+                        }
+                        else
+                        {
+                            AddLabel(row.transform, friend.Status.ToString(), 12, ColDimText, 75);
+                        }
                     }
                 }
                 else
@@ -1248,6 +1553,1130 @@ namespace EOSNative.UI
                     AddLabel(epicSection.transform, "Epic Friends not available.", 14, ColDimText);
                 }
             }
+        }
+
+        #endregion
+
+        #region Stats Tab Refresh
+
+        private void RefreshStatsTab()
+        {
+            if (_statsContainer == null) return;
+            ClearChildren(_statsContainer);
+
+            var mgr = EOSManager.Instance;
+            if (mgr == null || !mgr.IsLoggedIn)
+            {
+                AddLabel(_statsContainer, "Login required for stats.", 15, ColYellow);
+                return;
+            }
+
+            // Network Stats
+            var netStats = NetworkStats._instance;
+            var netSection = CreateSection(_statsContainer, "Network Stats");
+            if (netStats == null)
+            {
+                AddLabel(netSection.transform, "NetworkStats not active.", 14, ColDimText);
+            }
+            else
+            {
+                var global = netStats.GetGlobalStats();
+                int peerCount = netStats.AllPeerStats.Count;
+
+                AddKVRow(netSection.transform, "NAT", global.LocalNATType.ToString(),
+                    NATColor(global.LocalNATType));
+                AddKVRow(netSection.transform, "Peers", peerCount.ToString());
+                float avgRtt = global.AverageRTT;
+                AddKVRow(netSection.transform, "Avg RTT",
+                    avgRtt >= 0 ? $"{avgRtt:F0}ms" : "---", RTTColor(avgRtt));
+                AddKVRow(netSection.transform, "BW Out", $"{global.BandwidthOutKBps:F1} KBps");
+                AddKVRow(netSection.transform, "BW In", $"{global.BandwidthInKBps:F1} KBps");
+
+                if (global.OutgoingQueueMaxBytes > 0 || global.IncomingQueueMaxBytes > 0)
+                {
+                    AddKVRow(netSection.transform, "Queue Out",
+                        $"{global.OutgoingQueueBytes / 1024f:F1}/{global.OutgoingQueueMaxBytes / 1024f:F0} KB");
+                    AddKVRow(netSection.transform, "Queue In",
+                        $"{global.IncomingQueueBytes / 1024f:F1}/{global.IncomingQueueMaxBytes / 1024f:F0} KB");
+                }
+
+                if (peerCount > 0)
+                {
+                    // Header
+                    var hdrRow = CreateRow(netSection.transform, 20);
+                    AddLabel(hdrRow.transform, "Name", 12, ColDimText, 80);
+                    AddLabel(hdrRow.transform, "RTT", 12, ColDimText, 50);
+                    AddLabel(hdrRow.transform, "Loss", 12, ColDimText, 45);
+                    AddLabel(hdrRow.transform, "Type", 12, ColDimText, 50);
+
+                    foreach (var kvp in netStats.AllPeerStats)
+                    {
+                        var ps = kvp.Value;
+                        string puidStr = kvp.Key?.ToString() ?? "?";
+                        string displayName = EOSPlayerRegistry.Instance?.GetPlayerName(puidStr)
+                            ?? (puidStr.Length > 8 ? puidStr.Substring(0, 8) + ".." : puidStr);
+                        float age = Time.unscaledTime - ps.ConnectedTime;
+
+                        var pRow = CreateRow(netSection.transform, 22);
+                        AddLabel(pRow.transform, displayName, 13, ColText, 80);
+                        AddLabel(pRow.transform, ps.RTT >= 0 ? $"{ps.RTT:F0}ms" : "---", 13,
+                            RTTColor(ps.RTT), 50);
+                        AddLabel(pRow.transform, $"{ps.PacketLoss * 100f:F1}%", 13,
+                            LossColor(ps.PacketLoss), 45);
+                        string connType = ps.ConnectionType == Epic.OnlineServices.P2P.NetworkConnectionType.DirectConnection
+                            ? "Direct" : "Relay";
+                        Color connColor = ps.ConnectionType == Epic.OnlineServices.P2P.NetworkConnectionType.DirectConnection
+                            ? ColGreen : ColYellow;
+                        AddLabel(pRow.transform, connType, 13, connColor, 50);
+                    }
+                }
+
+                AddButton(netSection.transform, "Reset Stats", ColButtonDanger, () => netStats.ResetStats(), 28);
+            }
+
+            // Stats & Leaderboards
+            var statsManager = EOSStats.Instance;
+            var leaderboardsManager = EOSLeaderboards.Instance;
+            bool statsReady = statsManager != null && statsManager.IsReady;
+            bool leaderboardsReady = leaderboardsManager != null && leaderboardsManager.IsReady;
+
+            var slSection = CreateSection(_statsContainer, "Stats & Leaderboards");
+
+            if (!statsReady && !leaderboardsReady)
+            {
+                AddLabel(slSection.transform, "Waiting for EOS login...", 14, ColDimText);
+            }
+            else
+            {
+                if (statsReady)
+                {
+                    AddButton(slSection.transform, "Query My Stats", ColButton, () =>
+                    {
+                        _ = statsManager.QueryMyStatsAsync();
+                    }, 30);
+
+                    if (statsManager.CachedStatsCount > 0)
+                    {
+                        foreach (var kvp in statsManager.CachedStats)
+                        {
+                            AddKVRow(slSection.transform, kvp.Key, kvp.Value.Value.ToString());
+                        }
+                    }
+                    else
+                    {
+                        AddLabel(slSection.transform, "No stats cached. Click Query.", 13, ColDimText);
+                    }
+
+                    // Test ingest
+                    AddLabel(slSection.transform, "Ingest Test Stat:", 14, ColDimText);
+                    var ingestRow = CreateRow(slSection.transform, 32);
+                    _testStatNameInput = AddInputField(ingestRow.transform, "stat_name", 100);
+                    _testStatNameInput.text = _testStatName;
+                    _testStatAmountInput = AddInputField(ingestRow.transform, "1", 50);
+                    _testStatAmountInput.text = _testStatAmount.ToString();
+                    _testStatAmountInput.contentType = InputField.ContentType.IntegerNumber;
+                    AddButton(ingestRow.transform, "+", ColButton, () =>
+                    {
+                        _testStatName = _testStatNameInput?.text ?? _testStatName;
+                        if (int.TryParse(_testStatAmountInput?.text, out int amt))
+                            _testStatAmount = amt;
+                        _ = statsManager.IngestStatAsync(_testStatName, _testStatAmount);
+                    }, -1, 30);
+                }
+
+                if (leaderboardsReady)
+                {
+                    AddButton(slSection.transform, "Refresh Definitions", ColButton, () =>
+                    {
+                        _ = leaderboardsManager.QueryDefinitionsAsync();
+                    }, 30);
+
+                    if (leaderboardsManager.DefinitionCount > 0)
+                    {
+                        AddLabel(slSection.transform, "Select leaderboard:", 13, ColDimText);
+                        foreach (var def in leaderboardsManager.Definitions)
+                        {
+                            string lbId = def.LeaderboardId;
+                            bool isSelected = _selectedLeaderboardId == lbId;
+                            AddButton(slSection.transform, $"{lbId} ({def.StatName})",
+                                isSelected ? ColGreen : ColInputBg, () =>
+                                {
+                                    _selectedLeaderboardId = lbId;
+                                    QuerySelectedLeaderboard();
+                                }, 26);
+                        }
+
+                        if (_currentLeaderboardEntries.Count > 0)
+                        {
+                            AddLabel(slSection.transform, $"Top {_currentLeaderboardEntries.Count}", 14, ColHeader);
+                            foreach (var entry in _currentLeaderboardEntries)
+                            {
+                                var eRow = CreateRow(slSection.transform, 22);
+                                AddLabel(eRow.transform, $"#{entry.Rank}", 13, ColDimText, 35);
+                                AddLabel(eRow.transform, entry.DisplayName ?? entry.ShortUserId, 13, ColText, 100);
+                                AddLabel(eRow.transform, entry.Score.ToString(), 13, ColHeader);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        AddLabel(slSection.transform, "No leaderboards configured.", 13, ColDimText);
+                    }
+                }
+            }
+
+            // Achievements
+            var achMgr = EOSAchievements.Instance;
+            string achTitle = achMgr != null && achMgr.IsReady
+                ? $"Achievements ({achMgr.UnlockedCount}/{achMgr.TotalAchievements})"
+                : "Achievements";
+            var achSection = CreateSection(_statsContainer, achTitle);
+
+            if (achMgr == null || !achMgr.IsReady)
+            {
+                AddLabel(achSection.transform, "Waiting for EOS login...", 14, ColDimText);
+            }
+            else
+            {
+                AddButton(achSection.transform, "Refresh", ColButton, () =>
+                {
+                    _ = achMgr.RefreshAsync();
+                }, 28);
+
+                if (achMgr.TotalAchievements == 0)
+                {
+                    AddLabel(achSection.transform, "No achievements configured.", 13, ColDimText);
+                }
+                else
+                {
+                    foreach (var def in achMgr.Definitions)
+                    {
+                        var playerAch = achMgr.GetPlayerAchievement(def.Id);
+                        bool unlocked = playerAch?.IsUnlocked ?? false;
+                        float progress = (float)(playerAch?.Progress ?? 0);
+
+                        var aRow = CreateRow(achSection.transform, 24);
+                        string achIcon = unlocked ? "\u2714" : "\u25CB";
+                        AddLabel(aRow.transform, achIcon, 14, unlocked ? ColGreen : ColDimText, 22);
+                        AddLabel(aRow.transform, def.DisplayName ?? def.Id, 14,
+                            unlocked ? ColGreen : ColText);
+                        if (unlocked)
+                        {
+                            var unlockTime = playerAch?.UnlockDateTime;
+                            AddLabel(aRow.transform, unlockTime?.ToString("MM/dd/yy") ?? "Unlocked", 12, ColDimText, 70);
+                        }
+                        else if (progress > 0)
+                        {
+                            AddLabel(aRow.transform, $"{progress * 100:F0}%", 13, ColYellow, 45);
+                        }
+                    }
+                }
+            }
+
+            // Ranked
+            var rankedMgr = EOSRankedMatchmaking.Instance;
+            string rankedTitle = "Ranked";
+            if (rankedMgr != null && rankedMgr.IsDataLoaded)
+                rankedTitle = $"Ranked ({rankedMgr.GetCurrentRankDisplayName()})";
+
+            var rankedSection = CreateSection(_statsContainer, rankedTitle);
+
+            if (rankedMgr == null || !rankedMgr.IsDataLoaded)
+            {
+                AddLabel(rankedSection.transform, "Loading ranked data...", 14, ColDimText);
+            }
+            else
+            {
+                var pd = rankedMgr.PlayerData;
+                AddKVRow(rankedSection.transform, "Rating", $"{pd.Rating} (Peak: {pd.PeakRating})");
+
+                Color rankColor = rankedMgr.CurrentTier switch
+                {
+                    RankTier.Grandmaster or RankTier.Master or RankTier.Champion => ColOrange,
+                    RankTier.Diamond or RankTier.Platinum => ColHeader,
+                    RankTier.Gold => ColYellow,
+                    _ => ColText
+                };
+                AddKVRow(rankedSection.transform, "Rank", rankedMgr.GetCurrentRankDisplayName(), rankColor);
+
+                string record = $"{pd.Wins}W - {pd.Losses}L";
+                if (pd.GamesPlayed > 0)
+                    record += $" ({pd.WinRate:F0}%)";
+                AddKVRow(rankedSection.transform, "Record", record);
+
+                if (pd.WinStreak >= 2)
+                    AddKVRow(rankedSection.transform, "Streak", $"{pd.WinStreak} wins", ColGreen);
+                else if (pd.LossStreak >= 2)
+                    AddKVRow(rankedSection.transform, "Streak", $"{pd.LossStreak} losses", ColRed);
+
+                var lobbyMgrR = EOSLobbyManager.Instance;
+                bool isInLobby = lobbyMgrR != null && lobbyMgrR.IsInLobby;
+                bool isInQueue = rankedMgr.IsInQueue;
+
+                if (!isInLobby && !isInQueue)
+                {
+                    var modeRow = CreateRow(rankedSection.transform, 32);
+                    AddLabel(modeRow.transform, "Mode:", 14, ColDimText, 45);
+                    _rankedModeInput = AddInputField(modeRow.transform, "ranked");
+                    _rankedModeInput.text = _rankedGameMode;
+
+                    var btnRow = CreateRow(rankedSection.transform, 34);
+                    AddButton(btnRow.transform, "Find", ColButton, () =>
+                    {
+                        _rankedGameMode = _rankedModeInput?.text ?? _rankedGameMode;
+                        FindRankedMatchAsync(rankedMgr);
+                    });
+                    AddButton(btnRow.transform, "Host", ColButton, () =>
+                    {
+                        _rankedGameMode = _rankedModeInput?.text ?? _rankedGameMode;
+                        HostRankedLobbyAsync(rankedMgr);
+                    });
+                    AddButton(btnRow.transform, "Find/Host", ColButton, () =>
+                    {
+                        _rankedGameMode = _rankedModeInput?.text ?? _rankedGameMode;
+                        FindOrHostRankedAsync(rankedMgr);
+                    });
+                }
+                else if (isInQueue)
+                {
+                    AddKVRow(rankedSection.transform, "Queue", $"Searching... ({rankedMgr.QueueTime:F0}s)", ColYellow);
+                    AddButton(rankedSection.transform, "Leave Queue", ColButtonDanger, () =>
+                    {
+                        rankedMgr.LeaveQueue();
+                        _rankedStatus = "Left queue";
+                    }, 30);
+                }
+                else
+                {
+                    AddLabel(rankedSection.transform, "In lobby - leave to find new match", 13, ColDimText);
+                }
+
+                if (!string.IsNullOrEmpty(_rankedStatus))
+                    AddLabel(rankedSection.transform, _rankedStatus, 13, ColOrange);
+            }
+        }
+
+        private async void QuerySelectedLeaderboard()
+        {
+            var lbMgr = EOSLeaderboards.Instance;
+            if (string.IsNullOrEmpty(_selectedLeaderboardId) || lbMgr == null) return;
+            var (result, entries) = await lbMgr.QueryRanksAsync(_selectedLeaderboardId, 10);
+            if (result == Result.Success && entries != null)
+                _currentLeaderboardEntries = entries;
+        }
+
+        private async void FindRankedMatchAsync(EOSRankedMatchmaking mgr)
+        {
+            _rankedStatus = "Searching...";
+            var (result, lobby) = await mgr.FindRankedMatchAsync(_rankedGameMode);
+            _rankedStatus = result == Result.Success && lobby.HasValue ? $"Joined: {lobby.Value.JoinCode}" : $"No match ({result})";
+        }
+
+        private async void HostRankedLobbyAsync(EOSRankedMatchmaking mgr)
+        {
+            _rankedStatus = "Hosting...";
+            var (result, lobby) = await mgr.HostRankedLobbyAsync(_rankedGameMode);
+            _rankedStatus = result == Result.Success && lobby.HasValue ? $"Hosted: {lobby.Value.JoinCode}" : $"Failed ({result})";
+        }
+
+        private async void FindOrHostRankedAsync(EOSRankedMatchmaking mgr)
+        {
+            _rankedStatus = "Finding or hosting...";
+            var (result, lobby, didHost) = await mgr.FindOrHostRankedMatchAsync(_rankedGameMode);
+            _rankedStatus = result == Result.Success && lobby.HasValue
+                ? (didHost ? $"Hosted: {lobby.Value.JoinCode}" : $"Joined: {lobby.Value.JoinCode}")
+                : $"Failed ({result})";
+        }
+
+        private static Color RTTColor(float rtt)
+        {
+            if (rtt < 0f) return ColDimText;
+            if (rtt < 50f) return ColGreen;
+            if (rtt < 150f) return ColYellow;
+            return ColRed;
+        }
+
+        private static Color LossColor(float loss)
+        {
+            if (loss < 0.01f) return ColGreen;
+            if (loss < 0.05f) return ColYellow;
+            return ColRed;
+        }
+
+        private static Color NATColor(Epic.OnlineServices.P2P.NATType nat)
+        {
+            return nat switch
+            {
+                Epic.OnlineServices.P2P.NATType.Open => ColGreen,
+                Epic.OnlineServices.P2P.NATType.Moderate => ColYellow,
+                Epic.OnlineServices.P2P.NATType.Strict => ColRed,
+                _ => ColDimText
+            };
+        }
+
+        #endregion
+
+        #region Tools Tab Refresh
+
+        private void RefreshToolsTab()
+        {
+            if (_toolsContainer == null) return;
+            ClearChildren(_toolsContainer);
+
+            var mgr = EOSManager.Instance;
+            if (mgr == null || !mgr.IsLoggedIn)
+            {
+                AddLabel(_toolsContainer, "Login required for tools.", 15, ColYellow);
+                return;
+            }
+
+            // Cloud Storage
+            var storageMgr = EOSPlayerDataStorage.Instance;
+            int fileCount = storageMgr?.Files?.Count ?? 0;
+            var storageSection = CreateSection(_toolsContainer, $"Cloud Storage ({fileCount} files)");
+
+            if (storageMgr == null || !storageMgr.IsReady)
+            {
+                AddLabel(storageSection.transform, "Waiting for EOS login...", 14, ColDimText);
+            }
+            else
+            {
+                long used = storageMgr.GetTotalStorageUsed();
+                AddKVRow(storageSection.transform, "Usage", $"{EOSPlayerDataStorage.FormatBytes(used)} / 400 MB");
+
+                AddButton(storageSection.transform, "Refresh File List", ColButton, () =>
+                {
+                    _ = storageMgr.QueryFileListAsync();
+                }, 28);
+
+                if (storageMgr.Files.Count > 0)
+                {
+                    foreach (var file in storageMgr.Files)
+                    {
+                        var fRow = CreateRow(storageSection.transform, 24);
+                        AddLabel(fRow.transform, file.Filename, 13, ColText);
+                        AddLabel(fRow.transform, EOSPlayerDataStorage.FormatBytes((long)file.FileSizeBytes), 12, ColDimText, 60);
+                        string delName = file.Filename;
+                        AddButton(fRow.transform, "X", ColButtonDanger, () =>
+                        {
+                            _ = storageMgr.DeleteFileAsync(delName);
+                        }, -1, 28);
+                    }
+                }
+                else
+                {
+                    AddLabel(storageSection.transform, "No cloud files.", 13, ColDimText);
+                }
+
+                // Test write
+                AddLabel(storageSection.transform, "Test Write:", 14, ColDimText);
+                var writeRow = CreateRow(storageSection.transform, 32);
+                _testFileNameInput = AddInputField(writeRow.transform, "filename", 90);
+                _testFileNameInput.text = _testFileName;
+                _testFileContentInput = AddInputField(writeRow.transform, "content");
+                _testFileContentInput.text = _testFileContent;
+                AddButton(writeRow.transform, "Write", ColButton, () =>
+                {
+                    _testFileName = _testFileNameInput?.text ?? _testFileName;
+                    _testFileContent = _testFileContentInput?.text ?? _testFileContent;
+                    _ = storageMgr.WriteFileAsync(_testFileName, _testFileContent);
+                }, -1, 55);
+            }
+
+            // Anti-Cheat
+            var acMgr = EOSAntiCheatManager.Instance;
+            string acTitle = "Anti-Cheat";
+            if (acMgr != null)
+            {
+                acTitle = acMgr.Status switch
+                {
+                    AntiCheatStatus.Protected => "Anti-Cheat (Protected)",
+                    AntiCheatStatus.Violated => "Anti-Cheat (VIOLATION)",
+                    AntiCheatStatus.Error => "Anti-Cheat (Error)",
+                    _ => "Anti-Cheat (N/A)"
+                };
+            }
+            var acSection = CreateSection(_toolsContainer, acTitle);
+
+            if (acMgr == null || !acMgr.IsReady)
+            {
+                AddLabel(acSection.transform, "Anti-cheat not available.", 14, ColDimText);
+            }
+            else
+            {
+                AddKVRow(acSection.transform, "Status", acMgr.Status.ToString());
+                AddStatusRow(acSection.transform, "Session", acMgr.IsSessionActive, "Active", "Inactive");
+                if (acMgr.IsSessionActive)
+                    AddKVRow(acSection.transform, "Peers", acMgr.RegisteredPeerCount.ToString());
+
+                var acAutoRow = CreateRow(acSection.transform, 30);
+                AddLabel(acAutoRow.transform, "Auto-Start:", 14, ColDimText, 90);
+                var acToggle = AddToggle(acAutoRow.transform, acMgr.AutoStartSession ? "ON" : "OFF", acMgr.AutoStartSession);
+                acToggle.onValueChanged.AddListener(on => acMgr.AutoStartSession = on);
+
+                var acBtnRow = CreateRow(acSection.transform, 34);
+                var beginBtn = AddButton(acBtnRow.transform, "Begin Session", ColButton, () => acMgr.BeginSession());
+                beginBtn.GetComponent<Button>().interactable = !acMgr.IsSessionActive;
+                var endBtn = AddButton(acBtnRow.transform, "End Session", ColButtonDanger, () => acMgr.EndSession());
+                endBtn.GetComponent<Button>().interactable = acMgr.IsSessionActive;
+            }
+
+            // Replays
+            var replayStorage = EOSReplayStorage.Instance;
+            var replayViewer = EOSReplayViewer.Instance;
+            string replayTitle = "Replays";
+            if (replayViewer != null && replayViewer.IsViewing)
+                replayTitle = "Replays (Viewing)";
+            else if (replayStorage != null)
+                replayTitle = $"Replays ({replayStorage.LocalReplayCount})";
+
+            var replaySection = CreateSection(_toolsContainer, replayTitle);
+
+            // Playback controls
+            if (replayViewer != null && replayViewer.IsViewing)
+            {
+                AddLabel(replaySection.transform, "NOW PLAYING", 16, ColHeader);
+                var header = replayViewer.CurrentReplay;
+                if (header.HasValue)
+                {
+                    AddKVRow(replaySection.transform, "Map", $"{header.Value.GameMode} on {header.Value.MapName}");
+                    AddKVRow(replaySection.transform, "Players", $"{header.Value.Participants?.Length ?? 0}");
+                }
+
+                // Timeline
+                float progress = replayViewer.Duration > 0 ? replayViewer.CurrentTime / replayViewer.Duration : 0f;
+                var timeRow = CreateRow(replaySection.transform, 24);
+                AddLabel(timeRow.transform, EOSReplayStorage.FormatDuration(replayViewer.CurrentTime), 12, ColDimText, 40);
+                AddLabel(timeRow.transform, $"{progress * 100:F0}%", 13, ColText);
+                AddLabel(timeRow.transform, EOSReplayStorage.FormatDuration(replayViewer.Duration), 12, ColDimText, 40);
+
+                // Controls
+                var ctrlRow = CreateRow(replaySection.transform, 34);
+                AddButton(ctrlRow.transform, "<<", ColButton, () => replayViewer.Skip(-10f), -1, 35);
+                string playIcon = replayViewer.PlaybackState == PlaybackState.Playing ? "||" : "\u25B6";
+                AddButton(ctrlRow.transform, playIcon, ColButton, () => replayViewer.TogglePlayPause(), -1, 35);
+                AddButton(ctrlRow.transform, ">>", ColButton, () => replayViewer.Skip(10f), -1, 35);
+                AddButton(ctrlRow.transform, $"{replayViewer.PlaybackSpeed:F1}x", ColButton, () => replayViewer.CycleSpeed(), -1, 45);
+                AddButton(ctrlRow.transform, "Stop", ColButtonDanger, () => replayViewer.StopViewing(), -1, 50);
+
+                // Target
+                var targetRow = CreateRow(replaySection.transform, 28);
+                AddLabel(targetRow.transform, "Viewing:", 14, ColDimText, 60);
+                AddLabel(targetRow.transform, replayViewer.GetCurrentTargetName(), 14, ColText);
+                AddButton(targetRow.transform, "<", ColButton, () => replayViewer.CycleTarget(-1), -1, 28);
+                AddButton(targetRow.transform, ">", ColButton, () => replayViewer.CycleTarget(1), -1, 28);
+            }
+
+            // Replay list
+            if (replayStorage != null && Time.time - _lastReplayRefresh > 5f)
+            {
+                _cachedReplays = replayStorage.GetLocalReplays();
+                _lastReplayRefresh = Time.time;
+            }
+
+            AddButton(replaySection.transform, "Refresh List", ColButton, () =>
+            {
+                replayStorage?.RefreshLocalReplays();
+                _cachedReplays = replayStorage?.GetLocalReplays() ?? new List<ReplayHeader>();
+                _lastReplayRefresh = Time.time;
+            }, 28);
+
+            if (_cachedReplays.Count == 0)
+            {
+                AddLabel(replaySection.transform, "No saved replays.", 13, ColDimText);
+            }
+            else
+            {
+                AddLabel(replaySection.transform, $"Saved ({_cachedReplays.Count})", 14, ColDimText);
+                foreach (var replay in _cachedReplays)
+                {
+                    bool isFav = replayStorage?.IsFavorite(replay.ReplayId) ?? false;
+                    var rRow = CreateRow(replaySection.transform, 26);
+                    string starIcon = isFav ? "\u2605" : "\u2606";
+                    string rId = replay.ReplayId;
+                    AddButton(rRow.transform, starIcon, ColInputBg, () =>
+                    {
+                        replayStorage?.ToggleFavorite(rId);
+                        _cachedReplays = replayStorage?.GetLocalReplays() ?? new List<ReplayHeader>();
+                    }, -1, 28);
+                    AddLabel(rRow.transform, $"{replay.GameMode} on {replay.MapName}", 13, ColText);
+                    AddLabel(rRow.transform, EOSReplayStorage.FormatDuration(replay.Duration), 12, ColDimText, 40);
+
+                    var rBtnRow = CreateRow(replaySection.transform, 26);
+                    AddLabel(rBtnRow.transform, $"{replay.Participants?.Length ?? 0}p", 12, ColDimText, 25);
+                    AddButton(rBtnRow.transform, "Play", ColButton, () =>
+                        _ = PlayReplayAsync(rId, replayStorage, replayViewer), -1, 45);
+                    AddButton(rBtnRow.transform, "Export", ColButton, () =>
+                        _ = ExportReplayAsync(rId, replayStorage), -1, 55);
+                    AddButton(rBtnRow.transform, "Delete", ColButtonDanger, () =>
+                    {
+                        replayStorage?.DeleteReplay(rId);
+                        _cachedReplays = replayStorage?.GetLocalReplays() ?? new List<ReplayHeader>();
+                    }, -1, 55);
+                }
+            }
+
+            // Export success
+            if (_showExportSuccess && Time.time - _exportSuccessTime < 3f)
+            {
+                var expRow = CreateRow(replaySection.transform, 28);
+                AddLabel(expRow.transform, "Exported!", 14, ColGreen);
+                AddButton(expRow.transform, "Open Folder", ColButton, () => replayStorage?.OpenExportFolder(), -1, 90);
+            }
+            else
+            {
+                _showExportSuccess = false;
+            }
+
+            // Import
+            var importRow = CreateRow(replaySection.transform, 32);
+            _importPathInput = AddInputField(importRow.transform, "path/to/replay.json");
+            _importPathInput.text = _importPath;
+            AddButton(importRow.transform, "Import", ColButton, () =>
+            {
+                _importPath = _importPathInput?.text ?? "";
+                if (!string.IsNullOrWhiteSpace(_importPath))
+                    _ = ImportReplayAsync(_importPath, replayStorage);
+            }, -1, 60);
+
+            // Session Metrics
+            var metricsMgr = EOSMetrics.Instance;
+            var metricsSection = CreateSection(_toolsContainer, "Session Metrics");
+
+            if (metricsMgr == null || !metricsMgr.IsReady)
+            {
+                AddLabel(metricsSection.transform, "Waiting for EOS login...", 14, ColDimText);
+            }
+            else
+            {
+                bool sessionActive = metricsMgr.IsSessionActive;
+                AddStatusRow(metricsSection.transform, "Session", sessionActive, "Active", "Inactive");
+                if (sessionActive)
+                {
+                    AddKVRow(metricsSection.transform, "Duration", metricsMgr.SessionDuration.ToString(@"hh\:mm\:ss"));
+                    if (!string.IsNullOrEmpty(metricsMgr.CurrentSessionId))
+                    {
+                        string shortId = metricsMgr.CurrentSessionId.Length > 12
+                            ? metricsMgr.CurrentSessionId.Substring(0, 12) + "..."
+                            : metricsMgr.CurrentSessionId;
+                        AddKVRow(metricsSection.transform, "ID", shortId);
+                    }
+                }
+
+                var mBtnRow = CreateRow(metricsSection.transform, 34);
+                var mBeginBtn = AddButton(mBtnRow.transform, "Begin", ColButton, () => metricsMgr.BeginSession());
+                mBeginBtn.GetComponent<Button>().interactable = !sessionActive;
+                var mEndBtn = AddButton(mBtnRow.transform, "End", ColButtonDanger, () => metricsMgr.EndSession());
+                mEndBtn.GetComponent<Button>().interactable = sessionActive;
+            }
+
+            // LFG
+            var lfgMgr = EOSLFGManager.Instance;
+            string lfgTitle = "LFG (Looking for Group)";
+            if (lfgMgr != null && lfgMgr.HasActivePost)
+                lfgTitle = $"LFG (Active: {lfgMgr.ActivePost.CurrentSize}/{lfgMgr.ActivePost.DesiredSize})";
+
+            var lfgSection = CreateSection(_toolsContainer, lfgTitle);
+
+            if (lfgMgr == null)
+            {
+                AddLabel(lfgSection.transform, "LFG Manager not available.", 14, ColDimText);
+            }
+            else if (lfgMgr.HasActivePost)
+            {
+                var post = lfgMgr.ActivePost;
+                AddLabel(lfgSection.transform, "YOUR ACTIVE POST", 15, ColHeader);
+                AddKVRow(lfgSection.transform, "Title", post.Title);
+                AddKVRow(lfgSection.transform, "Size", $"{post.CurrentSize}/{post.DesiredSize}");
+                if (!string.IsNullOrEmpty(post.GameMode))
+                    AddKVRow(lfgSection.transform, "Mode", post.GameMode);
+
+                var timeLeft = post.TimeRemaining;
+                Color timeColor = timeLeft.TotalMinutes < 5 ? ColOrange : ColText;
+                AddKVRow(lfgSection.transform, "Expires", $"{timeLeft.Minutes}m {timeLeft.Seconds}s", timeColor);
+
+                if (lfgMgr.PendingRequests.Count > 0)
+                {
+                    AddLabel(lfgSection.transform, $"Pending Requests: {lfgMgr.PendingRequests.Count}", 14, ColYellow);
+                    foreach (var request in lfgMgr.PendingRequests)
+                    {
+                        var reqRow = CreateRow(lfgSection.transform, 28);
+                        AddLabel(reqRow.transform, request.RequesterName, 13, ColDimText);
+                        var req = request;
+                        AddButton(reqRow.transform, "Accept", ColButton, () => { _ = lfgMgr.AcceptJoinRequestAsync(req); }, -1, 60);
+                        AddButton(reqRow.transform, "Reject", ColButtonDanger, () => { _ = lfgMgr.RejectJoinRequestAsync(req); }, -1, 60);
+                    }
+                }
+
+                AddButton(lfgSection.transform, "Close Post", ColButtonDanger, () => CloseLFGPostAsync(lfgMgr), 32);
+            }
+            else
+            {
+                // Create post form
+                AddLabel(lfgSection.transform, "CREATE POST", 15, ColHeader);
+
+                var titleRow = CreateRow(lfgSection.transform, 32);
+                AddLabel(titleRow.transform, "Title:", 14, ColDimText, 45);
+                _lfgTitleInput = AddInputField(titleRow.transform, "Looking for players");
+                _lfgTitleInput.text = _lfgTitle;
+
+                var modeRow = CreateRow(lfgSection.transform, 32);
+                AddLabel(modeRow.transform, "Mode:", 14, ColDimText, 45);
+                _lfgModeInput = AddInputField(modeRow.transform, "game mode");
+                _lfgModeInput.text = _lfgGameMode;
+
+                // Size spinner
+                var sizeRow = CreateRow(lfgSection.transform, 32);
+                AddLabel(sizeRow.transform, "Size:", 14, ColDimText, 45);
+                AddButton(sizeRow.transform, "-", ColButton, () =>
+                {
+                    _lfgDesiredSize = Mathf.Max(2, _lfgDesiredSize - 1);
+                    if (_lfgSizeLabel != null) _lfgSizeLabel.text = _lfgDesiredSize.ToString();
+                }, -1, 30);
+                _lfgSizeLabel = AddLabel(sizeRow.transform, _lfgDesiredSize.ToString(), 16, ColHeader, TextAnchor.MiddleCenter, 30);
+                AddButton(sizeRow.transform, "+", ColButton, () =>
+                {
+                    _lfgDesiredSize = Mathf.Min(64, _lfgDesiredSize + 1);
+                    if (_lfgSizeLabel != null) _lfgSizeLabel.text = _lfgDesiredSize.ToString();
+                }, -1, 30);
+
+                AddButton(lfgSection.transform, "Create LFG Post", ColButton, () =>
+                {
+                    _lfgTitle = _lfgTitleInput?.text ?? _lfgTitle;
+                    _lfgGameMode = _lfgModeInput?.text ?? _lfgGameMode;
+                    CreateLFGPostAsync(lfgMgr);
+                }, 34);
+            }
+
+            // Browse (only if LFG manager is available)
+            if (lfgMgr != null)
+            {
+                AddLabel(lfgSection.transform, "BROWSE POSTS", 15, ColHeader);
+                var searchRow = CreateRow(lfgSection.transform, 30);
+                AddButton(searchRow.transform, "Search", ColButton, () => SearchLFGPostsAsync(lfgMgr), 28, 70);
+                AddButton(searchRow.transform, "Refresh", ColButton, () => { _ = lfgMgr.RefreshSearchAsync(); }, 28, 70);
+                AddLabel(searchRow.transform, $"{lfgMgr.SearchResults.Count} posts", 13, ColDimText);
+
+                if (lfgMgr.SearchResults.Count > 0)
+                {
+                    foreach (var post in lfgMgr.SearchResults)
+                    {
+                        if (post.IsExpired) continue;
+                        var pRow = CreateRow(lfgSection.transform, 26);
+                        AddLabel(pRow.transform, post.Title, 13, ColText);
+                        AddLabel(pRow.transform, $"{post.CurrentSize}/{post.DesiredSize}", 13, ColHeader, 35);
+                        if (!string.IsNullOrEmpty(post.GameMode))
+                            AddLabel(pRow.transform, post.GameMode, 12, ColDimText, 50);
+
+                        bool alreadySent = lfgMgr.SentRequests.Contains(post.PostId);
+                        string pId = post.PostId;
+                        var joinBtn = AddButton(pRow.transform, alreadySent ? "Sent" : "Join", ColButton, () =>
+                        {
+                            _ = lfgMgr.SendJoinRequestAsync(pId);
+                        }, -1, 50);
+                        joinBtn.GetComponent<Button>().interactable = post.IsJoinable && !alreadySent;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(_lfgStatus))
+                    AddLabel(lfgSection.transform, _lfgStatus, 13, ColOrange);
+            }
+        }
+
+        private async Task PlayReplayAsync(string replayId, EOSReplayStorage storage, EOSReplayViewer viewer)
+        {
+            if (viewer == null || storage == null) return;
+            var replay = await storage.LoadLocalAsync(replayId);
+            if (replay.HasValue)
+                viewer.StartViewing(replay.Value);
+        }
+
+        private async Task ExportReplayAsync(string replayId, EOSReplayStorage storage)
+        {
+            if (storage == null) return;
+            string path = await storage.ExportReplayAsync(replayId);
+            if (!string.IsNullOrEmpty(path))
+            {
+                _showExportSuccess = true;
+                _exportSuccessTime = Time.time;
+            }
+        }
+
+        private async Task ImportReplayAsync(string path, EOSReplayStorage storage)
+        {
+            if (storage == null) return;
+            bool success = await storage.ImportReplayAsync(path);
+            if (success)
+            {
+                _importPath = "";
+                _cachedReplays = storage.GetLocalReplays();
+            }
+        }
+
+        private async void CreateLFGPostAsync(EOSLFGManager lfgMgr)
+        {
+            _lfgStatus = "Creating post...";
+            var options = new LFGPostOptions()
+                .WithTitle(_lfgTitle)
+                .WithGameMode(_lfgGameMode)
+                .WithDesiredSize(_lfgDesiredSize);
+            var (result, post) = await lfgMgr.CreatePostAsync(options);
+            _lfgStatus = result == Result.Success ? "Post created!" : $"Failed: {result}";
+        }
+
+        private async void CloseLFGPostAsync(EOSLFGManager lfgMgr)
+        {
+            _lfgStatus = "Closing post...";
+            var result = await lfgMgr.ClosePostAsync();
+            _lfgStatus = result == Result.Success ? "Post closed" : $"Failed: {result}";
+        }
+
+        private async void SearchLFGPostsAsync(EOSLFGManager lfgMgr)
+        {
+            _lfgStatus = "Searching...";
+            var options = new LFGSearchOptions();
+            if (!string.IsNullOrEmpty(_lfgGameMode))
+                options.WithGameMode(_lfgGameMode);
+            var (result, posts) = await lfgMgr.SearchPostsAsync(options);
+            _lfgStatus = result == Result.Success ? $"Found {posts.Count} posts" : $"Search failed: {result}";
+        }
+
+        #endregion
+
+        #region Popups
+
+        private void ShowProfilePopup(string puid)
+        {
+            _profilePuid = puid;
+            _profileNote = EOSPlayerRegistry.Instance?.GetNote(puid) ?? "";
+            _profileEditingNote = false;
+            _profileStatus = "";
+            BuildPopupOverlay();
+            BuildProfilePopupPanel();
+        }
+
+        private void ShowReportPopup(string puid)
+        {
+            _reportTargetPuid = puid;
+            _reportCategoryIndex = 0;
+            _reportStatus = "";
+            BuildPopupOverlay();
+            BuildReportPopupPanel();
+        }
+
+        private void ClosePopup()
+        {
+            _profilePuid = "";
+            _reportTargetPuid = "";
+            if (_popupOverlay != null) Destroy(_popupOverlay);
+            _popupOverlay = null;
+            _popupPanel = null;
+        }
+
+        private void BuildPopupOverlay()
+        {
+            if (_popupOverlay != null) Destroy(_popupOverlay);
+
+            _popupOverlay = new GameObject("PopupOverlay");
+            _popupOverlay.transform.SetParent(_canvas.transform, false);
+            var overlayImg = _popupOverlay.AddComponent<Image>();
+            overlayImg.color = new Color(0, 0, 0, 0.6f);
+            overlayImg.raycastTarget = true;
+            var overlayRT = _popupOverlay.GetComponent<RectTransform>();
+            StretchFill(overlayRT);
+
+            var overlayBtn = _popupOverlay.AddComponent<Button>();
+            overlayBtn.targetGraphic = overlayImg;
+            overlayBtn.onClick.AddListener(ClosePopup);
+        }
+
+        private void BuildProfilePopupPanel()
+        {
+            if (_popupPanel != null) Destroy(_popupPanel);
+            if (_popupOverlay == null) return;
+
+            _popupPanel = CreatePanelGO(_popupOverlay.transform, "ProfilePopup", ColPanelBg);
+            var rt = _popupPanel.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.05f, 0.15f);
+            rt.anchorMax = new Vector2(0.95f, 0.85f);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            _popupPanel.GetComponent<Image>().raycastTarget = true;
+
+            var vlg = _popupPanel.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(16, 16, 16, 16);
+            vlg.spacing = 6;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+
+            var registry = EOSPlayerRegistry.Instance;
+            string displayName = registry?.GetPlayerName(_profilePuid) ?? _profilePuid;
+            string platformId = registry?.GetPlatform(_profilePuid);
+            string platformName = !string.IsNullOrEmpty(platformId) ? EOSPlayerRegistry.GetPlatformName(platformId) : "Unknown";
+            bool isFriend = registry?.IsFriend(_profilePuid) ?? false;
+            bool isBlocked = registry?.IsBlocked(_profilePuid) ?? false;
+            DateTime? lastSeen = registry?.GetLastSeen(_profilePuid);
+
+            AddLabel(_popupPanel.transform, "PLAYER PROFILE", 20, ColHeader);
+            AddLabel(_popupPanel.transform, displayName, 18, ColText);
+            AddKVRow(_popupPanel.transform, "Platform", platformName);
+            AddKVRow(_popupPanel.transform, "PUID", _profilePuid.Length > 20 ? _profilePuid.Substring(0, 20) + "..." : _profilePuid);
+
+            if (lastSeen.HasValue)
+                AddKVRow(_popupPanel.transform, "Last Seen", GetTimeAgo(lastSeen.Value));
+
+            // Badges
+            var badgeRow = CreateRow(_popupPanel.transform, 26);
+            if (isFriend) AddBadge(badgeRow.transform, "Friend", true);
+            if (isBlocked) AddBadge(badgeRow.transform, "Blocked", false);
+            var lobbyMgr = EOSLobbyManager.Instance;
+            bool isLobbyOwner = lobbyMgr != null && lobbyMgr.IsInLobby && lobbyMgr.CurrentLobby.OwnerPuid == _profilePuid;
+            if (isLobbyOwner) AddLabel(badgeRow.transform, "[Host]", 14, ColYellow, 50);
+
+            // Notes
+            AddLabel(_popupPanel.transform, "Personal Note:", 14, ColDimText);
+            if (_profileEditingNote)
+            {
+                var noteInput = AddInputField(_popupPanel.transform, "Note...");
+                noteInput.text = _profileNote;
+                var noteActRow = CreateRow(_popupPanel.transform, 32);
+                AddButton(noteActRow.transform, "Save", ColButton, () =>
+                {
+                    _profileNote = noteInput.text;
+                    registry?.SetNote(_profilePuid, _profileNote);
+                    _profileEditingNote = false;
+                    _profileStatus = "Note saved";
+                    BuildProfilePopupPanel(); // Rebuild
+                });
+                AddButton(noteActRow.transform, "Cancel", ColButtonDanger, () =>
+                {
+                    _profileNote = registry?.GetNote(_profilePuid) ?? "";
+                    _profileEditingNote = false;
+                    BuildProfilePopupPanel();
+                });
+            }
+            else
+            {
+                var noteRow = CreateRow(_popupPanel.transform, 28);
+                string noteDisplay = string.IsNullOrEmpty(_profileNote) ? "(no note)" : _profileNote;
+                AddLabel(noteRow.transform, noteDisplay, 14, ColText);
+                AddButton(noteRow.transform, "Edit", ColButton, () =>
+                {
+                    _profileEditingNote = true;
+                    BuildProfilePopupPanel();
+                }, -1, 55);
+            }
+
+            // Actions
+            var actRow1 = CreateRow(_popupPanel.transform, 36);
+            string pPuid = _profilePuid;
+            AddButton(actRow1.transform, isFriend ? "Unfriend" : "Add Friend", ColButton, () =>
+            {
+                registry?.ToggleFriend(pPuid);
+                _profileStatus = isFriend ? "Removed" : "Added";
+                BuildProfilePopupPanel();
+            });
+            AddButton(actRow1.transform, isBlocked ? "Unblock" : "Block", ColButtonDanger, () =>
+            {
+                if (isBlocked) registry?.UnblockPlayer(pPuid);
+                else registry?.BlockPlayer(pPuid);
+                _profileStatus = isBlocked ? "Unblocked" : "Blocked";
+                BuildProfilePopupPanel();
+            });
+
+            var actRow2 = CreateRow(_popupPanel.transform, 36);
+            var reportsManager = EOSReports.Instance;
+            if (reportsManager != null && reportsManager.IsReady)
+            {
+                AddButton(actRow2.transform, "Report", ColButtonDanger, () => ShowReportPopup(pPuid));
+            }
+            var invMgr = EOSCustomInvites.Instance;
+            if (invMgr != null)
+            {
+                AddButton(actRow2.transform, "Invite", ColButton, () =>
+                {
+                    _ = invMgr.SendInviteAsync(pPuid);
+                    _profileStatus = "Invite sent!";
+                    BuildProfilePopupPanel();
+                });
+            }
+            if (lobbyMgr != null && lobbyMgr.IsInLobby && lobbyMgr.IsOwner && !isLobbyOwner)
+            {
+                AddButton(actRow2.transform, "Kick", ColButtonDanger, () =>
+                {
+                    _ = lobbyMgr.KickMemberAsync(pPuid);
+                    _profileStatus = "Kicked";
+                    BuildProfilePopupPanel();
+                });
+            }
+
+            if (!string.IsNullOrEmpty(_profileStatus))
+                AddLabel(_popupPanel.transform, _profileStatus, 14, ColHeader);
+
+            AddButton(_popupPanel.transform, "Close", ColButtonDanger, ClosePopup, 36);
+        }
+
+        private void BuildReportPopupPanel()
+        {
+            if (_popupPanel != null) Destroy(_popupPanel);
+            if (_popupOverlay == null) return;
+
+            _popupPanel = CreatePanelGO(_popupOverlay.transform, "ReportPopup", ColPanelBg);
+            var rt = _popupPanel.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.1f, 0.25f);
+            rt.anchorMax = new Vector2(0.9f, 0.75f);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            _popupPanel.GetComponent<Image>().raycastTarget = true;
+
+            var vlg = _popupPanel.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(16, 16, 16, 16);
+            vlg.spacing = 6;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+
+            string targetDisplay = _reportTargetPuid.Length > 16
+                ? _reportTargetPuid.Substring(0, 8) + "..."
+                : _reportTargetPuid;
+            string displayName = EOSPlayerRegistry.Instance?.GetPlayerName(_reportTargetPuid);
+            if (!string.IsNullOrEmpty(displayName))
+                targetDisplay = displayName;
+
+            AddLabel(_popupPanel.transform, "REPORT PLAYER", 20, ColRed);
+            AddKVRow(_popupPanel.transform, "Target", targetDisplay);
+
+            // Category buttons
+            AddLabel(_popupPanel.transform, "Category:", 14, ColDimText);
+            var categories = EOSReports.GetAllCategories();
+
+            var catRow1 = CreateRow(_popupPanel.transform, 30);
+            for (int i = 0; i < Mathf.Min(4, categories.Length); i++)
+            {
+                int idx = i;
+                string catName = EOSReports.GetCategoryDisplayName(categories[i]);
+                bool isSel = _reportCategoryIndex == i;
+                AddButton(catRow1.transform, catName, isSel ? ColGreen : ColInputBg, () =>
+                {
+                    _reportCategoryIndex = idx;
+                    BuildReportPopupPanel();
+                }, 28);
+            }
+
+            if (categories.Length > 4)
+            {
+                var catRow2 = CreateRow(_popupPanel.transform, 30);
+                for (int i = 4; i < categories.Length; i++)
+                {
+                    int idx = i;
+                    string catName = EOSReports.GetCategoryDisplayName(categories[i]);
+                    bool isSel = _reportCategoryIndex == i;
+                    AddButton(catRow2.transform, catName, isSel ? ColGreen : ColInputBg, () =>
+                    {
+                        _reportCategoryIndex = idx;
+                        BuildReportPopupPanel();
+                    }, 28);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(_reportStatus))
+                AddLabel(_popupPanel.transform, _reportStatus, 14, ColOrange);
+
+            var btnRow = CreateRow(_popupPanel.transform, 38);
+            AddButton(btnRow.transform, "Send Report", ColButtonDanger, () =>
+            {
+                SendReport(categories[_reportCategoryIndex]);
+            });
+            AddButton(btnRow.transform, "Cancel", ColButton, ClosePopup);
+        }
+
+        private async void SendReport(PlayerReportsCategory category)
+        {
+            var reportsManager = EOSReports.Instance;
+            if (string.IsNullOrEmpty(_reportTargetPuid) || reportsManager == null) return;
+            _reportStatus = "Sending...";
+            BuildReportPopupPanel();
+            var result = await reportsManager.ReportPlayerAsync(_reportTargetPuid, category);
+            if (result == Result.Success)
+            {
+                _reportStatus = "Report sent!";
+                BuildReportPopupPanel();
+                await Task.Delay(1000);
+                ClosePopup();
+            }
+            else
+            {
+                _reportStatus = $"Failed: {result}";
+                BuildReportPopupPanel();
+            }
+        }
+
+        #endregion
+
+        #region Social Helpers
+
+        private async void SendInviteToPuid(string puid, string displayName)
+        {
+            var invitesManager = EOSCustomInvites.Instance;
+            if (invitesManager == null || !invitesManager.IsReady) return;
+            _inviteStatus = $"Sending to {displayName}...";
+            var result = await invitesManager.SendInviteAsync(puid);
+            _inviteStatus = result == Result.Success ? $"Sent to {displayName}!" : $"Failed: {result}";
+        }
+
+        private async void SendInviteToRecipient()
+        {
+            var invitesManager = EOSCustomInvites.Instance;
+            if (invitesManager == null) return;
+            _inviteStatus = "Sending...";
+            var result = await invitesManager.SendInviteAsync(_inviteRecipientPuid.Trim());
+            _inviteStatus = result == Result.Success ? "Invite sent!" : $"Failed: {result}";
+            if (result == Result.Success) _inviteRecipientPuid = "";
+        }
+
+        private async void AcceptInviteAndJoin(string inviteId, InviteData invite)
+        {
+            var invitesManager = EOSCustomInvites.Instance;
+            invitesManager?.AcceptInvite(inviteId);
+
+            if (invite.TryGetLobbyCode(out string lobbyCode))
+            {
+                _inviteStatus = $"Joining {lobbyCode}...";
+                var lobbyMgr = EOSLobbyManager.Instance;
+                if (lobbyMgr != null)
+                {
+                    var (result, lobby) = await lobbyMgr.JoinLobbyByCodeAsync(lobbyCode);
+                    _inviteStatus = result == Result.Success ? $"Joined: {lobby.JoinCode}" : $"Join failed: {result}";
+                }
+            }
+            else
+            {
+                _inviteStatus = "Accepted (no lobby code)";
+            }
+        }
+
+        private async void JoinFriendLobbyAsync(string lobbyCode)
+        {
+            var lobbyMgr = EOSLobbyManager.Instance;
+            if (lobbyMgr == null) return;
+            if (lobbyMgr.IsInLobby)
+                await lobbyMgr.LeaveLobbyAsync();
+            SetLobbyStatus($"Joining {lobbyCode}...");
+            var (result, lobby) = await lobbyMgr.JoinLobbyByCodeAsync(lobbyCode);
+            SetLobbyStatus(result == Result.Success ? $"Joined! Code: {lobby.JoinCode}" : $"Failed: {result}");
+        }
+
+        private static string GetTimeAgo(DateTime dt)
+        {
+            var span = DateTime.Now - dt;
+            if (span.TotalMinutes < 1) return "just now";
+            if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+            if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+            if (span.TotalDays < 7) return $"{(int)span.TotalDays}d ago";
+            return dt.ToString("MM/dd");
         }
 
         #endregion

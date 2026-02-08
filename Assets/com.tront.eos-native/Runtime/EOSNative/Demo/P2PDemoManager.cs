@@ -6,6 +6,8 @@ using EOSNative.Logging;
 using EOSNative.Net;
 using EOSNative.P2P;
 using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.EventSystems;
 #if EOS_HAS_INPUT_SYSTEM
 using UnityEngine.InputSystem;
 #endif
@@ -70,6 +72,10 @@ namespace EOSNative.Demo
         private bool _localSpawned;
         private int _colorIndex;
 
+        // Mobile controls
+        private Canvas _mobileCanvas;
+        private JoystickDragHandler _joystickHandler;
+
         #endregion
 
         private void Awake()
@@ -87,6 +93,7 @@ namespace EOSNative.Demo
         private void Start()
         {
             GenerateScene();
+            CreateMobileControls();
 
             // If already in a lobby when demo starts, spawn immediately
             if (EOSLobbyManager.Instance != null && EOSLobbyManager.Instance.IsInLobby)
@@ -98,7 +105,7 @@ namespace EOSNative.Demo
             var p2p = EOSP2PManager.Instance;
             p2p.OnPeerConnected += OnPeerConnected;
             p2p.OnPeerDisconnected += OnPeerDisconnected;
-            p2p.OnPacketReceived += p2p.Router.ProcessIncoming;
+            // Router.ProcessIncoming is auto-subscribed by EOSP2PManager.Router getter — no manual wiring needed
 
             var router = p2p.Router;
             router.Register(MSG_POSITION, HandlePosition);
@@ -117,7 +124,6 @@ namespace EOSNative.Demo
             {
                 p2p.OnPeerConnected -= OnPeerConnected;
                 p2p.OnPeerDisconnected -= OnPeerDisconnected;
-                p2p.OnPacketReceived -= p2p.Router.ProcessIncoming;
 
                 var router = p2p.Router;
                 router.Unregister(MSG_POSITION);
@@ -268,6 +274,88 @@ namespace EOSNative.Demo
             catch { return null; }
         }
 
+        private void CreateMobileControls()
+        {
+            // Ensure EventSystem exists
+            if (FindAnyObjectByType<EventSystem>() == null)
+            {
+                var esGo = new GameObject("EventSystem");
+                esGo.AddComponent<EventSystem>();
+                esGo.AddComponent<StandaloneInputModule>();
+            }
+
+            // Canvas
+            var canvasGo = new GameObject("MobileControls");
+            _mobileCanvas = canvasGo.AddComponent<Canvas>();
+            _mobileCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            _mobileCanvas.sortingOrder = 100;
+            var scaler = canvasGo.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1080, 1920);
+            scaler.matchWidthOrHeight = 0.5f;
+            canvasGo.AddComponent<GraphicRaycaster>();
+
+            // --- Virtual Joystick (bottom-left) ---
+            var joystickGo = new GameObject("JoystickBg");
+            joystickGo.transform.SetParent(canvasGo.transform, false);
+            var bgImg = joystickGo.AddComponent<Image>();
+            bgImg.color = new Color(1f, 1f, 1f, 0.2f);
+            var joystickBg = bgImg.rectTransform;
+            joystickBg.anchorMin = new Vector2(0, 0);
+            joystickBg.anchorMax = new Vector2(0, 0);
+            joystickBg.pivot = new Vector2(0.5f, 0.5f);
+            joystickBg.sizeDelta = new Vector2(240, 240);
+            joystickBg.anchoredPosition = new Vector2(180, 200);
+
+            var thumbGo = new GameObject("JoystickThumb");
+            thumbGo.transform.SetParent(joystickGo.transform, false);
+            var thumbImg = thumbGo.AddComponent<Image>();
+            thumbImg.color = new Color(1f, 1f, 1f, 0.5f);
+            var joystickThumb = thumbImg.rectTransform;
+            joystickThumb.sizeDelta = new Vector2(80, 80);
+            joystickThumb.anchoredPosition = Vector2.zero;
+
+            // Attach EventSystem drag handler
+            _joystickHandler = joystickGo.AddComponent<JoystickDragHandler>();
+            _joystickHandler.Thumb = joystickThumb;
+            _joystickHandler.Radius = 80f;
+
+            // --- Jump Button (bottom-right) ---
+            var jumpGo = new GameObject("JumpBtn");
+            jumpGo.transform.SetParent(canvasGo.transform, false);
+            var jumpImg = jumpGo.AddComponent<Image>();
+            jumpImg.color = new Color(0.2f, 0.6f, 1f, 0.4f);
+            var jumpRect = jumpImg.rectTransform;
+            jumpRect.anchorMin = new Vector2(1, 0);
+            jumpRect.anchorMax = new Vector2(1, 0);
+            jumpRect.pivot = new Vector2(0.5f, 0.5f);
+            jumpRect.sizeDelta = new Vector2(160, 160);
+            jumpRect.anchoredPosition = new Vector2(-150, 200);
+
+            var jumpBtn = jumpGo.AddComponent<Button>();
+            jumpBtn.onClick.AddListener(OnJumpPressed);
+
+            var jumpLabel = new GameObject("Label");
+            jumpLabel.transform.SetParent(jumpGo.transform, false);
+            var jumpText = jumpLabel.AddComponent<Text>();
+            jumpText.text = "JUMP";
+            jumpText.alignment = TextAnchor.MiddleCenter;
+            jumpText.fontSize = 28;
+            jumpText.color = Color.white;
+            jumpText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
+                          ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
+            var jumpTextRect = jumpText.rectTransform;
+            jumpTextRect.anchorMin = Vector2.zero;
+            jumpTextRect.anchorMax = Vector2.one;
+            jumpTextRect.sizeDelta = Vector2.zero;
+        }
+
+        private void OnJumpPressed()
+        {
+            if (_localBall != null)
+                _localBall.MobileJump = true;
+        }
+
         #endregion
 
         #region Ball Spawning
@@ -293,7 +381,7 @@ namespace EOSNative.Demo
             {
                 var registry = EOSNative.EOSPlayerRegistry.Instance;
                 if (registry != null)
-                    playerName = registry.GetPlayerName(localPuid.ToString()) ?? localPuid.ToString().Substring(0, 6);
+                    playerName = registry.GetOrGenerateName(localPuid.ToString());
                 else
                     playerName = localPuid.ToString().Substring(0, 6);
             }
@@ -461,6 +549,10 @@ namespace EOSNative.Demo
 
         private void Update()
         {
+            // Feed joystick input to ball
+            if (_localBall != null && _joystickHandler != null)
+                _localBall.MobileInput = _joystickHandler.Input;
+
             if (_localBall == null || _localBehaviour == null) return;
 
 #if EOS_HAS_INPUT_SYSTEM
@@ -538,8 +630,23 @@ namespace EOSNative.Demo
             {
                 GUI.Label(new Rect(10, y, 400, 25), $"Lobby: {lobby.CurrentLobby.LobbyId?.Substring(0, Mathf.Min(8, lobby.CurrentLobby.LobbyId?.Length ?? 0))}...", style);
                 y += 20f;
-                GUI.Label(new Rect(10, y, 400, 25), $"Peers: {EOSP2PManager.Instance.Peers.Count} | Remote balls: {_remoteBalls.Count}", style);
+
+                // Diagnostics: P2P status
+                var p2p = EOSP2PManager.Instance;
+                int peerCount = p2p != null ? p2p.Peers.Count : 0;
+                GUI.Label(new Rect(10, y, 500, 25), $"P2P Peers: {peerCount} | Remote balls: {_remoteBalls.Count} | Local ball: {(_localBall != null ? "YES" : "NO")}", style);
                 y += 20f;
+
+                // Diagnostics: Voice status
+                var voice = EOSNative.Voice.EOSVoiceManager.Instance;
+                if (voice != null)
+                {
+                    string voiceStatus = voice.IsConnected ? "Connected" : "Disconnected";
+                    int participants = voice.ParticipantCount;
+                    bool muted = voice.IsMuted;
+                    GUI.Label(new Rect(10, y, 500, 25), $"Voice: {voiceStatus} | Participants: {participants} | Muted: {muted}", style);
+                    y += 20f;
+                }
 
                 // Scores
                 if (_localBehaviour != null)
@@ -562,6 +669,43 @@ namespace EOSNative.Demo
             else
             {
                 GUI.Label(new Rect(10, y, 400, 25), "Join/create a lobby via F1 overlay to start", style);
+            }
+        }
+
+        #endregion
+
+        #region JoystickDragHandler
+
+        /// <summary>
+        /// EventSystem-based virtual joystick. Works with both mouse and touch input.
+        /// </summary>
+        private class JoystickDragHandler : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
+        {
+            public RectTransform Thumb;
+            public float Radius = 80f;
+
+            /// <summary>Current normalized joystick input (-1 to 1 per axis).</summary>
+            public Vector2 Input { get; private set; }
+
+            public void OnPointerDown(PointerEventData eventData)
+            {
+                OnDrag(eventData);
+            }
+
+            public void OnDrag(PointerEventData eventData)
+            {
+                var bg = (RectTransform)transform;
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                    bg, eventData.position, eventData.pressEventCamera, out var localPoint);
+                var offset = Vector2.ClampMagnitude(localPoint, Radius);
+                if (Thumb != null) Thumb.anchoredPosition = offset;
+                Input = offset / Radius;
+            }
+
+            public void OnPointerUp(PointerEventData eventData)
+            {
+                if (Thumb != null) Thumb.anchoredPosition = Vector2.zero;
+                Input = Vector2.zero;
             }
         }
 
