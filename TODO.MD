@@ -96,7 +96,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Linux x64 (Editor + Build)
 - [ ] Linux ARM64 (Build only)
 - [ ] iOS ARM64 (Build + device)
-- [ ] Android (Build + device — v2.15.4: voice diagnostics added, auto-query devices on connect. Voice "all silent" → check Voice Diagnostics tab for RTCAudioStatus/device status)
+- [x] Android (Build + device — v2.15.8: VOIP CONFIRMED WORKING! Phone-to-PC voice verified. 12 chapters of JNI/classloader/permission/AudioRecord battles. See `android-jni-battles.md`)
 
 **Auth & Login:**
 - [ ] Dev auth tool login (Editor)
@@ -265,3 +265,4 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Packet compression — Deflate with configurable threshold (64 bytes), opt-in via CompressionEnabled, backward compatible wire format (FLAG_SINGLE_COMPRESSED 0x02, FLAG_BATCH_COMPRESSED 0x03)
 - [x] Master client verification — OnRPCValidation callback on NetworkManager, EnableOwnerOnlyRPCValidation() convenience helper
 - [x] Spectator mode — IsSpectator flag, RPCTarget.Players (skips spectators), spectator-aware host election, spawn guard, PlayerState _spectator custom data
+- [x] Android VOIP — 12-chapter JNI/classloader saga: desugaring, AndroidX, extractNativeLibs, RTCOptions, AndroidInitializeOptions, ProGuard, System.loadLibrary from Java, runtime RECORD_AUDIO permission, Unity Microphone AudioRecord conflict fix. Phone-to-PC voice confirmed working in v2.15.8.

@@ -211,6 +211,13 @@ namespace EOSNative.Voice
 
         private void StartMicCapture()
         {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            // Don't use Unity Microphone API on Android — it opens a competing AudioRecord
+            // that conflicts with the EOS SDK's own audio capture, causing LocalAudioStatus
+            // to flip between Enabled and Unsupported. The mic level bar won't work on Android,
+            // but voice transmission through EOS will work correctly.
+            return;
+#endif
             if (_micClip != null) return;
             _micDeviceName = null; // System default mic
             _micClip = Microphone.Start(_micDeviceName, true, 1, 44100);

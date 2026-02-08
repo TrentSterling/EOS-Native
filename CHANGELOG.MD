@@ -2,6 +2,13 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.15.8] - 2026-02-08
+
+### Fixed
+- **Android VOIP confirmed working** - Phone-to-PC voice chat verified after 12-chapter debugging saga
+- **Android runtime mic permission** - `RECORD_AUDIO` now requested at runtime for ALL Android devices via `Permission.RequestUserPermission()` in `EOSManager.Awake()`. Previously only requested on Quest. Manifest declaration alone is insufficient on API 23+.
+- **Unity Microphone vs EOS AudioRecord conflict** - Disabled Unity `Microphone.Start()` on Android to prevent competing `AudioRecord` instances. The EOS SDK needs exclusive mic access for voice transmission. On Android < 10 only one `AudioRecord` can exist; on Android 10+ concurrent capture has priority rules that silence one client. Mic level bar shows 0% on Android (acceptable tradeoff).
+
 ## [2.5.0] - 2026-02-06
 
 ### Added

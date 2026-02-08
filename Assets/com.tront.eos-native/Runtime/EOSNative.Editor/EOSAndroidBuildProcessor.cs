@@ -54,7 +54,11 @@ namespace EOSNative.Editor
             // 3. Inject eos_login_protocol_scheme string resource
             InjectEosLoginScheme(path);
 
-            // 4. Inject Java init helper class (fixes JNI classloader mismatch for EOS native lib)
+            // 4. Generate Java helper that calls System.loadLibrary("EOSSDK") from Java classloader context.
+            // This is CRITICAL: when System.loadLibrary is called from Java code compiled into the APK,
+            // JNI_OnLoad's FindClass uses the caller's (app) classloader, so RegisterNatives succeeds
+            // for EOSLogger and other native methods. Without this, dlopen from P/Invoke uses the
+            // system classloader, which can't find app classes → UnsatisfiedLinkError.
             InjectJavaInitHelper(path);
 
             // 5. Inject required permissions for EOS features (voice, networking)
@@ -253,75 +257,6 @@ namespace EOSNative.Editor
             }
         }
 
-        private static void InjectJavaInitHelper(string unityLibPath)
-        {
-            // Generate a Java helper class that calls EOSSDK.init() from the app's own
-            // classloader context. This ensures JNI_OnLoad's FindClass() resolves EOS SDK
-            // Java classes correctly when registering native methods.
-            //
-            // IMPORTANT: Do NOT call System.loadLibrary("EOSSDK") before EOSSDK.init().
-            // The AAR's init() method handles native library loading internally in the
-            // correct order. Pre-loading corrupts JNI registration.
-            // (PlayEveryWare's implementation also only calls EOSSDK.init, never loadLibrary.)
-            string javaDir = Path.Combine(unityLibPath, "src", "main", "java", "com", "tront", "eosnative");
-            if (!Directory.Exists(javaDir))
-                Directory.CreateDirectory(javaDir);
-
-            string javaFile = Path.Combine(javaDir, "EOSNativeInit.java");
-
-            const string javaSource = @"package com.tront.eosnative;
-
-import android.app.Activity;
-
-/**
- * Helper class that calls EOSSDK.init() from the app's own classloader context.
- * This ensures that JNI_OnLoad can find EOS SDK Java classes via FindClass()
- * and RegisterNatives runs correctly for methods like EOSLogger.Log.
- *
- * IMPORTANT: Do NOT call System.loadLibrary before EOSSDK.init().
- * The AAR's init() handles all native library loading internally.
- */
-public class EOSNativeInit {
-    private static boolean sInitialized = false;
-
-    public static boolean init(Activity activity) {
-        if (sInitialized) return true;
-
-        // Set thread context classloader to the app's classloader.
-        // This helps JNI_OnLoad's FindClass resolve AAR classes on Android
-        // versions where it checks the thread context classloader.
-        try {
-            Thread.currentThread().setContextClassLoader(
-                activity.getClassLoader());
-        } catch (Throwable t) {
-            // Non-fatal — continue without classloader hint
-            android.util.Log.w(""EOSNativeInit"", ""setContextClassLoader failed: "" + t.getMessage());
-        }
-
-        try {
-            // Let the AAR handle native library loading internally.
-            // EOSSDK.init() calls System.loadLibrary from the correct classloader,
-            // so JNI_OnLoad's FindClass resolves AAR Java classes properly.
-            com.epicgames.mobile.eossdk.EOSSDK.init(activity);
-            sInitialized = true;
-            return true;
-        } catch (Throwable t) {
-            // Catch Throwable, not Exception — UnsatisfiedLinkError extends Error, not Exception.
-            // Without this, the error propagates and crashes instead of being handled.
-            android.util.Log.e(""EOSNativeInit"", ""EOSSDK.init() failed: "" + t.getMessage(), t);
-            // Mark as initialized anyway — the native library IS loaded (P/Invoke works),
-            // and a retry won't help. Java audio pipeline may be broken though.
-            sInitialized = true;
-            return false;
-        }
-    }
-}
-";
-
-            File.WriteAllText(javaFile, javaSource);
-            Debug.Log("[EOS-Native] Injected EOSNativeInit.java helper class for Android SDK init.");
-        }
-
         private static void InjectProguardRules(string unityLibPath)
         {
             // Generate ProGuard keep rules that prevent R8/ProGuard from stripping EOS SDK
@@ -380,6 +315,70 @@ public class EOSNativeInit {
             }
 
             Debug.Log("[EOS-Native] Injected ProGuard keep rules for EOS SDK classes.");
+        }
+
+        private static void InjectJavaInitHelper(string unityLibPath)
+        {
+            // Generate EOSNativeLoader.java that calls System.loadLibrary("EOSSDK") from Java.
+            // When System.loadLibrary is called from a Java class compiled into the APK,
+            // JNI_OnLoad's FindClass uses the CALLER'S classloader (the app classloader),
+            // which can see all app classes including com.epicgames.mobile.eossdk.EOSLogger.
+            // This ensures RegisterNatives succeeds and RTC/Audio subsystems work.
+            //
+            // Without this, the native library is loaded via P/Invoke's dlopen (from C++ code),
+            // which has no Java frame on the stack → JNI_OnLoad uses the system classloader →
+            // FindClass fails → RegisterNatives never runs → UnsatisfiedLinkError.
+            string javaDir = Path.Combine(unityLibPath, "src", "main", "java", "com", "tront", "eosnative");
+            if (!Directory.Exists(javaDir))
+                Directory.CreateDirectory(javaDir);
+
+            string javaPath = Path.Combine(javaDir, "EOSNativeLoader.java");
+
+            const string javaSource = @"package com.tront.eosnative;
+
+import android.app.Activity;
+
+public class EOSNativeLoader {
+    private static boolean sLoaded = false;
+
+    /**
+     * Load the EOSSDK native library from Java classloader context.
+     * This ensures JNI_OnLoad's FindClass uses the app classloader,
+     * so RegisterNatives succeeds for EOSLogger.Log and other native methods.
+     *
+     * MUST be called before any C# P/Invoke (DllImport) touches libEOSSDK.so,
+     * otherwise dlopen from native code triggers JNI_OnLoad with system classloader.
+     */
+    public static void loadNativeLibrary() {
+        if (sLoaded) return;
+        try {
+            System.loadLibrary(""EOSSDK"");
+            sLoaded = true;
+            android.util.Log.i(""EOSNativeLoader"", ""System.loadLibrary(EOSSDK) succeeded from Java classloader."");
+        } catch (Throwable t) {
+            android.util.Log.e(""EOSNativeLoader"", ""System.loadLibrary(EOSSDK) failed: "" + t.getMessage(), t);
+        }
+    }
+
+    /**
+     * Initialize the EOS SDK Java layer (activity, keychain, custom tabs).
+     * Automatically loads the native library first if not already loaded.
+     */
+    public static void initEOS(Activity activity) {
+        loadNativeLibrary();
+        try {
+            com.epicgames.mobile.eossdk.EOSSDK.init(activity);
+            android.util.Log.i(""EOSNativeLoader"", ""EOSSDK.init(activity) succeeded."");
+        } catch (Throwable t) {
+            // Catch Throwable, not Exception — UnsatisfiedLinkError extends Error
+            android.util.Log.e(""EOSNativeLoader"", ""EOSSDK.init(activity) failed: "" + t.getMessage(), t);
+        }
+    }
+}
+";
+
+            File.WriteAllText(javaPath, javaSource);
+            Debug.Log("[EOS-Native] Generated EOSNativeLoader.java (System.loadLibrary from Java classloader context).");
         }
 
         private static string FindClientId()

@@ -423,20 +423,24 @@ The EOS SDK AAR (`eossdk-StaticSTDC-release.aar`) requires Java 8 core library d
    - `androidx.browser:browser:1.4.0` — **required** for Chrome Custom Tabs (account portal login). Without this, `EOSSDK.init()` throws `NoClassDefFoundError: CustomTabsServiceConnection`
 3. **Extract native libs:** Injects `android:extractNativeLibs="true"` into AndroidManifest.xml's `<application>` tag — required so native `.so` files from the EOS AAR are extracted at install time (without this, `System.loadLibrary` may fail with `UnsatisfiedLinkError`)
 4. **EOS login scheme:** Injects `eos_login_protocol_scheme` string resource into `strings.xml`
-5. **Java init helper:** Generates `EOSNativeInit.java` with classloader hint and `catch (Throwable)` (not `Exception`) to properly handle `UnsatisfiedLinkError` from `JNI_OnLoad`
+5. **Java init helper:** Generates `EOSNativeLoader.java` with `System.loadLibrary("EOSSDK")` called from Java classloader context — ensures `JNI_OnLoad`'s `FindClass` uses the app classloader so `RegisterNatives` succeeds for `EOSLogger` and other native methods
 6. **ProGuard keep rules:** Generates `proguard-eos.pro` to prevent R8/ProGuard from stripping EOS SDK Java classes needed for JNI native method registration
 
 Also ensures `google()` repository is present for AndroidX resolution and injects RECORD_AUDIO/ACCESS_WIFI_STATE permissions. No manual Gradle template editing is required.
 
 ### Android SDK Loading (Java Classloader Fix)
 
-**Problem:** When Unity's C# JNI bridge calls `EOSSDK.init(activity)`, the JNI environment's classloader may not include the EOS AAR's Java classes. `JNI_OnLoad` calls `FindClass("com/epicgames/mobile/eossdk/EOSLogger")` which fails, so `RegisterNatives` never runs, causing `UnsatisfiedLinkError` for `EOSLogger.Log` and broken RTC/Audio subsystems.
+**Approach:** `EOSNativeLoader.java` (generated at build time by `EOSAndroidBuildProcessor`) calls `System.loadLibrary("EOSSDK")` from Java code compiled into the APK, then calls `EOSSDK.init(activity)`. C# calls `EOSNativeLoader.initEOS(activity)` via `AndroidJavaClass` at `SubsystemRegistration` timing (earliest possible).
 
-**Solution:** `EOSAndroidBuildProcessor` generates a Java helper class (`com.tront.eosnative.EOSNativeInit`) at build time that calls `EOSSDK.init(activity)` from the app's own classloader context. The helper sets the thread context classloader to the app's classloader before calling init (helps `FindClass` on some Android versions), and catches `Throwable` (not just `Exception`) since `UnsatisfiedLinkError extends Error`. Since this class is compiled into the APK alongside the EOS AAR, `JNI_OnLoad`'s `FindClass` resolves EOS SDK Java classes correctly.
+**Why it works:** Per [Android JNI docs](https://developer.android.com/training/articles/perf-jni), `FindClass` in `JNI_OnLoad` uses the **caller's classloader** — the classloader of the class that called `System.loadLibrary`. Since `EOSNativeLoader` is compiled into the APK's dex (loaded by the app classloader), `FindClass("com/epicgames/mobile/eossdk/EOSLogger")` succeeds → `RegisterNatives` runs → RTC/Audio subsystems work.
 
-**CRITICAL:** Do NOT call `System.loadLibrary("EOSSDK")` before `EOSSDK.init(activity)`. The AAR's `init()` handles native library loading internally in the correct order. Pre-loading corrupts JNI registration. PlayEveryWare's implementation also only calls `EOSSDK.init`, never `loadLibrary`.
+**Why previous approaches failed:** `EOSSDK.init(activity)` does NOT call `System.loadLibrary("EOSSDK")`. The native library was only loaded later by P/Invoke's `dlopen` from C++ code — no Java frame on the stack → `JNI_OnLoad` used the system classloader → `FindClass` failed. Setting the thread context classloader doesn't help because `FindClass` in `JNI_OnLoad` uses the call-stack classloader, not the thread context classloader.
 
-**Flow:** `LoadAndroidLibrary()` in `EOSManager.cs` → tries `EOSNativeInit.init(activity)` first → falls back to direct `EOSSDK.init(activity)` if the helper class isn't found (old builds without the processor).
+**CRITICAL:** `System.loadLibrary("EOSSDK")` MUST be called from Java code (not from C# JNI bridge). The whole point is that the Java caller's classloader is used by `JNI_OnLoad`.
+
+**Flow:** `[SubsystemRegistration] EarlyAndroidInit()` → `EOSNativeLoader.initEOS(activity)` → `System.loadLibrary("EOSSDK")` (from Java) → `JNI_OnLoad` (app classloader) → `EOSSDK.init(activity)`. Then `EOSManager.Start()` → `Initialize()` → `PlatformInterface.Initialize()` (first P/Invoke, safe because lib already loaded).
+
+**Fallback:** If `EOSNativeLoader` class is not found (old builds without the build processor), falls back to direct `EOSSDK.init(activity)` with a warning that voice may not work.
 
 **Diagnostics:** `LoadAndroidLibrary()` logs API level, device model, and supported ABIs at startup. The `AndroidJavaInitSuccess` property tracks whether Java-side init succeeded.
 
@@ -444,13 +448,15 @@ Also ensures `google()` repository is present for AndroidX resolution and inject
 
 ### Android RTC/Voice Prerequisites
 
-For RTC/Voice to work on Android, **three things** must be in place:
+For RTC/Voice to work on Android, **four things** must be in place:
 
 1. **`RTCOptions` must be set on platform creation** — The generic `Options` struct must include `RTCOptions = new RTCOptions()`. Setting it to null (the default) tells the SDK to **skip RTC initialization entirely**. This was the primary cause of RTC/Audio showing RED on Android.
 
-2. **`RECORD_AUDIO` permission must be in AndroidManifest** — `EOSAndroidBuildProcessor` auto-injects `android.permission.RECORD_AUDIO` and `android.permission.ACCESS_WIFI_STATE`. Without these, the OS blocks microphone access.
+2. **`RECORD_AUDIO` permission must be in AndroidManifest AND requested at runtime** — `EOSAndroidBuildProcessor` auto-injects the manifest declaration, and `EOSManager.Awake()` calls `EOSPlatformHelper.RequestMicrophonePermission()` for all Android devices (not just Quest). On API 23+, the manifest declaration alone is insufficient — the app must request permission via `Permission.RequestUserPermission()` at runtime.
 
-3. **`EOSSDK.init()` must succeed** — The Java helper class ensures the correct classloader context.
+3. **`System.loadLibrary("EOSSDK")` must be called from Java** — `EOSNativeLoader.java` (generated by build processor) handles this. Without it, `JNI_OnLoad` uses the system classloader and `RegisterNatives` fails for RTC/Audio classes.
+
+4. **Unity `Microphone.Start()` must NOT run on Android** — The EOS SDK opens its own `AudioRecord` for voice transmission. On Android < 10, only one `AudioRecord` can exist. On Android 10+, concurrent capture has priority rules that may silence one client. `EOSVoiceManager.StartMicCapture()` is disabled on Android to avoid this conflict. The mic level bar shows 0% on Android, but EOS voice works correctly.
 
 ### Android SDK Initialization
 
