@@ -57,7 +57,6 @@ namespace EOSNative.P2P
     /// Local instances run physics normally and export compressed state.
     /// Remote instances receive target positions and are guided via damped spring forces.
     /// </summary>
-    [RequireComponent(typeof(Rigidbody))]
     public class P2PSpringSync : MonoBehaviour
     {
         [Header("Spring Settings")]

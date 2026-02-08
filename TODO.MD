@@ -20,7 +20,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] DestroyWithOwner lifetime flag (player objects auto-despawn on owner disconnect)
 - [x] Sequence-based stale packet rejection (per-object sequence numbers)
 - [x] RPC migration buffer (queue RPCs during host transition, flush after)
-- [ ] Packet compression (PurrNet-style pickling / LZ4 / similar)
+- [x] Packet compression (Deflate with threshold, opt-in)
 - [x] BufferLast (only deliver most recent state, drop stale packets)
 - [x] Object pooling (reuse network objects instead of destroy/create)
 - [x] Scene management (networked scene loading, additive scenes)
@@ -41,7 +41,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] EasySync v2 — per-property WriteAccess (Host/All), interpolation toggle, "Convert to Code" export
 - [x] Shared room data (NetworkRoomState — live room properties with lobby attribute mirroring)
 - [x] Per-user data (NetworkPlayerState — per-player synced properties)
-- [ ] Master client verification (optional server-authority validation)
+- [x] Master client verification (OnRPCValidation callback + EnableOwnerOnlyRPCValidation helper)
 - [ ] Spatial hash (interest management — only sync nearby objects)
 - [ ] Tick-based simulation (deterministic tick rate, decoupled from frame rate)
 - [x] Connection statistics / network profiler (RTT, packet loss, bandwidth)
@@ -61,7 +61,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 **Multi-Transport & Crossplay:**
 - [ ] Multi-transport support (EOS + Steam crossplay)
 - [ ] FishNet transport thin layer (basic lobbies + host migration, OG repo compile fix)
-- [ ] Spectator mode (read-only observer that receives state but doesn't own objects)
+- [x] Spectator mode (IsSpectator flag, RPCTarget.Players, host election skip, spawn guard)
 
 **Prediction & Rollback:**
 - [ ] Client-side prediction (input prediction for owned objects)
@@ -96,7 +96,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Linux x64 (Editor + Build)
 - [ ] Linux ARM64 (Build only)
 - [ ] iOS ARM64 (Build + device)
-- [ ] Android (Build + device — verify extractNativeLibs + desugaring)
+- [ ] Android (Build + device — v2.15.3: fixed catch Throwable, proguard rules, classloader hint. Voice "all silent" needs testing)
 
 **Auth & Login:**
 - [ ] Dev auth tool login (Editor)
@@ -262,3 +262,6 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Fix INetSerializable struct boxing bug in NetSerializers.Read (Deserialize mutated boxed copy, not original)
 - [x] Fix Input System compatibility in P2PDemoManager (EOS_HAS_INPUT_SYSTEM guard for E/Q/T/R keys)
 - [x] Add InternalsVisibleTo for test assembly (AssemblyInfo.cs)
+- [x] Packet compression — Deflate with configurable threshold (64 bytes), opt-in via CompressionEnabled, backward compatible wire format (FLAG_SINGLE_COMPRESSED 0x02, FLAG_BATCH_COMPRESSED 0x03)
+- [x] Master client verification — OnRPCValidation callback on NetworkManager, EnableOwnerOnlyRPCValidation() convenience helper
+- [x] Spectator mode — IsSpectator flag, RPCTarget.Players (skips spectators), spectator-aware host election, spawn guard, PlayerState _spectator custom data

@@ -510,7 +510,17 @@ namespace EOSNative.UI
                 string msg = entry.Message;
                 if (msg.Length > 300) msg = msg.Substring(0, 300) + "...";
 
-                sb.Insert(0, $"<color=#{colorHex}>[{prefix}]</color> {msg}{collapse}\n");
+                // Show stack trace for errors/exceptions
+                string trace = "";
+                if ((entry.Type == LogType.Error || entry.Type == LogType.Exception || entry.Type == LogType.Assert)
+                    && !string.IsNullOrEmpty(entry.StackTrace))
+                {
+                    string st = entry.StackTrace;
+                    if (st.Length > 500) st = st.Substring(0, 500) + "...";
+                    trace = $"\n<color=#666666><size=12>{st}</size></color>";
+                }
+
+                sb.Insert(0, $"<color=#{colorHex}>[{prefix}]</color> {msg}{collapse}{trace}\n");
                 shown++;
             }
 

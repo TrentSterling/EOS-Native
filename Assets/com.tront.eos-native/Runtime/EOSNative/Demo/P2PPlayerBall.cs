@@ -10,7 +10,6 @@ namespace EOSNative.Demo
     /// Ported from FishNet PlayerBall.cs with FishNet dependencies removed.
     /// Only reads input when IsLocal is true.
     /// </summary>
-    [RequireComponent(typeof(Rigidbody))]
     public class P2PPlayerBall : MonoBehaviour
     {
         [Header("Movement")]
@@ -48,7 +47,7 @@ namespace EOSNative.Demo
 
         private void FixedUpdate()
         {
-            if (!IsLocal) return;
+            if (!IsLocal || _rb == null) return;
 
             bool isGrounded = Physics.SphereCast(
                 transform.position, 0.4f, Vector3.down, out _,

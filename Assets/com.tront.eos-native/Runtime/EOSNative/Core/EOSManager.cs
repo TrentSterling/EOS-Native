@@ -141,6 +141,16 @@ namespace EOSNative
         // Tracks if SDK initialization failed in a way that requires Unity restart
         private static bool s_sdkCorrupted;
 
+        // Tracks if Android Java-side initialization succeeded (EOSSDK.init via helper class)
+        private bool _androidJavaInitSuccess;
+
+        /// <summary>
+        /// Whether Android Java-side EOS SDK initialization succeeded.
+        /// If false, RTC/Audio subsystems may not be available.
+        /// Always true on non-Android platforms.
+        /// </summary>
+        public bool AndroidJavaInitSuccess => _androidJavaInitSuccess;
+
 #if UNITY_EDITOR_WIN
         [DllImport("Kernel32.dll")]
         private static extern IntPtr LoadLibrary(string lpLibFileName);
@@ -368,6 +378,12 @@ namespace EOSNative
             if (transform.parent == null)
                 DontDestroyOnLoad(gameObject);
 
+            // Create console FIRST so it captures all startup logs (including library load errors)
+            if (_showConsole)
+            {
+                var _ = EOSNativeConsole.Instance;
+            }
+
 #if UNITY_EDITOR
             // Subscribe to play mode changes to prevent crashes when exiting play mode
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
@@ -379,12 +395,6 @@ namespace EOSNative
 
         private async void Start()
         {
-            // Create console FIRST so it captures all startup logs
-            if (_showConsole)
-            {
-                var _ = EOSNativeConsole.Instance;
-            }
-
             Debug.Log("[EOS-Native] Starting up...");
             Debug.Log($"[EOS-Native] Platform: {EOSPlatformHelper.CurrentPlatform} | Device: {SystemInfo.deviceModel} | OS: {SystemInfo.operatingSystem}");
             Debug.Log($"[EOS-Native] Unity {Application.unityVersion} | App {Application.version} | Mobile: {EOSPlatformHelper.IsMobile}");
@@ -592,14 +602,23 @@ namespace EOSNative
                 return Result.InvalidParameters;
             }
 
-            // Initialize the SDK
+            // Initialize the SDK (Android requires AndroidInitializeOptions with platform-specific Reserved field)
+#if UNITY_ANDROID && !UNITY_EDITOR
+            var androidInitOptions = new AndroidInitializeOptions
+            {
+                ProductName = config.ProductName,
+                ProductVersion = Application.version,
+                SystemInitializeOptions = new AndroidInitializeOptionsSystemInitializeOptions()
+            };
+            Result initResult = PlatformInterface.Initialize(ref androidInitOptions);
+#else
             var initOptions = new InitializeOptions
             {
                 ProductName = config.ProductName,
                 ProductVersion = Application.version
             };
-
             Result initResult = PlatformInterface.Initialize(ref initOptions);
+#endif
             if (initResult == Result.AlreadyConfigured)
             {
                 Debug.Log("[EOS-Native] SDK was already initialized (AlreadyConfigured) - reusing existing session.");
@@ -619,7 +638,11 @@ namespace EOSNative
                 try
                 {
                     PlatformInterface.Shutdown();
+#if UNITY_ANDROID && !UNITY_EDITOR
+                    var retryInit = PlatformInterface.Initialize(ref androidInitOptions);
+#else
                     var retryInit = PlatformInterface.Initialize(ref initOptions);
+#endif
                     if (retryInit == Result.Success || retryInit == Result.AlreadyConfigured)
                     {
                         _platform = CreatePlatformInterface(config);
@@ -698,7 +721,7 @@ namespace EOSNative
             };
             return PlatformInterface.Create(ref platformOptions);
 #else
-            // Use generic Options for other platforms
+            // Use generic Options for other platforms (Android, macOS, Linux, iOS)
             var platformOptions = new Options
             {
                 ProductId = config.ProductId,
@@ -713,7 +736,11 @@ namespace EOSNative
                 CacheDirectory = Application.temporaryCachePath,
                 IsServer = config.IsServer,
                 TickBudgetInMilliseconds = config.TickBudgetInMilliseconds,
-                Flags = GetPlatformFlags()
+                Flags = GetPlatformFlags(),
+                // RTCOptions MUST be set (non-null) to enable RTC/Voice subsystems.
+                // Setting to null (the default) tells the SDK to skip RTC initialization entirely,
+                // which causes GetRTCInterface() and GetRTCAudioInterface() to return null.
+                RTCOptions = new RTCOptions()
             };
             return PlatformInterface.Create(ref platformOptions);
 #endif
@@ -1322,44 +1349,89 @@ namespace EOSNative
         private void LoadAndroidLibrary()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            // Step 1: Try System.loadLibrary — may fail if native lib is already loaded by the AAR
-            // or if the AAR handles loading internally via EOSSDK.init()
+            // Log diagnostic info for Android debugging
             try
             {
-                using (AndroidJavaClass sys = new AndroidJavaClass("java.lang.System"))
+                using (var build = new AndroidJavaClass("android.os.Build"))
+                using (var version = new AndroidJavaClass("android.os.Build$VERSION"))
                 {
-                    sys.CallStatic("loadLibrary", "EOSSDK");
+                    int apiLevel = version.GetStatic<int>("SDK_INT");
+                    string model = build.GetStatic<string>("MODEL");
+                    string[] abis = build.GetStatic<string[]>("SUPPORTED_ABIS");
+                    string abiStr = abis != null ? string.Join(", ", abis) : "unknown";
+                    Debug.Log($"[EOS-Native] Android device: {model} | API {apiLevel} | ABIs: {abiStr}");
                 }
-                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", "System.loadLibrary(EOSSDK) succeeded.");
             }
             catch (Exception e)
             {
-                // Not fatal — EOSSDK.init() below will load the native lib from the AAR
-                Debug.LogWarning($"[EOSManager] System.loadLibrary(EOSSDK) failed (this is OK if using AAR): {e.Message}");
+                Debug.LogWarning($"[EOS-Native] Could not read Android device info: {e.Message}");
             }
 
-            // Step 2: Always call EOSSDK.init(activity) — this is required and handles native lib loading
+            // Use our Java helper class (compiled in the app's classloader context) to load
+            // the EOS native library. This avoids JNI classloader mismatch where FindClass()
+            // can't resolve EOS AAR Java classes during JNI_OnLoad, which causes
+            // UnsatisfiedLinkError for EOSLogger.Log and breaks RTC/Audio subsystems.
             try
             {
 #if UNITY_6000_0_OR_NEWER
-                using (AndroidJavaClass eos = new AndroidJavaClass("com.epicgames.mobile.eossdk.EOSSDK"))
-                {
-                    eos.CallStatic("init", UnityEngine.Android.AndroidApplication.currentActivity);
-                }
+                var activity = UnityEngine.Android.AndroidApplication.currentActivity;
 #else
                 AndroidJavaClass player = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
-                AndroidJavaObject activity = player.GetStatic<AndroidJavaObject>("currentActivity");
-                using (AndroidJavaClass eos = new AndroidJavaClass("com.epicgames.mobile.eossdk.EOSSDK"))
-                {
-                    eos.CallStatic("init", activity);
-                }
+                var activity = player.GetStatic<AndroidJavaObject>("currentActivity");
 #endif
-                EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", "Android EOS SDK initialized successfully.");
+                // Try the helper class first (available in builds made with EOSAndroidBuildProcessor)
+                try
+                {
+                    using (var helper = new AndroidJavaClass("com.tront.eosnative.EOSNativeInit"))
+                    {
+                        _androidJavaInitSuccess = helper.CallStatic<bool>("init", activity);
+                    }
+
+                    if (_androidJavaInitSuccess)
+                    {
+                        Debug.Log("[EOS-Native] Android EOSSDK.init() succeeded via EOSNativeInit helper.");
+                    }
+                    else
+                    {
+                        // Helper caught a Throwable (e.g. UnsatisfiedLinkError) but the native lib IS loaded.
+                        // P/Invoke still works. Java audio pipeline may be broken — RTC/Audio might not function.
+                        Debug.LogWarning("[EOS-Native] Android EOSSDK.init() threw via helper (caught). " +
+                            "Native lib is loaded (P/Invoke works), but Java audio pipeline may be broken. " +
+                            "RTC/Voice may not function. Check logcat for 'EOSNativeInit' tag.");
+                    }
+                }
+                catch (Exception)
+                {
+                    // Helper class not found (old build without EOSAndroidBuildProcessor).
+                    // Fall back to direct EOSSDK.init() call.
+                    Debug.LogWarning("[EOS-Native] EOSNativeInit helper not found, falling back to direct EOSSDK.init().");
+                    try
+                    {
+                        using (var eos = new AndroidJavaClass("com.epicgames.mobile.eossdk.EOSSDK"))
+                        {
+                            eos.CallStatic("init", activity);
+                        }
+                        _androidJavaInitSuccess = true;
+                        Debug.Log("[EOS-Native] Android EOSSDK.init() succeeded via direct call (fallback).");
+                    }
+                    catch (Exception e2)
+                    {
+                        // Direct call also failed. The native lib may still be loaded by the OS,
+                        // so P/Invoke could work, but Java-side init didn't complete.
+                        _androidJavaInitSuccess = false;
+                        Debug.LogWarning($"[EOS-Native] Android EOSSDK.init() direct fallback failed: {e2.Message}. " +
+                            "P/Invoke may still work but RTC/Voice will not function.");
+                    }
+                }
             }
             catch (Exception e)
             {
-                Debug.LogError($"[EOSManager] Failed to initialize Android EOS SDK: {e}");
+                // Could not even get the Activity reference — something is very wrong.
+                _androidJavaInitSuccess = false;
+                Debug.LogError($"[EOS-Native] Android EOSSDK.init() failed (cannot get Activity): {e}");
             }
+#else
+            _androidJavaInitSuccess = true; // Non-Android platforms always succeed
 #endif
         }
 

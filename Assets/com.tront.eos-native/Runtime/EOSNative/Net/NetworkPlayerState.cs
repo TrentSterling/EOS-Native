@@ -103,6 +103,9 @@ namespace EOSNative.Net
             CustomData.Remove(key);
         }
 
+        /// <summary>True if this player is a spectator (read-only observer).</summary>
+        public bool IsSpectating => GetCustomBool("_spectator");
+
         /// <summary>K/D ratio (0 if no deaths).</summary>
         public float KDRatio => Deaths.Value > 0 ? (float)Score.Value / Deaths.Value : Score.Value;
 

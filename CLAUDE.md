@@ -219,6 +219,10 @@ Both the Inspector (EOSManagerEditor) and the runtime F1 overlay (EOSNativeStatu
 
 All four fields apply to both Host Lobby and Quick Match lobby creation.
 
+### Lobby Creation Voice Fallback
+
+`CreateLobbyAsync` includes automatic voice fallback logic. If the EOS SDK returns an error when creating a lobby with `EnableRTCRoom = true` (e.g., on platforms where RTC isn't available), it automatically retries without voice. This prevents `InvalidRequest` errors on Android and other platforms where the RTC module may not be initialized. Diagnostic logging prints all `CreateLobbyOptions` parameters before the SDK call for debugging.
+
 ## Audio Device Selection (Mic/Speaker)
 
 `EOSVoiceManager` provides runtime mic/speaker device switching via EOS RTCAudio APIs:
@@ -402,27 +406,52 @@ A simple multiplayer demo using the raw EOS P2P interface (no FishNet, no high-l
 
 **Credits:** Spring physics ported from PhysicsNetworkTransform.cs (DrewMileham original method, Skylar/CometDev Mirror implementation).
 
-## Android Build (Core Library Desugaring + Native Libs)
+## Android Build (Core Library Desugaring + AndroidX + Native Libs)
 
-The EOS SDK AAR (`eossdk-StaticSTDC-release.aar`) requires Java 8 core library desugaring. Without it, Android builds fail with:
+The EOS SDK AAR (`eossdk-StaticSTDC-release.aar`) requires Java 8 core library desugaring and several AndroidX libraries. Without them, Android builds fail at either build time or runtime.
 
-> `Dependency ':eossdk-StaticSTDC-release:' requires core library desugaring to be enabled for :launcher.`
-
-`EOSAndroidBuildProcessor.cs` (in `EOSNative.Editor/`) automatically injects the required Gradle config into both `launcher/build.gradle` and `unityLibrary/build.gradle` via `IPostGenerateGradleAndroidProject`. It handles three things:
+`EOSAndroidBuildProcessor.cs` (in `EOSNative.Editor/`) automatically injects the required Gradle config into both `launcher/build.gradle` and `unityLibrary/build.gradle` via `IPostGenerateGradleAndroidProject`. It handles six things:
 
 1. **Core library desugaring:** `coreLibraryDesugaringEnabled true` in `compileOptions` + `coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'` in `dependencies`
-2. **Extract native libs:** Injects `android:extractNativeLibs="true"` into AndroidManifest.xml's `<application>` tag — required so native `.so` files from the EOS AAR are extracted at install time (without this, `System.loadLibrary` may fail with `UnsatisfiedLinkError`)
-3. **EOS login scheme:** Injects `eos_login_protocol_scheme` string resource into `strings.xml`
+2. **AndroidX dependencies:** The EOS AAR's transitive Maven dependencies aren't resolved by Unity, so we inject them explicitly:
+   - `androidx.appcompat:appcompat:1.5.1`
+   - `androidx.constraintlayout:constraintlayout:2.1.4`
+   - `androidx.security:security-crypto:1.0.0`
+   - `androidx.browser:browser:1.4.0` — **required** for Chrome Custom Tabs (account portal login). Without this, `EOSSDK.init()` throws `NoClassDefFoundError: CustomTabsServiceConnection`
+3. **Extract native libs:** Injects `android:extractNativeLibs="true"` into AndroidManifest.xml's `<application>` tag — required so native `.so` files from the EOS AAR are extracted at install time (without this, `System.loadLibrary` may fail with `UnsatisfiedLinkError`)
+4. **EOS login scheme:** Injects `eos_login_protocol_scheme` string resource into `strings.xml`
+5. **Java init helper:** Generates `EOSNativeInit.java` with classloader hint and `catch (Throwable)` (not `Exception`) to properly handle `UnsatisfiedLinkError` from `JNI_OnLoad`
+6. **ProGuard keep rules:** Generates `proguard-eos.pro` to prevent R8/ProGuard from stripping EOS SDK Java classes needed for JNI native method registration
 
-No manual Gradle template editing is required.
+Also ensures `google()` repository is present for AndroidX resolution and injects RECORD_AUDIO/ACCESS_WIFI_STATE permissions. No manual Gradle template editing is required.
 
-### Android SDK Loading
+### Android SDK Loading (Java Classloader Fix)
 
-`LoadAndroidLibrary()` in `EOSManager.cs` uses a two-step approach:
-1. Tries `System.loadLibrary("EOSSDK")` — may fail if the AAR bundles the `.so` differently (logged as warning, not fatal)
-2. Always calls `EOSSDK.init(activity)` — the AAR's init handles library loading internally
+**Problem:** When Unity's C# JNI bridge calls `EOSSDK.init(activity)`, the JNI environment's classloader may not include the EOS AAR's Java classes. `JNI_OnLoad` calls `FindClass("com/epicgames/mobile/eossdk/EOSLogger")` which fails, so `RegisterNatives` never runs, causing `UnsatisfiedLinkError` for `EOSLogger.Log` and broken RTC/Audio subsystems.
 
-This resilient approach avoids crashes when `System.loadLibrary` can't find the `.so` but the AAR init can.
+**Solution:** `EOSAndroidBuildProcessor` generates a Java helper class (`com.tront.eosnative.EOSNativeInit`) at build time that calls `EOSSDK.init(activity)` from the app's own classloader context. The helper sets the thread context classloader to the app's classloader before calling init (helps `FindClass` on some Android versions), and catches `Throwable` (not just `Exception`) since `UnsatisfiedLinkError extends Error`. Since this class is compiled into the APK alongside the EOS AAR, `JNI_OnLoad`'s `FindClass` resolves EOS SDK Java classes correctly.
+
+**CRITICAL:** Do NOT call `System.loadLibrary("EOSSDK")` before `EOSSDK.init(activity)`. The AAR's `init()` handles native library loading internally in the correct order. Pre-loading corrupts JNI registration. PlayEveryWare's implementation also only calls `EOSSDK.init`, never `loadLibrary`.
+
+**Flow:** `LoadAndroidLibrary()` in `EOSManager.cs` → tries `EOSNativeInit.init(activity)` first → falls back to direct `EOSSDK.init(activity)` if the helper class isn't found (old builds without the processor).
+
+**Diagnostics:** `LoadAndroidLibrary()` logs API level, device model, and supported ABIs at startup. The `AndroidJavaInitSuccess` property tracks whether Java-side init succeeded.
+
+**Console early init:** `EOSNativeConsole.Instance` is created in `Awake()` (before `LoadNativeLibrary` and `LoadAndroidLibrary`) so all startup errors are captured in the runtime console.
+
+### Android RTC/Voice Prerequisites
+
+For RTC/Voice to work on Android, **three things** must be in place:
+
+1. **`RTCOptions` must be set on platform creation** — The generic `Options` struct must include `RTCOptions = new RTCOptions()`. Setting it to null (the default) tells the SDK to **skip RTC initialization entirely**. This was the primary cause of RTC/Audio showing RED on Android.
+
+2. **`RECORD_AUDIO` permission must be in AndroidManifest** — `EOSAndroidBuildProcessor` auto-injects `android.permission.RECORD_AUDIO` and `android.permission.ACCESS_WIFI_STATE`. Without these, the OS blocks microphone access.
+
+3. **`EOSSDK.init()` must succeed** — The Java helper class ensures the correct classloader context.
+
+### Android SDK Initialization
+
+On Android, `PlatformInterface.Initialize()` MUST use `AndroidInitializeOptions` (not generic `InitializeOptions`). The Android-specific struct includes a `Reserved` field set to `{1, 1}` and `SystemInitializeOptions` for Android file paths. Using the generic struct causes RTC/Audio subsystems to not initialize. The SDK generates both overloads in `Source/Generated/Android/Platform/PlatformInterface.cs`.
 
 ## Overlay UI Mode (EOSManager)
 
@@ -958,6 +987,110 @@ NetworkBehaviour component added to each ball in the P2P demo. Demonstrates Sync
 
 **`RegisterExisting()` fix (v2.14.0):** Now calls `NotifyNetworkSpawn()` after registration, so `__RegisterNetRPCs()` and `OnNetworkSpawn()` fire correctly on objects created outside of `Spawn()`.
 
+## Packet Compression
+
+Opt-in Deflate compression for message payloads. Transparent to application code — enable and forget.
+
+**Properties on `MessageRouter`:**
+- `CompressionEnabled` (bool, default false) — enables/disables compression
+- `CompressionThreshold` (int, default 64) — minimum payload bytes before compression is attempted
+
+**Convenience on `NetworkManager`:**
+- `CompressionEnabled` — proxies to `Router.CompressionEnabled`
+
+**Wire format (backward compatible):**
+- `0x00` = FLAG_SINGLE (uncompressed, unchanged)
+- `0x01` = FLAG_BATCH (uncompressed, unchanged)
+- `0x02` = FLAG_SINGLE_COMPRESSED — `[flag][deflate(msgId + payload)]`
+- `0x03` = FLAG_BATCH_COMPRESSED — `[flag][deflate(count + messages)]`
+
+Old peers that don't understand `0x02`/`0x03` silently ignore them (no handler found). Compression only applied when the compressed output is smaller than the original — otherwise falls back to uncompressed.
+
+```csharp
+// Enable compression (opt-in)
+NetworkManager.Instance.CompressionEnabled = true;
+// Or directly on the router:
+EOSP2PManager.Instance.Router.CompressionEnabled = true;
+EOSP2PManager.Instance.Router.CompressionThreshold = 128; // custom threshold
+```
+
+**Static helpers (internal, used by tests):**
+- `MessageRouter.CompressDeflate(byte[], offset, count)` → `byte[]`
+- `MessageRouter.DecompressDeflate(byte[], offset, count)` → `byte[]`
+
+## Spectator Mode
+
+A peer can join as a read-only observer. Spectators receive all state updates but cannot spawn objects or become host.
+
+**Properties on `NetworkManager`:**
+- `IsSpectator` (bool) — set to true before joining a lobby to join as spectator
+- `IsPeerSpectator(ProductUserId)` — check if a specific peer is spectating
+
+**Convenience on `NetworkBehaviour`:**
+- `IsSpectator` — proxies to `NetworkManager.Instance.IsSpectator`
+
+**Convenience on `NetworkPlayerState`:**
+- `IsSpectating` — reads `_spectator` custom data key
+
+**How it works:**
+1. Set `NetworkManager.Instance.IsSpectator = true` before joining a lobby
+2. On connect, the local PlayerState is created with `CustomData["_spectator"] = "1"`
+3. All peers read this key and populate an internal `_spectators` HashSet
+4. Host election skips spectator PUIDs (spectators never become host)
+5. `Spawn()` returns null with a warning if `IsSpectator` is true
+6. `RPCTarget.Players` sends only to non-spectator peers
+
+**RPCTarget.Players (new enum value = 4):**
+- `executeLocal = !IsSpectator` — spectators don't execute locally
+- Remote send goes only to non-spectator peers via `SendToNonSpectators()`
+
+**Edge case:** If ALL peers are spectators, the lowest PUID becomes host anyway (with a warning log).
+
+```csharp
+// Join as spectator
+NetworkManager.Instance.IsSpectator = true;
+// Then join lobby normally...
+
+// Send RPC only to players (not spectators)
+[NetRpc(RPCTarget.Players)]
+public void StartRound() { ... }
+
+// Check from any NetworkBehaviour
+if (IsSpectator) return; // skip gameplay logic
+```
+
+## Master Client Verification (RPC Validation)
+
+Opt-in callback on NetworkManager that fires before executing any incoming remote RPC. The host (or any peer) can reject unauthorized RPCs. Null = all RPCs allowed (default behavior, zero overhead).
+
+**Field on `NetworkManager`:**
+```csharp
+public Func<ProductUserId, NetworkObject, uint, bool> OnRPCValidation;
+// Parameters: (sender, targetObject, methodHash) → allow?
+```
+
+**Helper:**
+```csharp
+// Convenience: only allow RPCs from the object's owner
+NetworkManager.Instance.EnableOwnerOnlyRPCValidation();
+// Equivalent to:
+NetworkManager.Instance.OnRPCValidation = (sender, target, hash) =>
+    target != null && target.OwnerId == sender;
+```
+
+**Behavior:** When set, `HandleRPC()` checks the callback after reading networkId + methodHash. If it returns false, logs a warning and skips the handler. The reader position is safe because each message in `DispatchMessage` gets bounded offset/count.
+
+```csharp
+// Custom validation: only allow specific RPCs from non-owners
+NetworkManager.Instance.OnRPCValidation = (sender, target, hash) =>
+{
+    if (target == null) return false;
+    if (target.OwnerId == sender) return true; // owner can always RPC
+    // Allow specific cross-owner RPCs (e.g. damage)
+    return hash == NetworkManager.FnvHash("TakeDamage");
+};
+```
+
 ## Automated Tests
 
 Editor-mode unit tests for core networking primitives. Uses Unity Test Framework (`com.unity.test-framework`).
@@ -977,6 +1110,7 @@ Editor-mode unit tests for core networking primitives. Uses Unity Test Framework
 | `PacketFragmenterTests.cs` | ~12 | Single-fragment fast path, multi-fragment round-trip, out-of-order, stale cleanup, max payload, duplicate ignore |
 | `NetworkIdTests.cs` | ~8 | Partition generation, scene object IDs, demo ball IDs, well-known IDs, reserved PrefabIds |
 | `CompressionTests.cs` | ~12 | Vector3Half accuracy, compressed rotation (smallest-three) round-trip, edge cases, many angles |
+| `PacketCompressionTests.cs` | ~10 | Deflate compress/decompress round-trip, various sizes, offsets, empty data, random data, threshold edge cases |
 
 **Run:** Window > General > Test Runner > EditMode > Run All
 

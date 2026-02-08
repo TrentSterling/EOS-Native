@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
 using EOSNative.Logging;
@@ -19,6 +21,12 @@ namespace EOSNative.P2P
         /// <summary>Wire format flag: batched messages.</summary>
         private const byte FLAG_BATCH = 0x01;
 
+        /// <summary>Wire format flag: compressed single message.</summary>
+        private const byte FLAG_SINGLE_COMPRESSED = 0x02;
+
+        /// <summary>Wire format flag: compressed batched messages.</summary>
+        private const byte FLAG_BATCH_COMPRESSED = 0x03;
+
         private readonly EOSP2PManager _p2p;
         private readonly PacketFragmenter _fragmenter = new();
         private readonly Dictionary<byte, Action<ProductUserId, NetReader>> _handlers = new();
@@ -28,6 +36,12 @@ namespace EOSNative.P2P
 
         /// <summary>Enable/disable batching. When disabled, all sends are immediate.</summary>
         public bool BatchingEnabled { get; set; } = true;
+
+        /// <summary>Enable/disable Deflate compression for payloads above threshold. Default off.</summary>
+        public bool CompressionEnabled { get; set; }
+
+        /// <summary>Minimum payload size in bytes before compression is applied. Default 64.</summary>
+        public int CompressionThreshold { get; set; } = 64;
 
         public MessageRouter(EOSP2PManager p2p)
         {
@@ -121,27 +135,28 @@ namespace EOSNative.P2P
                 byte msgId = reassembled[1];
                 DispatchMessage(sender, msgId, reassembled, 2, reassembled.Length - 2);
             }
+            else if (flag == FLAG_SINGLE_COMPRESSED)
+            {
+                // [FLAG_SINGLE_COMPRESSED] [compressed: msgId + payload]
+                if (reassembled.Length < 2) return;
+                var decompressed = DecompressDeflate(reassembled, 1, reassembled.Length - 1);
+                if (decompressed.Length < 1) return;
+                byte msgId = decompressed[0];
+                DispatchMessage(sender, msgId, decompressed, 1, decompressed.Length - 1);
+            }
             else if (flag == FLAG_BATCH)
             {
                 // [FLAG_BATCH] [count:u16] [len:u16][msgId:u8][payload] ...
                 if (reassembled.Length < 3) return;
-                ushort count = (ushort)(reassembled[1] | (reassembled[2] << 8));
-                int offset = 3;
-
-                for (int i = 0; i < count; i++)
-                {
-                    if (offset + 3 > reassembled.Length) break; // malformed
-
-                    ushort msgLen = (ushort)(reassembled[offset] | (reassembled[offset + 1] << 8));
-                    byte msgId = reassembled[offset + 2];
-                    offset += 3;
-
-                    int payloadLen = msgLen - 1; // msgLen includes the msgId byte
-                    if (payloadLen < 0 || offset + payloadLen > reassembled.Length) break;
-
-                    DispatchMessage(sender, msgId, reassembled, offset, payloadLen);
-                    offset += payloadLen;
-                }
+                DispatchBatch(sender, reassembled, 1, reassembled.Length - 1);
+            }
+            else if (flag == FLAG_BATCH_COMPRESSED)
+            {
+                // [FLAG_BATCH_COMPRESSED] [compressed: count + messages]
+                if (reassembled.Length < 2) return;
+                var decompressed = DecompressDeflate(reassembled, 1, reassembled.Length - 1);
+                if (decompressed.Length < 2) return;
+                DispatchBatch(sender, decompressed, 0, decompressed.Length);
             }
         }
 
@@ -158,6 +173,29 @@ namespace EOSNative.P2P
             {
                 EOSDebugLogger.LogError("MessageRouter",
                     $"Handler for msgId 0x{msgId:X2} threw: {ex.Message}");
+            }
+        }
+
+        private void DispatchBatch(ProductUserId sender, byte[] data, int start, int length)
+        {
+            if (length < 2) return;
+            ushort count = (ushort)(data[start] | (data[start + 1] << 8));
+            int offset = start + 2;
+            int end = start + length;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (offset + 3 > end) break; // malformed
+
+                ushort msgLen = (ushort)(data[offset] | (data[offset + 1] << 8));
+                byte msgId = data[offset + 2];
+                offset += 3;
+
+                int payloadLen = msgLen - 1; // msgLen includes the msgId byte
+                if (payloadLen < 0 || offset + payloadLen > end) break;
+
+                DispatchMessage(sender, msgId, data, offset, payloadLen);
+                offset += payloadLen;
             }
         }
 
@@ -265,45 +303,81 @@ namespace EOSNative.P2P
 
         private ArraySegment<byte> BuildSinglePacket(byte msgId, byte[] payload, int length, int sourceOffset = 0)
         {
+            int contentLen = 1 + length; // msgId + payload
+            if (CompressionEnabled && contentLen > CompressionThreshold)
+            {
+                // Build uncompressed content: [msgId][payload...]
+                var content = new byte[contentLen];
+                content[0] = msgId;
+                if (length > 0)
+                    Buffer.BlockCopy(payload, sourceOffset, content, 1, length);
+
+                var compressed = CompressDeflate(content, 0, contentLen);
+                if (compressed.Length < contentLen)
+                {
+                    // [FLAG_SINGLE_COMPRESSED] [compressed data...]
+                    var packet = new byte[1 + compressed.Length];
+                    packet[0] = FLAG_SINGLE_COMPRESSED;
+                    Buffer.BlockCopy(compressed, 0, packet, 1, compressed.Length);
+                    return new ArraySegment<byte>(packet);
+                }
+            }
+
             // [FLAG_SINGLE] [msgId] [payload...]
-            var packet = new byte[2 + length];
-            packet[0] = FLAG_SINGLE;
-            packet[1] = msgId;
+            var pkt = new byte[2 + length];
+            pkt[0] = FLAG_SINGLE;
+            pkt[1] = msgId;
             if (length > 0)
-                Buffer.BlockCopy(payload, sourceOffset, packet, 2, length);
-            return new ArraySegment<byte>(packet);
+                Buffer.BlockCopy(payload, sourceOffset, pkt, 2, length);
+            return new ArraySegment<byte>(pkt);
         }
 
         private ArraySegment<byte> BuildBatchPacket(List<QueuedMessage> messages)
         {
-            // Calculate total size: [FLAG_BATCH(1)] [count(2)] + per message [len(2)][msgId(1)][payload]
-            int totalSize = 3;
+            // Calculate total size of inner content: [count(2)] + per message [len(2)][msgId(1)][payload]
+            int contentSize = 2;
             for (int i = 0; i < messages.Count; i++)
-                totalSize += 3 + messages[i].PayloadLength;
+                contentSize += 3 + messages[i].PayloadLength;
 
-            var packet = new byte[totalSize];
-            packet[0] = FLAG_BATCH;
-            packet[1] = (byte)messages.Count;
-            packet[2] = (byte)(messages.Count >> 8);
+            var content = new byte[contentSize];
+            content[0] = (byte)messages.Count;
+            content[1] = (byte)(messages.Count >> 8);
 
-            int offset = 3;
+            int offset = 2;
             for (int i = 0; i < messages.Count; i++)
             {
                 var msg = messages[i];
                 ushort msgLen = (ushort)(1 + msg.PayloadLength); // msgId + payload
 
-                packet[offset++] = (byte)msgLen;
-                packet[offset++] = (byte)(msgLen >> 8);
-                packet[offset++] = msg.MsgId;
+                content[offset++] = (byte)msgLen;
+                content[offset++] = (byte)(msgLen >> 8);
+                content[offset++] = msg.MsgId;
 
                 if (msg.PayloadLength > 0)
                 {
-                    Buffer.BlockCopy(msg.Payload, 0, packet, offset, msg.PayloadLength);
+                    Buffer.BlockCopy(msg.Payload, 0, content, offset, msg.PayloadLength);
                     offset += msg.PayloadLength;
                 }
             }
 
-            return new ArraySegment<byte>(packet);
+            if (CompressionEnabled && contentSize > CompressionThreshold)
+            {
+                var compressed = CompressDeflate(content, 0, contentSize);
+                if (compressed.Length < contentSize)
+                {
+                    // [FLAG_BATCH_COMPRESSED] [compressed content...]
+                    var packet = new byte[1 + compressed.Length];
+                    packet[0] = FLAG_BATCH_COMPRESSED;
+                    Buffer.BlockCopy(compressed, 0, packet, 1, compressed.Length);
+                    return new ArraySegment<byte>(packet);
+                }
+            }
+
+            // Uncompressed: [FLAG_BATCH] [content...]
+            var pkt = new byte[1 + contentSize];
+            pkt[0] = FLAG_BATCH;
+            Buffer.BlockCopy(content, 0, pkt, 1, contentSize);
+            return new ArraySegment<byte>(pkt);
         }
 
         #endregion
@@ -369,6 +443,29 @@ namespace EOSNative.P2P
                 queue.Messages.Clear();
                 queue.TotalPayloadSize = 0;
             }
+        }
+
+        #endregion
+
+        #region Compression
+
+        internal static byte[] CompressDeflate(byte[] data, int offset, int count)
+        {
+            using var output = new MemoryStream();
+            using (var deflate = new DeflateStream(output, CompressionLevel.Fastest, leaveOpen: true))
+            {
+                deflate.Write(data, offset, count);
+            }
+            return output.ToArray();
+        }
+
+        internal static byte[] DecompressDeflate(byte[] data, int offset, int count)
+        {
+            using var input = new MemoryStream(data, offset, count);
+            using var deflate = new DeflateStream(input, CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            deflate.CopyTo(output);
+            return output.ToArray();
         }
 
         #endregion

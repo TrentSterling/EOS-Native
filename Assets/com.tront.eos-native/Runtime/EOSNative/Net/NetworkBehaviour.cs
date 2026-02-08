@@ -26,6 +26,9 @@ namespace EOSNative.Net
         /// <summary>The ProductUserId of the owning peer.</summary>
         public ProductUserId OwnerId => Net?.OwnerId;
 
+        /// <summary>True if the local peer is a spectator (read-only observer).</summary>
+        public bool IsSpectator => NetworkManager.Instance?.IsSpectator ?? false;
+
         /// <summary>Shortcut to NetworkManager.Instance.</summary>
         protected NetworkManager Manager => NetworkManager.Instance;
 

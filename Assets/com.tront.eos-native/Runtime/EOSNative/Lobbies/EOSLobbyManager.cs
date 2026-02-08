@@ -227,42 +227,24 @@ namespace EOSNative.Lobbies
             // null = all platforms allowed
 
             // Create lobby - matching tank demo pattern for RTC
-            var createOptions = new CreateLobbyOptions
-            {
-                LocalUserId = LocalProductUserId,
-                MaxLobbyMembers = options.MaxPlayers,
-                PermissionLevel = options.IsPublic ? LobbyPermissionLevel.Publicadvertised : LobbyPermissionLevel.Joinviapresence,
-                BucketId = options.BucketId,
-                EnableJoinById = true,
-                AllowInvites = false,
-                RejoinAfterKickRequiresInvite = false,
-                EnableRTCRoom = options.EnableVoice,
-                // Manual audio output for 3D spatial audio support
-                LocalRTCOptions = options.EnableVoice ? new LocalRTCOptions
-                {
-                    UseManualAudioOutput = true  // We handle playback (for per-player 3D audio)
-                } : null,
-                PresenceEnabled = false,
-                DisableHostMigration = !options.AllowHostMigration,
-                AllowedPlatformIds = allowedPlatforms,
-                CrossplayOptOut = !options.AllowCrossplay
-            };
+            bool enableVoice = options.EnableVoice;
+            var createResult = await CreateLobbyInternal(options, enableVoice, allowedPlatforms);
 
-            var tcs = new TaskCompletionSource<CreateLobbyCallbackInfo>();
-            LobbyInterface.CreateLobby(ref createOptions, null, (ref CreateLobbyCallbackInfo data) =>
+            // If creation failed with voice enabled, retry without voice (RTC may not be available on this platform)
+            if (createResult.ResultCode != Result.Success && enableVoice)
             {
-                tcs.SetResult(data);
-            });
-
-            var result = await tcs.Task;
-
-            if (result.ResultCode != Result.Success)
-            {
-                Debug.LogError($"[EOSLobbyManager] Failed to create lobby: {result.ResultCode}");
-                return (result.ResultCode, default);
+                Debug.LogWarning($"[EOSLobbyManager] Lobby creation failed with voice enabled ({createResult.ResultCode}). Retrying without voice...");
+                enableVoice = false;
+                createResult = await CreateLobbyInternal(options, enableVoice, allowedPlatforms);
             }
 
-            string lobbyId = result.LobbyId;
+            if (createResult.ResultCode != Result.Success)
+            {
+                Debug.LogError($"[EOSLobbyManager] Failed to create lobby: {createResult.ResultCode}");
+                return (createResult.ResultCode, default);
+            }
+
+            string lobbyId = createResult.LobbyId;
             EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", $" Lobby created: {lobbyId}");
 
             // Set the join code attribute
@@ -298,7 +280,7 @@ namespace EOSNative.Lobbies
             SubscribeToNotifications(lobbyId);
 
             // Notify voice manager if voice is enabled
-            if (options.EnableVoice)
+            if (enableVoice)
             {
                 EOSVoiceManager.Instance?.OnLobbyCreated(lobbyId);
             }
@@ -307,6 +289,42 @@ namespace EOSNative.Lobbies
             OnLobbyJoined?.Invoke(CurrentLobby);
 
             return (Result.Success, CurrentLobby);
+        }
+
+        private async Task<CreateLobbyCallbackInfo> CreateLobbyInternal(LobbyCreateOptions options, bool enableVoice, uint[] allowedPlatforms)
+        {
+            var createOptions = new CreateLobbyOptions
+            {
+                LocalUserId = LocalProductUserId,
+                MaxLobbyMembers = options.MaxPlayers,
+                PermissionLevel = options.IsPublic ? LobbyPermissionLevel.Publicadvertised : LobbyPermissionLevel.Joinviapresence,
+                BucketId = options.BucketId,
+                EnableJoinById = true,
+                AllowInvites = false,
+                RejoinAfterKickRequiresInvite = false,
+                EnableRTCRoom = enableVoice,
+                LocalRTCOptions = enableVoice ? new LocalRTCOptions
+                {
+                    UseManualAudioOutput = true
+                } : null,
+                PresenceEnabled = false,
+                DisableHostMigration = !options.AllowHostMigration,
+                AllowedPlatformIds = allowedPlatforms,
+                CrossplayOptOut = !options.AllowCrossplay
+            };
+
+            EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager",
+                $"CreateLobby: MaxMembers={options.MaxPlayers}, BucketId={options.BucketId}, " +
+                $"Voice={enableVoice}, Public={options.IsPublic}, Migration={options.AllowHostMigration}, " +
+                $"Crossplay={options.AllowCrossplay}, PUID={LocalProductUserId}");
+
+            var tcs = new TaskCompletionSource<CreateLobbyCallbackInfo>();
+            LobbyInterface.CreateLobby(ref createOptions, null, (ref CreateLobbyCallbackInfo data) =>
+            {
+                tcs.SetResult(data);
+            });
+
+            return await tcs.Task;
         }
 
         #endregion

@@ -72,6 +72,32 @@ namespace EOSNative.Net
         /// <summary>All active NetworkObjects, keyed by NetworkId.</summary>
         public IReadOnlyDictionary<uint, NetworkObject> Objects => _objects;
 
+        /// <summary>
+        /// Optional RPC validation callback. If set, called before executing any incoming remote RPC.
+        /// Return true to allow, false to reject. Null = all RPCs allowed (default, zero overhead).
+        /// Parameters: (sender ProductUserId, target NetworkObject, methodHash uint) → bool.
+        /// </summary>
+        public Func<ProductUserId, NetworkObject, uint, bool> OnRPCValidation;
+
+        /// <summary>Enable/disable Deflate compression for message payloads above threshold.</summary>
+        public bool CompressionEnabled
+        {
+            get => Router.CompressionEnabled;
+            set => Router.CompressionEnabled = value;
+        }
+
+        /// <summary>
+        /// Set to true before joining a lobby to join as a read-only spectator.
+        /// Spectators receive all state but cannot spawn objects or become host.
+        /// </summary>
+        public bool IsSpectator { get; set; }
+
+        /// <summary>Check if a specific peer is a spectator.</summary>
+        public bool IsPeerSpectator(ProductUserId puid)
+        {
+            return puid != null && _spectators.Contains(puid);
+        }
+
         /// <summary>The shared room state object. Null until host creates it (after first peer connects).</summary>
         public NetworkRoomState RoomState { get; private set; }
 
@@ -118,6 +144,12 @@ namespace EOSNative.Net
         /// </summary>
         public NetworkObject Spawn(ushort prefabId, Vector3 position, Quaternion rotation)
         {
+            if (IsSpectator)
+            {
+                Debug.LogWarning("[NetworkManager] Spectators cannot spawn objects");
+                return null;
+            }
+
             var prefab = GetPrefab(prefabId);
             if (prefab == null)
             {
@@ -251,6 +283,10 @@ namespace EOSNative.Net
                     if (target.IsOwner) executeLocal = true;
                     else sendRemote = true;
                     break;
+                case RPCTarget.Players:
+                    executeLocal = !IsSpectator;
+                    sendRemote = true;
+                    break;
             }
 
             // Build the arg payload once (shared by local and remote)
@@ -300,6 +336,9 @@ namespace EOSNative.Net
                     case RPCTarget.Owner:
                         if (!target.IsOwner && target.OwnerId != null)
                             Router.SendToPeer(MSG_RPC, writer, target.OwnerId, PacketReliability.ReliableOrdered, 1);
+                        break;
+                    case RPCTarget.Players:
+                        SendToNonSpectators(MSG_RPC, writer);
                         break;
                 }
 
@@ -500,6 +539,10 @@ namespace EOSNative.Net
                     if (target.IsOwner) executeLocal = true;
                     else sendRemote = true;
                     break;
+                case RPCTarget.Players:
+                    executeLocal = !IsSpectator;
+                    sendRemote = true;
+                    break;
             }
 
             if (executeLocal)
@@ -529,6 +572,9 @@ namespace EOSNative.Net
                     case RPCTarget.Owner:
                         if (!target.IsOwner && target.OwnerId != null)
                             Router.SendToPeer(MSG_RPC, writer, target.OwnerId, PacketReliability.ReliableOrdered, 1);
+                        break;
+                    case RPCTarget.Players:
+                        SendToNonSpectators(MSG_RPC, writer);
                         break;
                 }
 
@@ -575,6 +621,15 @@ namespace EOSNative.Net
             }
         }
 
+        /// <summary>
+        /// Convenience: sets OnRPCValidation to only allow RPCs from the object's owner.
+        /// Rejects any RPC where the sender is not the target object's OwnerId.
+        /// </summary>
+        public void EnableOwnerOnlyRPCValidation()
+        {
+            OnRPCValidation = (sender, target, hash) => target != null && target.OwnerId == sender;
+        }
+
         #endregion
 
         #region Private Fields
@@ -585,6 +640,7 @@ namespace EOSNative.Net
         private readonly Dictionary<RPCKey, string> _rpcMethodNames = new();
         private readonly List<RPCKey> _rpcKeysToRemove = new();
         private readonly Dictionary<ProductUserId, NetworkPlayerState> _playerStates = new();
+        private readonly HashSet<ProductUserId> _spectators = new();
 
         private ushort _localIdCounter;
         private ushort _localIdPrefix;
@@ -1195,6 +1251,17 @@ namespace EOSNative.Net
             // Args are left in the reader for the handler to consume
             // (argCount + typeId + value pairs)
 
+            // Validate incoming RPC if callback is set
+            if (OnRPCValidation != null)
+            {
+                _objects.TryGetValue(networkId, out var targetObj);
+                if (!OnRPCValidation(sender, targetObj, methodHash))
+                {
+                    Debug.LogWarning($"[NetworkManager] RPC rejected: sender={sender}, object={networkId}, hash=0x{methodHash:X8}");
+                    return;
+                }
+            }
+
             var key = new RPCKey { NetworkId = networkId, MethodHash = methodHash };
             if (_rpcHandlers.TryGetValue(key, out var handler))
             {
@@ -1236,16 +1303,33 @@ namespace EOSNative.Net
             if (localPuid == null) return;
 
             string localStr = localPuid.ToString();
-            string lowestStr = localStr;
+            string lowestStr = IsSpectator ? null : localStr;
 
             var peers = EOSP2PManager.Instance?.Peers;
             if (peers != null)
             {
                 foreach (var peer in peers)
                 {
+                    if (_spectators.Contains(peer)) continue;
                     string peerStr = peer.ToString();
-                    if (string.Compare(peerStr, lowestStr, StringComparison.Ordinal) < 0)
+                    if (lowestStr == null || string.Compare(peerStr, lowestStr, StringComparison.Ordinal) < 0)
                         lowestStr = peerStr;
+                }
+            }
+
+            // If all peers are spectators, fall back to lowest PUID anyway (with warning)
+            if (lowestStr == null)
+            {
+                Debug.LogWarning("[NetworkManager] All peers are spectators — lowest PUID becomes host");
+                lowestStr = localStr;
+                if (peers != null)
+                {
+                    foreach (var peer in peers)
+                    {
+                        string peerStr = peer.ToString();
+                        if (string.Compare(peerStr, lowestStr, StringComparison.Ordinal) < 0)
+                            lowestStr = peerStr;
+                    }
                 }
             }
 
@@ -1273,19 +1357,39 @@ namespace EOSNative.Net
             var localPuid = EOSManager.Instance?.LocalProductUserId;
             if (localPuid == null) return null;
 
-            string lowestStr = localPuid.ToString();
-            ProductUserId lowestPuid = localPuid;
+            string lowestStr = IsSpectator ? null : localPuid.ToString();
+            ProductUserId lowestPuid = IsSpectator ? null : localPuid;
 
             var peers = EOSP2PManager.Instance?.Peers;
             if (peers != null)
             {
                 foreach (var peer in peers)
                 {
+                    if (_spectators.Contains(peer)) continue;
                     string peerStr = peer.ToString();
-                    if (string.Compare(peerStr, lowestStr, StringComparison.Ordinal) < 0)
+                    if (lowestStr == null || string.Compare(peerStr, lowestStr, StringComparison.Ordinal) < 0)
                     {
                         lowestStr = peerStr;
                         lowestPuid = peer;
+                    }
+                }
+            }
+
+            // Fallback: if all spectators, return lowest PUID anyway
+            if (lowestPuid == null)
+            {
+                lowestStr = localPuid.ToString();
+                lowestPuid = localPuid;
+                if (peers != null)
+                {
+                    foreach (var peer in peers)
+                    {
+                        string peerStr = peer.ToString();
+                        if (string.Compare(peerStr, lowestStr, StringComparison.Ordinal) < 0)
+                        {
+                            lowestStr = peerStr;
+                            lowestPuid = peer;
+                        }
                     }
                 }
             }
@@ -1395,6 +1499,10 @@ namespace EOSNative.Net
                     case RPCTarget.Others:
                         sendRemote = true;
                         break;
+                    case RPCTarget.Players:
+                        executeLocal = !IsSpectator;
+                        sendRemote = true;
+                        break;
                 }
 
                 if (executeLocal)
@@ -1421,6 +1529,9 @@ namespace EOSNative.Net
                         case RPCTarget.Owner:
                             if (buffered.Target.OwnerId != null)
                                 Router.SendToPeer(MSG_RPC, writer, buffered.Target.OwnerId, PacketReliability.ReliableOrdered, 1);
+                            break;
+                        case RPCTarget.Players:
+                            SendToNonSpectators(MSG_RPC, writer);
                             break;
                     }
 
@@ -1615,6 +1726,10 @@ namespace EOSNative.Net
                 if (ownerId != null)
                     _playerStates[ownerId] = playerState;
 
+                // Track spectator status from custom data
+                if (ownerId != null && playerState.GetCustomBool("_spectator"))
+                    _spectators.Add(ownerId);
+
                 // Check if this is our own player state
                 var localPuid = EOSManager.Instance?.LocalProductUserId;
                 if (localPuid != null && ownerId == localPuid)
@@ -1695,6 +1810,10 @@ namespace EOSNative.Net
             // Initialize display name from registry
             playerState.AutoInitDisplayName();
 
+            // Mark as spectator if local peer is spectating
+            if (IsSpectator)
+                playerState.SetCustom("_spectator", "1");
+
             // Broadcast spawn to all peers
             BroadcastSpawn(netObj);
 
@@ -1711,6 +1830,7 @@ namespace EOSNative.Net
             if (_playerStates.TryGetValue(disconnectedPeer, out var ps))
             {
                 _playerStates.Remove(disconnectedPeer);
+                _spectators.Remove(disconnectedPeer);
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
                     $"PlayerState removed for disconnected peer {disconnectedPeer}");
             }
@@ -1719,6 +1839,18 @@ namespace EOSNative.Net
         #endregion
 
         #region Utilities
+
+        /// <summary>Send a message to all non-spectator peers via Router.</summary>
+        private void SendToNonSpectators(byte msgId, NetWriter writer)
+        {
+            var peers = EOSP2PManager.Instance?.Peers;
+            if (peers == null) return;
+            foreach (var peer in peers)
+            {
+                if (!_spectators.Contains(peer))
+                    Router.SendToPeer(msgId, writer, peer, PacketReliability.ReliableOrdered, 1);
+            }
+        }
 
         /// <summary>FNV-1a hash of a string. Used for method name hashing in RPCs.</summary>
         public static uint FnvHash(string str)
@@ -1823,5 +1955,8 @@ namespace EOSNative.Net
 
         /// <summary>Send to the object's owner only.</summary>
         Owner,
+
+        /// <summary>Send to all non-spectator peers (including self if not spectator).</summary>
+        Players = 4,
     }
 }

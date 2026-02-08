@@ -834,7 +834,8 @@ namespace EOSNative.Voice
                 _participantStatusHandle = new NotifyEventHandle(statusHandle, h => RTC?.RemoveNotifyParticipantStatusChanged(h));
             }
 
-            EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", "Registered for audio notifications");
+            Debug.Log($"[EOSVoice] Registered audio notifications for room '{CurrentRoomName}' " +
+                $"(audioHandle={audioHandle}, participantHandle={participantHandle})");
         }
 
         private void OnAudioBeforeRender(ref AudioBeforeRenderCallbackInfo data)
@@ -877,6 +878,11 @@ namespace EOSNative.Voice
             }
 
             string puid = data.ParticipantId.ToString();
+
+            // Diagnostic: log participant updates (helps debug Android "all silent" issue)
+            string shortPuid = puid.Length > 8 ? puid.Substring(0, 8) + ".." : puid;
+            Debug.Log($"[EOSVoice] ParticipantUpdated: {shortPuid} Speaking={data.Speaking} AudioStatus={data.AudioStatus}");
+
             bool wasSpeaking = _speakingState.TryGetValue(puid, out var prev) && prev;
             bool isSpeaking = data.Speaking;
 
@@ -908,6 +914,10 @@ namespace EOSNative.Voice
             }
 
             string puid = data.ParticipantId.ToString();
+
+            // Diagnostic: log participant status changes
+            string shortPuid = puid.Length > 8 ? puid.Substring(0, 8) + ".." : puid;
+            Debug.Log($"[EOSVoice] ParticipantStatusChanged: {shortPuid} Status={data.ParticipantStatus}");
 
             switch (data.ParticipantStatus)
             {

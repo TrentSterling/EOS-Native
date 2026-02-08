@@ -156,11 +156,12 @@ namespace EOSNative.Demo
             _sceneGenerated = true;
 
             // Ground plane
-            var ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            var ground = CreatePrimitiveSafe(PrimitiveType.Cube);
             ground.name = "Ground";
             ground.transform.position = new Vector3(0f, -0.5f, 0f);
             ground.transform.localScale = new Vector3(30f, 1f, 30f);
             ground.GetComponent<Renderer>().material.color = new Color(0.3f, 0.4f, 0.3f);
+            TryAddCollider(ground, PrimitiveType.Cube);
 
             // Crate obstacles
             var cratePositions = new Vector3[]
@@ -177,14 +178,14 @@ namespace EOSNative.Demo
 
             foreach (var pos in cratePositions)
             {
-                var crate = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                var crate = CreatePrimitiveSafe(PrimitiveType.Cube);
                 crate.name = "Crate";
                 crate.transform.position = pos;
                 crate.transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
                 crate.GetComponent<Renderer>().material.color = new Color(0.6f, 0.45f, 0.25f);
 
-                var rb = crate.AddComponent<Rigidbody>();
-                rb.mass = 3f;
+                TryAddCollider(crate, PrimitiveType.Cube);
+                TryAddRigidbody(crate, 3f);
             }
 
             // Wall borders
@@ -212,11 +213,59 @@ namespace EOSNative.Demo
 
         private void CreateWall(string name, Vector3 pos, Vector3 scale)
         {
-            var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            var wall = CreatePrimitiveSafe(PrimitiveType.Cube);
             wall.name = name;
             wall.transform.position = pos;
             wall.transform.localScale = scale;
             wall.GetComponent<Renderer>().material.color = new Color(0.5f, 0.5f, 0.5f);
+            TryAddCollider(wall, PrimitiveType.Cube);
+        }
+
+        /// <summary>
+        /// Creates a primitive with only MeshFilter + MeshRenderer (no auto-collider).
+        /// On Android without 3D Physics, CreatePrimitive fails because BoxCollider/SphereCollider
+        /// classes get stripped. This avoids that by removing the auto-added collider immediately.
+        /// </summary>
+        private static GameObject CreatePrimitiveSafe(PrimitiveType type)
+        {
+            var go = GameObject.CreatePrimitive(type);
+            // Immediately destroy the auto-added collider — it may cause errors on stripped builds
+            var col = go.GetComponent<Collider>();
+            if (col != null) DestroyImmediate(col);
+            return go;
+        }
+
+        /// <summary>Try to add a collider. Silently fails on platforms where 3D Physics is stripped.</summary>
+        private static void TryAddCollider(GameObject go, PrimitiveType type)
+        {
+            try
+            {
+                switch (type)
+                {
+                    case PrimitiveType.Sphere:
+                        go.AddComponent<SphereCollider>();
+                        break;
+                    case PrimitiveType.Capsule:
+                        go.AddComponent<CapsuleCollider>();
+                        break;
+                    default:
+                        go.AddComponent<BoxCollider>();
+                        break;
+                }
+            }
+            catch { /* 3D Physics stripped — colliders unavailable */ }
+        }
+
+        /// <summary>Try to add a Rigidbody. Silently fails on platforms where 3D Physics is stripped.</summary>
+        private static Rigidbody TryAddRigidbody(GameObject go, float mass = 1f)
+        {
+            try
+            {
+                var rb = go.AddComponent<Rigidbody>();
+                rb.mass = mass;
+                return rb;
+            }
+            catch { return null; }
         }
 
         #endregion
@@ -288,14 +337,14 @@ namespace EOSNative.Demo
 
         private GameObject CreateBall(string name, bool isLocal, ProductUserId ownerPuid = null)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            var go = CreatePrimitiveSafe(PrimitiveType.Sphere);
             go.name = name;
             go.transform.position = new Vector3(0f, 1f, 0f);
 
+            TryAddCollider(go, PrimitiveType.Sphere);
             var rb = go.GetComponent<Rigidbody>();
-            if (rb == null) rb = go.AddComponent<Rigidbody>();
-            rb.mass = 1f;
-            rb.angularDamping = 0.5f;
+            if (rb == null) rb = TryAddRigidbody(go, 1f);
+            if (rb != null) rb.angularDamping = 0.5f;
 
             var playerBall = go.AddComponent<P2PPlayerBall>();
             playerBall.IsLocal = isLocal;
