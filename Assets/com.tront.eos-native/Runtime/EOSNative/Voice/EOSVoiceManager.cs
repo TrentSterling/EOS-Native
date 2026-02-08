@@ -205,8 +205,17 @@ namespace EOSNative.Voice
                 return;
             }
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+            // On Android, Unity Microphone competes with EOS SDK's AudioRecord.
+            // Use EOS bSpeaking callback as a proxy for mic activity instead.
+            var localPuid = LocalUserId?.ToString();
+            bool speaking = localPuid != null && IsSpeaking(localPuid);
+            float target = speaking ? 0.7f : 0f;
+            LocalMicLevel = Mathf.MoveTowards(LocalMicLevel, target, 4f * Time.deltaTime);
+#else
             StartMicCapture();
             LocalMicLevel = SampleMicLevel();
+#endif
         }
 
         private void StartMicCapture()

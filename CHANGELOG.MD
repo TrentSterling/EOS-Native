@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.15.9] - 2026-02-08
+
+### Fixed
+- **Android mic level indicator restored** - Uses EOS `bSpeaking` participant callback as proxy for mic activity instead of Unity `Microphone` API. Smoothly animates the level bar up/down based on EOS voice activity detection. Not as granular as RMS sampling but works without competing with EOS SDK's `AudioRecord`. Desktop/Editor still uses Unity Microphone for full RMS levels.
+
 ## [2.15.8] - 2026-02-08
 
 ### Fixed
