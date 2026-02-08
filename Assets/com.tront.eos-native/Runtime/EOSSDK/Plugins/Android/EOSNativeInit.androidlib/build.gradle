@@ -2,12 +2,10 @@ apply plugin: 'com.android.library'
 
 android {
     namespace 'com.tront.eosnative'
-    compileSdkVersion 33
-    buildToolsVersion '30.0.3'
+    compileSdk 35
 
     defaultConfig {
-        minSdkVersion 23
-        targetSdkVersion 33
+        minSdk 23
     }
 
     compileOptions {
@@ -17,8 +15,5 @@ android {
 }
 
 dependencies {
-    // The EOS SDK AAR is added to the project by Unity as a separate dependency.
-    // We need it at compile time to reference com.epicgames.mobile.eossdk.EOSSDK.
-    // Search common locations Unity places AAR files in the generated Gradle project.
     compileOnly fileTree(dir: project.rootDir, include: ['**/eossdk*.aar'])
 }
