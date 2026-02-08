@@ -61,6 +61,47 @@ Press **F1** to toggle the main debug overlay with six tabs:
 - Category selection (Cheating, Exploiting, Offensive, Verbal Abuse, Spamming, etc.)
 - Send report with status feedback
 
+## Runtime Console
+
+A Canvas-based runtime console (`EOSNativeConsole.cs`) that captures `Application.logMessageReceived` output. Works on Android/iOS where the built-in development console is hard to read.
+
+**File:** `Runtime/EOSNative/UI/EOSNativeConsole.cs`
+
+### Toggle
+
+- **Desktop/Editor:** Bottom-left corner button with error count badge
+- **Mobile:** 3-finger tap
+
+### Features
+
+| Feature | Details |
+|---------|---------|
+| Filter buttons | Log, Warning, Error -- each with running count |
+| Collapse | Duplicate messages collapsed with count |
+| Clear | Clears all entries |
+| Color-coded | White (log), yellow (warning), red (error) |
+| Max entries | 200 stored, 60 visible lines |
+| Sorting order | 10000 (renders above Canvas UI at 9999) |
+| Panel position | Bottom half of screen |
+
+### Early Init
+
+The console is created in `EOSManager.Awake()` before `LoadNativeLibrary()` and `LoadAndroidLibrary()`. This ensures that any errors during SDK initialization are captured and visible in the runtime console.
+
+### Text Rendering
+
+Uses a simple `Text` component with `VerticalWrapMode.Truncate` instead of `ScrollRect`/`RectMask2D`/`ContentSizeFitter`. This eliminates text flickering on window resize caused by circular layout dependencies. Newest entries appear at the top; overflow is truncated at the bottom.
+
+### Enabling
+
+The runtime console is controlled by the `_showConsole` bool on EOSManager, independent of the `OverlayUIMode` setting. It can run alongside both the F1 overlay and the Canvas UI.
+
+## Canvas UI
+
+The Canvas UI (`EOSNativeCanvasUI.cs`) is a full-featured runtime UI built with `UnityEngine.UI` for platforms where OnGUI may not render (Android, iOS). It provides the same six tabs as the F1 overlay -- Status, Lobbies, Voice, Social, Stats, Tools -- plus Player Profile and Report popups.
+
+See the full [Canvas UI documentation](canvas-ui.md) for details on tabs, popups, overlay modes, and customization.
+
 ## Logging
 
 ### Using the Logger

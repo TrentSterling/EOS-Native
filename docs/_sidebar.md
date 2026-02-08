@@ -7,8 +7,17 @@
 * **Core Features**
   * [Lobbies](lobbies.md)
   * [Voice Chat](voice.md)
+  * [Spatial Voice](voice-zones.md)
   * [Text Chat](chat.md)
   * [Authentication](auth.md)
+
+* **Networking**
+  * [Networking Overview](networking.md)
+  * [P2P Transport](p2p-transport.md)
+  * [Typed RPCs ([NetRpc])](rpc-system.md)
+  * [Connection Statistics](connection-stats.md)
+  * [Spectator & RPC Validation](spectator.md)
+  * [P2P Ball Demo](p2p-demo.md)
 
 * **Social**
   * [Friends System](friends.md)
@@ -49,6 +58,7 @@
 * **Reference**
   * [EOS Service Limits](eos-limits.md)
   * [Android Build Guide](android.md)
+  * [Canvas UI](canvas-ui.md)
   * [Debug Tools](debug.md)
   * [Troubleshooting](troubleshooting.md)
 

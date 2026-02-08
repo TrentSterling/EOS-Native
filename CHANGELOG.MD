@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.17.4] - 2026-02-08
+
+### Added
+- **Auto-recovery on app resume** - When the Android app returns from background (screen off, task switch), EOS Connect login is often lost. EOSManager now automatically detects the lost login on resume, re-authenticates via `LoginSmartAsync()`, and attempts to rejoin the previous lobby. Recovery also triggers from `OnLoginStatusChanged` (auth token expiration while foregrounded). Logs all recovery steps to the console for visibility.
+
 ## [2.17.3] - 2026-02-08
 
 ### Fixed

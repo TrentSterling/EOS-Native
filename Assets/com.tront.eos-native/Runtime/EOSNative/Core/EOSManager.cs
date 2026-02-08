@@ -138,6 +138,11 @@ namespace EOSNative
         private ulong _authExpirationHandle;
         private ulong _loginStatusChangedHandle;
 
+        // Auto-recovery after app resume (screen off, backgrounded)
+        private bool _isRecovering;
+        private bool _wasLoggedInBeforePause;
+        private string _lobbyIdBeforePause;
+
         // Tracks if SDK initialization failed in a way that requires Unity restart
         private static bool s_sdkCorrupted;
 
@@ -589,13 +594,16 @@ namespace EOSNative
 
             if (pauseStatus)
             {
-                // App is being suspended/backgrounded
+                // App is being suspended/backgrounded — cache state for recovery
+                _wasLoggedInBeforePause = IsLoggedIn;
+                _lobbyIdBeforePause = Lobbies.EOSLobbyManager.Instance?.CurrentLobby.LobbyId;
                 SetApplicationStatus(ApplicationStatus.BackgroundSuspended);
             }
             else
             {
                 // App is being resumed/foregrounded
                 SetApplicationStatus(ApplicationStatus.Foreground);
+                TryAutoRecover();
             }
         }
 
@@ -607,7 +615,80 @@ namespace EOSNative
             if (hasFocus)
             {
                 SetApplicationStatus(ApplicationStatus.Foreground);
+                TryAutoRecover();
             }
+        }
+
+        /// <summary>
+        /// Detects if login was lost after app resume and automatically re-logs in
+        /// and rejoins the previous lobby if possible.
+        /// </summary>
+        private async void TryAutoRecover()
+        {
+            if (_isRecovering) return;
+            if (!IsInitialized) return;
+            if (IsLoggedIn) return; // still logged in, nothing to recover
+            if (!_wasLoggedInBeforePause) return; // wasn't logged in before, nothing to restore
+
+            _isRecovering = true;
+            string cachedLobbyId = _lobbyIdBeforePause;
+
+            Debug.Log("[EOS-Native] App resumed — login lost, attempting auto-recovery...");
+
+            // Small delay to let SDK stabilize after resume
+            await Task.Delay(500);
+
+            if (!IsInitialized || IsLoggedIn)
+            {
+                _isRecovering = false;
+                return;
+            }
+
+            // Re-login
+            string name = !string.IsNullOrEmpty(_displayName) ? _displayName
+                : (_config != null && !string.IsNullOrEmpty(_config.DefaultDisplayName) ? _config.DefaultDisplayName : "Player");
+
+            var loginResult = await LoginSmartAsync(name);
+
+            if (loginResult != Result.Success)
+            {
+                Debug.LogWarning($"[EOS-Native] Auto-recovery login failed: {loginResult}");
+                _isRecovering = false;
+                return;
+            }
+
+            Debug.Log($"[EOS-Native] Auto-recovery login succeeded. PUID: {LocalProductUserId}");
+
+            // Try to rejoin the lobby we were in
+            if (!string.IsNullOrEmpty(cachedLobbyId))
+            {
+                Debug.Log($"[EOS-Native] Attempting to rejoin lobby: {cachedLobbyId}");
+
+                try
+                {
+                    var lobbyMgr = Lobbies.EOSLobbyManager.Instance;
+                    if (lobbyMgr != null && !lobbyMgr.IsInLobby)
+                    {
+                        var (joinResult, lobby) = await lobbyMgr.JoinLobbyByIdAsync(cachedLobbyId);
+                        if (joinResult == Result.Success)
+                        {
+                            Debug.Log($"[EOS-Native] Auto-recovery rejoined lobby: {lobby.JoinCode ?? cachedLobbyId}");
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"[EOS-Native] Auto-recovery lobby rejoin failed: {joinResult} (lobby may have closed)");
+                        }
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning($"[EOS-Native] Auto-recovery lobby rejoin error: {ex.Message}");
+                }
+            }
+
+            _isRecovering = false;
+            _wasLoggedInBeforePause = false;
+            _lobbyIdBeforePause = null;
         }
 
         private void OnApplicationQuit()
@@ -1106,6 +1187,11 @@ namespace EOSNative
 
             if (data.CurrentStatus == LoginStatus.NotLoggedIn && IsLoggedIn)
             {
+                // Cache lobby state before clearing login — used by auto-recovery
+                if (string.IsNullOrEmpty(_lobbyIdBeforePause))
+                    _lobbyIdBeforePause = Lobbies.EOSLobbyManager.Instance?.CurrentLobby.LobbyId;
+                _wasLoggedInBeforePause = true;
+
                 IsLoggedIn = false;
                 LocalProductUserId = null;
                 OnLogout?.Invoke();

@@ -25,7 +25,9 @@ Complete setup guide for EOS Native.
 
 ### Opening the Setup Wizard
 
-`Tools > EOS Native > Setup Wizard`
+`EOS Native > Setup Wizard` in the Unity Editor menu bar.
+
+The Setup Wizard is a three-tab editor window that handles configuration, dependencies, and project info. See the [Setup Wizard](#setup-wizard) section below for full details on each tab.
 
 ### Getting Credentials from EOS Portal
 
@@ -151,3 +153,59 @@ Add `EOS_DISABLE` to Scripting Define Symbols to strip EOS from compilation enti
 **Cause:** XAudio2 DLL not found at expected path.
 
 **Fix:** The DLL should be at `Runtime/EOSSDK/Plugins/Windows/x64/xaudio2_9redist.dll`. The path resolver searches multiple locations automatically.
+
+## Setup Wizard
+
+Accessible via **EOS Native > Setup Wizard** in the Unity Editor menu bar. The wizard is implemented in `EOSSetupWizard.cs` (in `EOSNative.Editor/`) and provides three tabs: Setup, Dependencies, and About.
+
+### Setup Tab
+
+The Setup tab walks you through configuring your EOS credentials.
+
+**Config ScriptableObject:** At the top, select an existing `EOSConfig` asset or create a new one. The config stores all your EOS credentials and is referenced by the EOSManager component at runtime.
+
+**4-Step Configuration Guide:**
+
+| Step | Fields |
+|------|--------|
+| 1. Product Info | Product Name |
+| 2. Product IDs | Product ID, Sandbox ID, Deployment ID |
+| 3. Client Credentials | Client ID, Client Secret |
+| 4. Encryption Key | 64 hex characters (auto-generate button available) |
+
+All values come from the [EOS Developer Portal](https://dev.epicgames.com/portal) under your product's settings.
+
+**Validation:** A quick-check button validates that all required fields are populated and that the encryption key is exactly 64 hexadecimal characters. Invalid fields are highlighted so you can fix them before entering Play Mode.
+
+### Dependencies Tab
+
+The Dependencies tab shows the status of optional packages and helps you install or remove them without leaving the editor.
+
+**ParrelSync:**
+- Shows whether ParrelSync is currently installed
+- **Install** button adds ParrelSync via its git URL (`https://github.com/VeriorPies/ParrelSync.git?path=/ParrelSync`)
+- **Remove** button removes it from the project
+- **Open GitHub** button opens the ParrelSync repository in your browser
+- Installation and removal edit `Packages/manifest.json` directly and call `Client.Resolve()` to apply changes
+
+**Input System:**
+- Shows whether Unity's new Input System package is installed
+- EOS Native supports both the legacy Input Manager and the new Input System
+
+**uGUI (UnityEngine.UI):**
+- Shows whether the Unity UI package is available
+- Required for the Canvas UI overlay (`EOSNativeCanvasUI`)
+
+### About Tab
+
+The About tab displays project information and useful links.
+
+| Item | Details |
+|------|---------|
+| Package Version | Read from `package.json` at runtime |
+| SDK Version | 1.18.1.2 (Epic Online Services C# SDK) |
+| Description | Brief summary of what EOS Native provides |
+| Links | Documentation site, GitHub repository, Epic Developer Portal, EOS SDK documentation |
+| Feature List | 14 features including lobbies, voice, chat, friends, parties, stats, achievements, leaderboards, replays, anti-cheat, cloud storage, and more |
+| Platform Table | 7 supported platforms: Windows x64, Windows x86, macOS, Linux x64, Linux ARM64, iOS, Android |
+| Credits | Attribution and acknowledgments |

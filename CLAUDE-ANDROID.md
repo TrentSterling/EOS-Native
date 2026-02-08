@@ -51,6 +51,17 @@ For RTC/Voice to work on Android, **four things** must be in place:
 
 4. **Unity `Microphone.Start()` must NOT run on Android** — The EOS SDK opens its own `AudioRecord` for voice transmission. On Android < 10, only one `AudioRecord` can exist. On Android 10+, concurrent capture has priority rules that may silence one client. `EOSVoiceManager.StartMicCapture()` is disabled on Android to avoid this conflict. The mic level bar shows 0% on Android, but EOS voice works correctly.
 
+### Auto-Recovery on App Resume
+
+When Android suspends the app (screen off, task switch), EOS Connect auth tokens expire after a few minutes. On resume, the SDK is still initialized (platform exists, interfaces are valid) but the user is no longer logged in. `EOSManager.TryAutoRecover()` handles this transparently:
+
+1. **On pause:** Caches `IsLoggedIn` state and `CurrentLobby.LobbyId`
+2. **On resume:** If `IsInitialized && !IsLoggedIn && _wasLoggedInBeforePause`, waits 500ms for SDK to stabilize, then calls `LoginSmartAsync()` to re-authenticate
+3. **After login:** If a lobby ID was cached, attempts `JoinLobbyByIdAsync()` to rejoin. P2P connections and voice recover automatically via existing handshake retry and voice auto-connect mechanisms
+4. **Auth expiration while foregrounded:** `OnLoginStatusChanged` also sets the recovery flags, so `TryAutoRecover()` fires on the next focus/pause cycle even if the app wasn't backgrounded
+
+The `_isRecovering` flag prevents double-fire since both `OnApplicationPause(false)` and `OnApplicationFocus(true)` fire on Android resume. All recovery steps are logged to the console for visibility.
+
 ### Android SDK Initialization
 
 On Android, `PlatformInterface.Initialize()` MUST use `AndroidInitializeOptions` (not generic `InitializeOptions`). The Android-specific struct includes a `Reserved` field set to `{1, 1}` and `SystemInitializeOptions` for Android file paths. Using the generic struct causes RTC/Audio subsystems to not initialize. The SDK generates both overloads in `Source/Generated/Android/Platform/PlatformInterface.cs`.

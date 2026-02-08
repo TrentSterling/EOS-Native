@@ -2,6 +2,8 @@
 
 Built-in voice communication using EOS Real-Time Communication (RTC).
 
+> For spatial/3D voice with distance-based falloff, team isolation, and trigger zones, see [Spatial Voice](voice-zones.md).
+
 ## Overview
 
 Voice chat is lobby-based. When players join a lobby with voice enabled, the RTC channel connects automatically. Voice persists through host migration.
@@ -110,6 +112,88 @@ voice.OnAudioFrameReceived += (puid, frames) => { };  // Audio thread!
 voice.OnParticipantAudioStatusChanged += (puid, status) => { };
 voice.OnAudioDevicesChanged += () => { };  // Device hotplug
 ```
+
+## Local Microphone Level
+
+Monitor the local player's mic level for UI meters:
+
+```csharp
+var voice = EOSVoiceManager.Instance;
+
+// Real-time mic level (0.0 - 1.0)
+float level = voice.LocalMicLevel;
+```
+
+The mic level is calculated from the RMS of 256 audio samples, scaled by 8x for visual responsiveness. Capture starts automatically when voice is connected and unmuted, and stops on disconnect or mute.
+
+Both the F1 overlay and Canvas UI use this for their mic level bars.
+
+> **Android note:** `LocalMicLevel` always returns 0 on Android. The Unity `Microphone` API is disabled on Android to avoid conflicting with the EOS SDK's own `AudioRecord` capture. See [Android Voice Notes](#android-voice-notes) for details.
+
+## Voice Diagnostics
+
+Properties for diagnosing voice issues, especially on Android:
+
+```csharp
+var voice = EOSVoiceManager.Instance;
+
+// Local user's audio status from the SDK
+RTCAudioStatus status = voice.LocalAudioStatus;
+// Possible values: Disabled, Enabled, Unsupported, NotSupported
+
+// Result of the last mute/unmute call
+Result result = voice.LastUpdateSendingResult;
+
+// Whether device enumeration has completed
+bool queried = voice.AudioDevicesQueried;
+```
+
+**`LocalAudioStatus` values:**
+- `Enabled` -- Audio pipeline is working. Mic is active.
+- `Disabled` -- Audio is available but currently muted.
+- `Unsupported` (value 0) -- No audio devices found, or the audio pipeline did not initialize. This is the default integer value, so it also appears when the SDK has not reported any status yet.
+
+**Auto-unmute:** When the RTC room connects, `LogVoiceDiagnostics()` is called automatically. It attempts to unmute the local player and logs the SDK result. If `UpdateSending` returns an error, check `LastUpdateSendingResult` for the specific failure code.
+
+**F1 overlay:** The Voice tab includes a "Voice Diagnostics" foldout showing RTC/RTCAudio interface availability, `LocalAudioStatus`, `LastUpdateSendingResult`, and device counts.
+
+## Manual Audio Playback
+
+By default, the EOS SDK auto-plays received voice through the system audio device. For spatial 3D voice, you need manual mode so that `EOSVoicePlayer` components render audio through Unity `AudioSource` objects positioned in the scene.
+
+```csharp
+// Set BEFORE creating or joining a lobby
+EOSVoiceManager.Instance.UseManualAudioOutput = true;
+```
+
+| Value | Behavior |
+|-------|----------|
+| `false` (default) | SDK handles playback automatically. No `EOSVoicePlayer` needed. |
+| `true` | SDK delivers frames via `OnAudioFrameReceived`. Requires `EOSVoicePlayer` or `NetworkVoicePlayer` with `AudioSource` for playback. |
+
+Both the lobby create and join paths read this property, ensuring consistent behavior regardless of who creates the lobby.
+
+See [Spatial Voice](voice-zones.md) for the full setup guide with `NetworkVoicePlayer` and `EOSVoiceZoneManager`.
+
+## Android Voice Notes
+
+Voice chat works on Android, but there are platform-specific considerations.
+
+### AudioRecord Conflict
+
+The EOS SDK opens its own `AudioRecord` for voice capture on Android. Unity's `Microphone` API also opens an `AudioRecord`. On Android versions before 10, only one `AudioRecord` can exist at a time. On Android 10+, concurrent capture has priority rules that may silence one client.
+
+To avoid this conflict, `EOSVoiceManager` disables the Unity `Microphone` capture on Android entirely. As a result, `LocalMicLevel` always returns 0 on Android. The mic level bar in the UI will not animate, but EOS voice transmission works correctly.
+
+### Runtime Permission
+
+The `RECORD_AUDIO` permission must be both declared in AndroidManifest.xml **and** requested at runtime on API 23+. The manifest declaration alone is not sufficient.
+
+`EOSAndroidBuildProcessor` auto-injects the manifest declaration. `EOSManager.Awake()` calls `RequestMicrophonePermission()` at startup for all Android devices. No manual setup is required.
+
+### Lobby Creation Fallback
+
+If the EOS SDK returns an error when creating a lobby with voice enabled (e.g., RTC module not initialized on the device), `CreateLobbyAsync` automatically retries without voice. This prevents `InvalidRequest` errors on platforms where RTC is unavailable.
 
 ## Platform Support
 

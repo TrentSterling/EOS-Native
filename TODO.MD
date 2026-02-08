@@ -45,7 +45,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Spatial hash (interest management — only sync nearby objects)
 - [ ] Tick-based simulation (deterministic tick rate, decoupled from frame rate)
 - [x] Connection statistics / network profiler (RTT, packet loss, bandwidth)
-- [ ] Auto-reconnect (automatic reconnection with state recovery)
+- [x] Auto-reconnect (automatic reconnection with state recovery)
 
 **Migration & Authority:**
 - [x] Zero-hitch host migration (no scene takedown, own the object lifetime)
