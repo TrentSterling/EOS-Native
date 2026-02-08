@@ -96,7 +96,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Linux x64 (Editor + Build)
 - [ ] Linux ARM64 (Build only)
 - [ ] iOS ARM64 (Build + device)
-- [ ] Android (Build + device — v2.15.3: fixed catch Throwable, proguard rules, classloader hint. Voice "all silent" needs testing)
+- [ ] Android (Build + device — v2.15.4: voice diagnostics added, auto-query devices on connect. Voice "all silent" → check Voice Diagnostics tab for RTCAudioStatus/device status)
 
 **Auth & Login:**
 - [ ] Dev auth tool login (Editor)

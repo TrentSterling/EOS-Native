@@ -132,6 +132,7 @@ namespace EOSNative.UI
         private bool _foldMetrics = true;
         private bool _foldLFG = true;
         private bool _foldNetworkStats = true;
+        private bool _foldVoiceDiag = true;
 
         // Chat state
         private string _chatInput = "";
@@ -1168,12 +1169,47 @@ namespace EOSNative.UI
                 }
             }
 
+            // Voice Diagnostics
+            if (voice != null)
+            {
+                if (DrawFoldout("Voice Diagnostics", ref _foldVoiceDiag))
+                {
+                    GUILayout.BeginVertical(_sectionBox);
+
+                    var eosMgr = EOSManager.Instance;
+                    DrawStatusRow("RTC Interface", eosMgr?.RTCInterface != null, "OK", "NULL");
+                    DrawStatusRow("RTCAudio Interface", eosMgr?.RTCAudioInterface != null, "OK", "NULL");
+                    DrawKeyValue("Local AudioStatus", voice.LocalAudioStatus.ToString());
+                    DrawKeyValue("UpdateSending Result", voice.LastUpdateSendingResult.ToString());
+                    DrawKeyValue("Devices Queried", voice.AudioDevicesQueried ? "Yes" : "No");
+                    DrawKeyValue("Input Devices", voice.InputDevices.Count.ToString());
+                    DrawKeyValue("Output Devices", voice.OutputDevices.Count.ToString());
+#if UNITY_ANDROID && !UNITY_EDITOR
+                    DrawStatusRow("Android Java Init", eosMgr?.AndroidJavaInitSuccess ?? false, "OK", "FAILED");
+#endif
+
+                    // Highlight problems
+                    if (voice.LocalAudioStatus == RTCAudioStatus.Unsupported)
+                    {
+                        GUILayout.Label("! AudioStatus=Unsupported means no audio devices.", _yellowLabel);
+                        GUILayout.Label("  Java audio pipeline may not have initialized.", _yellowLabel);
+                    }
+                    if (voice.AudioDevicesQueried && voice.InputDevices.Count == 0 && voice.OutputDevices.Count == 0)
+                    {
+                        GUILayout.Label("! No audio devices found by EOS SDK.", _yellowLabel);
+                        GUILayout.Label("  Platform audio API may not be available.", _yellowLabel);
+                    }
+
+                    GUILayout.EndVertical();
+                }
+            }
+
             // Help text
             GUILayout.BeginVertical(_sectionBox);
             GUILayout.Label("Voice Info", _subHeaderStyle);
             GUILayout.Label("Voice is lobby-based. Create a lobby with Voice enabled.", _grayLabel);
             GUILayout.Label("Voice auto-connects and persists through host migration.", _grayLabel);
-            GUILayout.Label("Use Refresh Devices to detect mic/speaker changes.", _grayLabel);
+            GUILayout.Label("Devices auto-queried on connect. Press Refresh to re-scan.", _grayLabel);
             GUILayout.EndVertical();
         }
 

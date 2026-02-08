@@ -227,13 +227,16 @@ All four fields apply to both Host Lobby and Quick Match lobby creation.
 
 `EOSVoiceManager` provides runtime mic/speaker device switching via EOS RTCAudio APIs:
 
-- `QueryAudioDevices()` - Queries input/output device lists and registers for hotplug notifications
+- `QueryAudioDevices()` - Queries input/output device lists and registers for hotplug notifications. **Auto-called on voice connect** (no manual Refresh needed)
 - `GetInputDevices()` / `GetOutputDevices()` - Returns cached device info lists
 - `SetInputDevice(deviceId)` - Switches active microphone by `RealDeviceId`
 - `SetOutputDevice(deviceId)` - Switches active speaker by `RealDeviceId`
 - `OnAudioDevicesChanged` event - Fires when devices are added/removed
 - `CurrentInputDeviceId` / `CurrentOutputDeviceId` - Track selected device
 - `LocalMicLevel` (float, 0-1) - Real-time mic level via Unity `Microphone` API (RMS of 256 samples, scaled 8x). Starts capture when voice is connected and unmuted, stops on disconnect/mute. Used by both OnGUI and Canvas UI level bars.
+- `LocalAudioStatus` (RTCAudioStatus) - Local user's audio status from SDK. `Unsupported` (0) means no audio devices / pipeline not initialized.
+- `LastUpdateSendingResult` (Result) - Result of last mute/unmute call. Useful for diagnosing SDK rejecting audio changes.
+- `AudioDevicesQueried` (bool) - Whether device enumeration has completed at least once.
 
 The F1 overlay Voice tab exposes dropdown selectors for input/output devices with a Refresh button. The Canvas UI Voice tab also has an Audio Devices section with Refresh button, input/output device selection buttons (green = selected), and real-time mic level bar.
 
@@ -247,7 +250,7 @@ The runtime F1 overlay (`EOSNativeStatusUI.cs`, ~3100 lines) provides 6 tabs:
 |-----|----------|
 | **Status** | SDK status, platform info, interfaces, login actions |
 | **Lobbies** | Current lobby, create/join/search, lobby members (with report & profile buttons), lobby chat |
-| **Voice** | Voice status, local mic level bar, audio devices, participants |
+| **Voice** | Voice status, local mic level bar, audio devices, participants, voice diagnostics |
 | **Social** | Player registry, recently played (friend/block/invite), local friends (notes/join/invite), blocked players, invites (send/receive/requests), Epic Account, Epic Friends |
 | **Stats** | Stats query/ingest, leaderboard rankings, achievements progress, ranked matchmaking |
 | **Tools** | Cloud storage (files/write/delete), anti-cheat status, replay list/playback/export/import, session metrics, LFG posts |

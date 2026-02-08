@@ -1,6 +1,6 @@
 {
   "name": "com.tront.eos-native",
-  "version": "2.15.3",
+  "version": "2.15.4",
   "displayName": "EOS Native",
   "description": "Epic Online Services (EOS) SDK + wrapper layer for Unity. Provides the raw Epic.OnlineServices namespace plus a high-level EOSNative wrapper with lobbies, voice chat, social features, storage, anti-cheat, and more. Framework-agnostic - works with any networking solution.",
   "unity": "2021.3",

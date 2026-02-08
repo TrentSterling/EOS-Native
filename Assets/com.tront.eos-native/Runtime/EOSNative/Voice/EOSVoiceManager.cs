@@ -110,6 +110,22 @@ namespace EOSNative.Voice
         /// </summary>
         public float LocalMicLevel { get; private set; }
 
+        /// <summary>
+        /// The local user's own RTCAudioStatus as reported by the SDK.
+        /// Unsupported (0) means no audio devices available or audio pipeline didn't initialize.
+        /// </summary>
+        public RTCAudioStatus LocalAudioStatus { get; private set; } = RTCAudioStatus.Disabled;
+
+        /// <summary>
+        /// Result of the last UpdateSending call (unmute/mute). Success = SDK accepted the change.
+        /// </summary>
+        public Result LastUpdateSendingResult { get; private set; } = Result.NotConfigured;
+
+        /// <summary>
+        /// Whether QueryAudioDevices has been called and completed at least once.
+        /// </summary>
+        public bool AudioDevicesQueried { get; private set; }
+
         #endregion
 
         #region Private Fields
@@ -286,6 +302,8 @@ namespace EOSNative.Voice
                 IsConnected = true;
                 GetRTCRoomName();
                 RegisterAudioNotifications();
+                QueryAudioDevices();
+                LogVoiceDiagnostics();
                 OnVoiceConnectionChanged?.Invoke(true);
             }
         }
@@ -323,14 +341,16 @@ namespace EOSNative.Voice
 
             RTCAudio.UpdateSending(ref options, null, (ref UpdateSendingCallbackInfo data) =>
             {
+                LastUpdateSendingResult = data.ResultCode;
                 if (data.ResultCode == Result.Success)
                 {
                     IsMuted = muted;
-                    EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", $" Mic {(muted ? "muted" : "unmuted")}");
+                    LocalAudioStatus = data.AudioStatus;
+                    Debug.Log($"[EOSVoice] UpdateSending: {(muted ? "muted" : "unmuted")} -> AudioStatus={data.AudioStatus}");
                 }
                 else
                 {
-                    Debug.LogWarning($"[EOSVoiceManager] Failed to {(muted ? "mute" : "unmute")}: {data.ResultCode}");
+                    Debug.LogWarning($"[EOSVoice] UpdateSending failed: {data.ResultCode} (tried to {(muted ? "mute" : "unmute")})");
                 }
             });
         }
@@ -509,14 +529,20 @@ namespace EOSNative.Voice
             var inputOptions = new QueryInputDevicesInformationOptions();
             RTCAudio.QueryInputDevicesInformation(ref inputOptions, null, (ref OnQueryInputDevicesInformationCallbackInfo data) =>
             {
+                AudioDevicesQueried = true;
                 if (data.ResultCode == Result.Success)
                 {
                     RefreshInputDeviceList();
-                    EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", $"Found {InputDevices.Count} input devices");
+                    Debug.Log($"[EOSVoice] Input devices: {InputDevices.Count}");
+                    for (int i = 0; i < InputDevices.Count; i++)
+                    {
+                        var dev = InputDevices[i];
+                        Debug.Log($"[EOSVoice]   Input[{i}]: '{dev.DeviceName}' id='{dev.DeviceId}' default={dev.DefaultDevice}");
+                    }
                 }
                 else
                 {
-                    Debug.LogWarning($"[EOSVoiceManager] QueryInputDevicesInformation failed: {data.ResultCode}");
+                    Debug.LogWarning($"[EOSVoice] QueryInputDevicesInformation failed: {data.ResultCode}");
                 }
             });
 
@@ -527,11 +553,16 @@ namespace EOSNative.Voice
                 if (data.ResultCode == Result.Success)
                 {
                     RefreshOutputDeviceList();
-                    EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", $"Found {OutputDevices.Count} output devices");
+                    Debug.Log($"[EOSVoice] Output devices: {OutputDevices.Count}");
+                    for (int i = 0; i < OutputDevices.Count; i++)
+                    {
+                        var dev = OutputDevices[i];
+                        Debug.Log($"[EOSVoice]   Output[{i}]: '{dev.DeviceName}' id='{dev.DeviceId}' default={dev.DefaultDevice}");
+                    }
                 }
                 else
                 {
-                    Debug.LogWarning($"[EOSVoiceManager] QueryOutputDevicesInformation failed: {data.ResultCode}");
+                    Debug.LogWarning($"[EOSVoice] QueryOutputDevicesInformation failed: {data.ResultCode}");
                 }
             });
 
@@ -745,6 +776,12 @@ namespace EOSNative.Voice
 
                 // Start listening for audio
                 RegisterAudioNotifications();
+
+                // Auto-discover audio devices on connect (previously required manual Refresh press)
+                QueryAudioDevices();
+
+                // Log diagnostic info for debugging Android voice issues
+                LogVoiceDiagnostics();
             }
             else
             {
@@ -893,6 +930,12 @@ namespace EOSNative.Voice
             var prevStatus = _audioStatus.TryGetValue(puid, out var ps) ? ps : RTCAudioStatus.Disabled;
             _audioStatus[puid] = data.AudioStatus;
 
+            // Track local user's own audio status for diagnostics
+            if (LocalUserId != null && data.ParticipantId.Equals(LocalUserId))
+            {
+                LocalAudioStatus = data.AudioStatus;
+            }
+
             // Fire speaking event if changed
             if (wasSpeaking != isSpeaking)
             {
@@ -948,6 +991,36 @@ namespace EOSNative.Voice
 
         #region Cleanup
 
+        private void LogVoiceDiagnostics()
+        {
+            var mgr = EOSManager.Instance;
+            Debug.Log($"[EOSVoice] === Voice Diagnostics ===");
+            Debug.Log($"[EOSVoice] RTC Interface: {(mgr?.RTCInterface != null ? "OK" : "NULL")}");
+            Debug.Log($"[EOSVoice] RTCAudio Interface: {(mgr?.RTCAudioInterface != null ? "OK" : "NULL")}");
+            Debug.Log($"[EOSVoice] Room: {CurrentRoomName ?? "(none)"}");
+            Debug.Log($"[EOSVoice] LocalUserId: {LocalUserId?.ToString() ?? "(null)"}");
+#if UNITY_ANDROID && !UNITY_EDITOR
+            Debug.Log($"[EOSVoice] AndroidJavaInitSuccess: {mgr?.AndroidJavaInitSuccess}");
+#endif
+            // Try to auto-unmute on connect so we can see the UpdateSending result
+            if (RTCAudio != null && !string.IsNullOrEmpty(CurrentRoomName) && LocalUserId != null)
+            {
+                var sendOptions = new UpdateSendingOptions
+                {
+                    LocalUserId = LocalUserId,
+                    RoomName = CurrentRoomName,
+                    AudioStatus = RTCAudioStatus.Enabled
+                };
+                RTCAudio.UpdateSending(ref sendOptions, null, (ref UpdateSendingCallbackInfo cbData) =>
+                {
+                    LastUpdateSendingResult = cbData.ResultCode;
+                    LocalAudioStatus = cbData.AudioStatus;
+                    IsMuted = (cbData.AudioStatus != RTCAudioStatus.Enabled);
+                    Debug.Log($"[EOSVoice] Auto-unmute result: {cbData.ResultCode}, AudioStatus={cbData.AudioStatus}");
+                });
+            }
+        }
+
         private void CleanupAudioNotifications()
         {
             _audioBeforeRenderHandle?.Dispose();
@@ -982,6 +1055,9 @@ namespace EOSNative.Voice
             IsMuted = false;
             CurrentRoomName = null;
             _currentLobbyId = null;
+            LocalAudioStatus = RTCAudioStatus.Disabled;
+            LastUpdateSendingResult = Result.NotConfigured;
+            AudioDevicesQueried = false;
 
             EOSDebugLogger.Log(DebugCategory.VoiceManager, "EOSVoiceManager", "Cleaned up");
         }
