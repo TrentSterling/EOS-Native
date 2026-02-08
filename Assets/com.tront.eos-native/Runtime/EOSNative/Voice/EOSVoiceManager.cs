@@ -1001,6 +1001,8 @@ namespace EOSNative.Voice
             Debug.Log($"[EOSVoice] LocalUserId: {LocalUserId?.ToString() ?? "(null)"}");
 #if UNITY_ANDROID && !UNITY_EDITOR
             Debug.Log($"[EOSVoice] AndroidJavaInitSuccess: {mgr?.AndroidJavaInitSuccess}");
+            if (!(mgr?.AndroidJavaInitSuccess ?? true))
+                Debug.LogWarning($"[EOSVoice] AndroidJavaInitError: {mgr?.AndroidJavaInitError ?? "(null)"}");
 #endif
             // Try to auto-unmute on connect so we can see the UpdateSending result
             if (RTCAudio != null && !string.IsNullOrEmpty(CurrentRoomName) && LocalUserId != null)

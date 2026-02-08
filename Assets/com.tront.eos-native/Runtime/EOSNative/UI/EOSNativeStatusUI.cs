@@ -1186,6 +1186,10 @@ namespace EOSNative.UI
                     DrawKeyValue("Output Devices", voice.OutputDevices.Count.ToString());
 #if UNITY_ANDROID && !UNITY_EDITOR
                     DrawStatusRow("Android Java Init", eosMgr?.AndroidJavaInitSuccess ?? false, "OK", "FAILED");
+                    if (!(eosMgr?.AndroidJavaInitSuccess ?? true) && !string.IsNullOrEmpty(eosMgr?.AndroidJavaInitError))
+                    {
+                        GUILayout.Label(eosMgr.AndroidJavaInitError, _yellowLabel);
+                    }
 #endif
 
                     // Highlight problems

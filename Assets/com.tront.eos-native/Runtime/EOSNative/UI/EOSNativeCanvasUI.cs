@@ -195,7 +195,7 @@ namespace EOSNative.UI
 
             var scaler = canvasGo.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1080, 1920);
+            scaler.referenceResolution = new Vector2(540, 960);
             scaler.matchWidthOrHeight = 0.5f;
 
             canvasGo.AddComponent<GraphicRaycaster>();
@@ -1102,6 +1102,10 @@ namespace EOSNative.UI
 
 #if UNITY_ANDROID && !UNITY_EDITOR
             AddStatusRow(_voiceDiagContainer, "Android Java Init", eosMgr?.AndroidJavaInitSuccess ?? false, "OK", "FAILED");
+            if (!(eosMgr?.AndroidJavaInitSuccess ?? true) && !string.IsNullOrEmpty(eosMgr?.AndroidJavaInitError))
+            {
+                AddLabel(_voiceDiagContainer, eosMgr.AndroidJavaInitError, 12, ColRed);
+            }
 #endif
 
             if (voice.LocalAudioStatus == RTCAudioStatus.Unsupported)

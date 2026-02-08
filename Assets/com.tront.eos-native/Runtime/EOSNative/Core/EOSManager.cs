@@ -143,6 +143,7 @@ namespace EOSNative
 
         // Tracks if Android Java-side initialization succeeded (EOSSDK.init via helper class)
         private bool _androidJavaInitSuccess;
+        private string _androidJavaInitError;
 
         /// <summary>
         /// Whether Android Java-side EOS SDK initialization succeeded.
@@ -150,6 +151,12 @@ namespace EOSNative
         /// Always true on non-Android platforms.
         /// </summary>
         public bool AndroidJavaInitSuccess => _androidJavaInitSuccess;
+
+        /// <summary>
+        /// Error message from Android Java init, or null if succeeded.
+        /// Shows which class/method failed during EOSSDK.init().
+        /// </summary>
+        public string AndroidJavaInitError => _androidJavaInitError;
 
 #if UNITY_EDITOR_WIN
         [DllImport("Kernel32.dll")]
@@ -1389,22 +1396,25 @@ namespace EOSNative
 
                     if (_androidJavaInitSuccess)
                     {
-                        Debug.Log("[EOS-Native] Android EOSSDK.init() succeeded via EOSNativeInit helper.");
+                        Debug.Log("[EOS-Native] Android EOSSDK.init() succeeded via EOSNativeInit helper (.androidlib).");
                     }
                     else
                     {
                         // Helper caught a Throwable (e.g. UnsatisfiedLinkError) but the native lib IS loaded.
                         // P/Invoke still works. Java audio pipeline may be broken — RTC/Audio might not function.
-                        Debug.LogWarning("[EOS-Native] Android EOSSDK.init() threw via helper (caught). " +
+                        string lastError = "(unknown)";
+                        try { lastError = helper.CallStatic<string>("getLastError") ?? "(null)"; } catch { }
+                        Debug.LogWarning($"[EOS-Native] Android EOSSDK.init() threw via helper (caught): {lastError}. " +
                             "Native lib is loaded (P/Invoke works), but Java audio pipeline may be broken. " +
                             "RTC/Voice may not function. Check logcat for 'EOSNativeInit' tag.");
                     }
                 }
-                catch (Exception)
+                catch (Exception ex1)
                 {
-                    // Helper class not found (old build without EOSAndroidBuildProcessor).
+                    // Helper class not found — .androidlib may not be included or build processor didn't run.
                     // Fall back to direct EOSSDK.init() call.
-                    Debug.LogWarning("[EOS-Native] EOSNativeInit helper not found, falling back to direct EOSSDK.init().");
+                    _androidJavaInitError = $"Helper not found: {ex1.Message}";
+                    Debug.LogWarning($"[EOS-Native] EOSNativeInit helper not found ({ex1.Message}), falling back to direct EOSSDK.init().");
                     try
                     {
                         using (var eos = new AndroidJavaClass("com.epicgames.mobile.eossdk.EOSSDK"))
@@ -1412,6 +1422,7 @@ namespace EOSNative
                             eos.CallStatic("init", activity);
                         }
                         _androidJavaInitSuccess = true;
+                        _androidJavaInitError = null;
                         Debug.Log("[EOS-Native] Android EOSSDK.init() succeeded via direct call (fallback).");
                     }
                     catch (Exception e2)
@@ -1419,6 +1430,7 @@ namespace EOSNative
                         // Direct call also failed. The native lib may still be loaded by the OS,
                         // so P/Invoke could work, but Java-side init didn't complete.
                         _androidJavaInitSuccess = false;
+                        _androidJavaInitError = $"Direct fallback failed: {e2.Message}";
                         Debug.LogWarning($"[EOS-Native] Android EOSSDK.init() direct fallback failed: {e2.Message}. " +
                             "P/Invoke may still work but RTC/Voice will not function.");
                     }
@@ -1428,6 +1440,7 @@ namespace EOSNative
             {
                 // Could not even get the Activity reference — something is very wrong.
                 _androidJavaInitSuccess = false;
+                _androidJavaInitError = $"Cannot get Activity: {e.Message}";
                 Debug.LogError($"[EOS-Native] Android EOSSDK.init() failed (cannot get Activity): {e}");
             }
 #else
