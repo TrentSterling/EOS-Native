@@ -1392,6 +1392,11 @@ namespace EOSNative
                     using (var helper = new AndroidJavaClass("com.tront.eosnative.EOSNativeInit"))
                     {
                         _androidJavaInitSuccess = helper.CallStatic<bool>("init", activity);
+
+                        if (!_androidJavaInitSuccess)
+                        {
+                            try { _androidJavaInitError = helper.CallStatic<string>("getLastError"); } catch { }
+                        }
                     }
 
                     if (_androidJavaInitSuccess)
@@ -1400,11 +1405,7 @@ namespace EOSNative
                     }
                     else
                     {
-                        // Helper caught a Throwable (e.g. UnsatisfiedLinkError) but the native lib IS loaded.
-                        // P/Invoke still works. Java audio pipeline may be broken — RTC/Audio might not function.
-                        string lastError = "(unknown)";
-                        try { lastError = helper.CallStatic<string>("getLastError") ?? "(null)"; } catch { }
-                        Debug.LogWarning($"[EOS-Native] Android EOSSDK.init() threw via helper (caught): {lastError}. " +
+                        Debug.LogWarning($"[EOS-Native] Android EOSSDK.init() threw via helper (caught): {_androidJavaInitError ?? "(unknown)"}. " +
                             "Native lib is loaded (P/Invoke works), but Java audio pipeline may be broken. " +
                             "RTC/Voice may not function. Check logcat for 'EOSNativeInit' tag.");
                     }
