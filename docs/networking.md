@@ -1,6 +1,6 @@
 # Networking
 
-High-level networking built on the [P2P Transport Toolkit](p2p.md). Provides object identity, automatic state sync, spawn/despawn, RPCs, host migration, late-join snapshots, scene management, and more. No external dependencies -- everything runs over the EOS P2P mesh.
+High-level networking built on the [P2P Transport Toolkit](p2p-transport.md). Provides object identity, automatic state sync, spawn/despawn, RPCs, host migration, late-join snapshots, scene management, and more. No external dependencies -- everything runs over the EOS P2P mesh.
 
 All files live in `Runtime/EOSNative/Net/`.
 
