@@ -446,7 +446,25 @@ Each chunk is a separate MSG_SNAPSHOT message, all reliable ordered. HandleSnaps
 
 ## Typed RPCs ([NetRpc] Attribute + IL Post-Processor)
 
-Mark methods on `NetworkBehaviour` subclasses with `[NetRpc]` for zero-boilerplate typed RPCs. The IL post-processor (Mono.Cecil) rewrites method bodies at compile time — same technique as Mirror, FishNet, and Fusion.
+Mark methods on `NetworkBehaviour` or `NetworkObject` subclasses with `[NetRpc]` for zero-boilerplate typed RPCs. The IL post-processor (Mono.Cecil) rewrites method bodies at compile time — same technique as Mirror, FishNet, and Fusion.
+
+**NetworkObject subclass RPCs (v2.29.0):** The weaver now also processes `[NetRpc]` on direct `NetworkObject` subclasses, not just `NetworkBehaviour`. This allows combining identity, SyncVars, and RPCs on a single component. The weaver emits `this` (instead of `this.Net`) for the NetworkObject reference. Both patterns coexist — existing `NetworkBehaviour` RPCs work unchanged.
+
+```csharp
+// New: RPCs directly on NetworkObject subclass (no separate NetworkBehaviour needed)
+public class MyNetworkedThing : NetworkObject
+{
+    [NetRpc(RPCTarget.All)]
+    public void Explode(float radius) { /* ... */ }
+}
+
+// Existing: RPCs on NetworkBehaviour (still works, unchanged)
+public class MyBehaviour : NetworkBehaviour
+{
+    [NetRpc(RPCTarget.All)]
+    public void Jump() { /* ... */ }
+}
+```
 
 ```csharp
 [NetRpc(RPCTarget.All)]

@@ -8,12 +8,15 @@ using Unity.CompilationPipeline.Common.Diagnostics;
 namespace EOSNative.CodeGen
 {
     /// <summary>
-    /// Core RPC weaver. For each [NetRpc] method on a NetworkBehaviour subclass:
+    /// Core RPC weaver. For each [NetRpc] method on a NetworkBehaviour or NetworkObject subclass:
     ///
     /// 1. Moves original body → UserCode_MethodName
     /// 2. Replaces original → dispatch stub (serialize args, call SendRPCWeaved)
     /// 3. Creates __InvokeNetRpc_MethodName → deserialize args, call UserCode_
     /// 4. Generates/extends __RegisterNetRPCs → register invoke handlers
+    ///
+    /// NetworkBehaviour subclasses use 'this.Net' to get the NetworkObject reference.
+    /// NetworkObject subclasses use 'this' directly (they ARE the NetworkObject).
     ///
     /// Uses the same FNV-1a hash as NetworkManager.FnvHash for method name hashing.
     /// </summary>
@@ -63,7 +66,9 @@ namespace EOSNative.CodeGen
 
             foreach (var type in _module.GetAllTypes().ToList())
             {
-                if (!IsNetworkBehaviour(type)) continue;
+                bool isNB = IsNetworkBehaviour(type);
+                bool isNO = !isNB && IsNetworkObject(type);
+                if (!isNB && !isNO) continue;
 
                 var rpcMethods = FindRpcMethods(type);
                 if (rpcMethods.Count == 0) continue;
@@ -109,7 +114,8 @@ namespace EOSNative.CodeGen
                     invokeHandlers.Add((methodHash, rpcMethod.Name, invoker, validated));
 
                     // 3. Rewrite original method body (dispatch stub)
-                    RewriteAsDispatchStub(rpcMethod, methodHash, target, validated);
+                    // NetworkObject subclasses use 'this' directly; NetworkBehaviours use 'this.Net'
+                    RewriteAsDispatchStub(rpcMethod, methodHash, target, validated, isNO);
 
                     modified = true;
                 }
@@ -117,7 +123,7 @@ namespace EOSNative.CodeGen
                 if (invokeHandlers.Count > 0)
                 {
                     // 4. Generate/extend __RegisterNetRPCs
-                    GenerateRegisterMethod(type, invokeHandlers);
+                    GenerateRegisterMethod(type, invokeHandlers, isNO);
                 }
             }
 
@@ -134,6 +140,36 @@ namespace EOSNative.CodeGen
             while (baseType != null)
             {
                 if (baseType.FullName == "EOSNative.Net.NetworkBehaviour")
+                    return true;
+
+                try
+                {
+                    var resolved = baseType.Resolve();
+                    baseType = resolved?.BaseType;
+                }
+                catch
+                {
+                    break;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Check if a type is a direct subclass of NetworkObject (not NetworkBehaviour).
+        /// Allows [NetRpc] methods on NetworkObject subclasses without requiring a separate NetworkBehaviour.
+        /// </summary>
+        private bool IsNetworkObject(TypeDefinition type)
+        {
+            if (type == null || !type.IsClass || type.IsAbstract) return false;
+
+            var baseType = type.BaseType;
+            while (baseType != null)
+            {
+                // Stop if we hit NetworkBehaviour — handled by IsNetworkBehaviour
+                if (baseType.FullName == "EOSNative.Net.NetworkBehaviour")
+                    return false;
+                if (baseType.FullName == "EOSNative.Net.NetworkObject")
                     return true;
 
                 try
@@ -313,7 +349,8 @@ namespace EOSNative.CodeGen
         /// Rewrite the original method body to be a dispatch stub that serializes args
         /// and calls SendRPCWeaved or SendRPCValidated depending on the validated flag.
         /// </summary>
-        private void RewriteAsDispatchStub(MethodDefinition method, uint methodHash, int rpcTarget, bool validated = false)
+        /// <param name="isNetworkObject">True if the declaring type is a NetworkObject subclass (use 'this' directly instead of 'this.Net').</param>
+        private void RewriteAsDispatchStub(MethodDefinition method, uint methodHash, int rpcTarget, bool validated, bool isNetworkObject)
         {
             method.Body.Instructions.Clear();
             method.Body.Variables.Clear();
@@ -350,10 +387,21 @@ namespace EOSNative.CodeGen
             il.Emit(OpCodes.Ldloc, writerVar);
             il.Emit(OpCodes.Call, _types.NetWriterPool_Return);
 
-            // NetworkManager.Instance.SendRPCWeaved/SendRPCValidated(this.Net, hash, target, data);
+            // NetworkManager.Instance.SendRPCWeaved/SendRPCValidated(netObj, hash, target, data);
             il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);  // NetworkManager.Instance
-            il.Emit(OpCodes.Ldarg_0);                                   // this
-            il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_Net);      // .Net
+
+            if (isNetworkObject)
+            {
+                // NetworkObject subclass: 'this' IS the NetworkObject
+                il.Emit(OpCodes.Ldarg_0);
+            }
+            else
+            {
+                // NetworkBehaviour subclass: need 'this.Net' to get the NetworkObject
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_Net);
+            }
+
             il.Emit(OpCodes.Ldc_I4, unchecked((int)methodHash));        // hash (uint as int literal)
             il.Emit(OpCodes.Ldc_I4, rpcTarget);                        // RPCTarget enum value
             il.Emit(OpCodes.Ldloc, dataVar);                            // argData
@@ -407,12 +455,14 @@ namespace EOSNative.CodeGen
         /// internal override void __RegisterNetRPCs()
         /// {
         ///     base.__RegisterNetRPCs();
-        ///     NetworkManager.Instance.RegisterRPC(Net, hash, "name", __InvokeNetRpc_Name);
+        ///     NetworkManager.Instance.RegisterRPC(this/Net, hash, "name", __InvokeNetRpc_Name);
         ///     ...
         /// }
         /// </summary>
+        /// <param name="isNetworkObject">True if the declaring type is a NetworkObject subclass (use 'this' directly instead of 'this.Net').</param>
         private void GenerateRegisterMethod(TypeDefinition type,
-            List<(uint hash, string name, MethodDefinition invoker, bool validated)> handlers)
+            List<(uint hash, string name, MethodDefinition invoker, bool validated)> handlers,
+            bool isNetworkObject)
         {
             // Remove existing __RegisterNetRPCs if the weaver already generated one
             var existing = type.Methods.FirstOrDefault(m => m.Name == "__RegisterNetRPCs");
@@ -448,14 +498,24 @@ namespace EOSNative.CodeGen
                 il.Emit(OpCodes.Call, baseRegister);
             }
 
-            // For each RPC: NetworkManager.Instance.RegisterRPC(Net, hash, "name", __InvokeNetRpc_Name)
+            // For each RPC: NetworkManager.Instance.RegisterRPC(netObj, hash, "name", __InvokeNetRpc_Name)
             foreach (var (hash, name, invoker, validated) in handlers)
             {
                 // NetworkManager.Instance
                 il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);
-                // this.Net
-                il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_Net);
+
+                if (isNetworkObject)
+                {
+                    // NetworkObject subclass: 'this' IS the NetworkObject
+                    il.Emit(OpCodes.Ldarg_0);
+                }
+                else
+                {
+                    // NetworkBehaviour subclass: need 'this.Net'
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_Net);
+                }
+
                 // hash
                 il.Emit(OpCodes.Ldc_I4, unchecked((int)hash));
                 // "name"

@@ -299,9 +299,18 @@ namespace EOSNative.Net
             OnOwnerChanged?.Invoke(oldOwner, newOwner);
         }
 
+        /// <summary>
+        /// Weaver-generated override that registers all [NetRpc] handlers declared directly on this NetworkObject.
+        /// Called by NotifyNetworkSpawn before processing NetworkBehaviours. Do not call manually.
+        /// </summary>
+        internal virtual void __RegisterNetRPCs() { }
+
         /// <summary>Invoke the OnNetworkSpawn event and NetworkBehaviour lifecycle hooks.</summary>
         internal void NotifyNetworkSpawn()
         {
+            // Register RPCs declared directly on this NetworkObject subclass (if any)
+            __RegisterNetRPCs();
+
             // Register weaver-generated RPCs and fire lifecycle on all behaviours
             var behaviours = GetComponents<NetworkBehaviour>();
             for (int i = 0; i < behaviours.Length; i++)

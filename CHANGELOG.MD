@@ -2,6 +2,14 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.29.0] - 2026-02-09
+
+### Added
+- **[NetRpc] on NetworkObject subclasses** — The IL weaver now processes `[NetRpc]` methods on classes that extend `NetworkObject` directly, not just `NetworkBehaviour`. This means you can declare RPCs, SyncVars, and identity on a single component without needing a separate `NetworkBehaviour`. The weaver emits `this` (instead of `this.Net`) for the NetworkObject reference in dispatch stubs and registration. `NetworkObject.__RegisterNetRPCs()` is now called during `NotifyNetworkSpawn()` before processing any `NetworkBehaviour` components. Fully backwards compatible — existing `NetworkBehaviour` RPCs work unchanged.
+
+### Changed
+- **Architecture decision: NetworkBehaviour-only NOT pursued** — After thorough investigation, the NB-only architecture (eliminating separate NetworkObject) was determined to be not recommended. The two-component model (NetworkObject + NetworkBehaviour) matches industry standard (Mirror, FishNet, Fusion) and avoids complex tradeoffs around SyncVar registry ownership, RPC routing ambiguity, and interest filtering.
+
 ## [2.28.0] - 2026-02-09
 
 ### Added

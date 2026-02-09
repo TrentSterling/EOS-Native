@@ -58,8 +58,8 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] `NetworkManager.GetPlayerObject(puid)` — lookup a player's NetworkObject by their PUID (v2.16.1)
 - [x] `NetworkManager.ConnectedPlayers` — easy-access list of connected player PUIDs (v2.16.1)
 - [x] `NetworkManager.IsOnline` property — simple bool for "am I connected to a session" (v2.16.1)
-- [ ] Consider moving RPC registration onto NetworkObject itself (shoulder it on netobj, drop NetworkBehaviour requirement)
-- [ ] Explore NetworkBehaviour-only architecture (each NB gets its own ID, no separate NetworkObject needed)
+- [x] RPC on NetworkObject subclasses — [NetRpc] methods now work directly on NetworkObject subclasses (v2.29.0)
+- [x] NetworkBehaviour-only architecture — Investigated, NOT pursuing. Two-component model matches industry standard (Mirror/FishNet/Fusion), avoids SyncVar registry/RPC routing/interest filtering complexity (v2.29.0)
 
 **SyncVar LOD System** (community request — AlmightyMikkel):
 - [x] SyncVar LOD tiers — `SyncVarLOD` component with configurable distance tiers and sync rate multipliers (v2.18.0)

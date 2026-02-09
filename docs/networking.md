@@ -487,7 +487,10 @@ NetworkManager.Instance.SendRPC(player, "TakeDamage", puidList, 25f);
 
 Mark methods with `[NetRpc]` for zero-boilerplate RPCs. An IL post-processor (Mono.Cecil) rewrites the method bodies at compile time -- same technique as Mirror, FishNet, and Fusion.
 
+Works on both `NetworkBehaviour` and `NetworkObject` subclasses:
+
 ```csharp
+// On NetworkBehaviour (original pattern)
 public class Player : NetworkBehaviour
 {
     SyncVar<float> Health;
@@ -508,6 +511,24 @@ public class Player : NetworkBehaviour
     {
         // Calling is transparent -- serialization + dispatch is automatic
         TakeDamage(19f);
+    }
+}
+
+// On NetworkObject directly (v2.29.0 -- no separate NetworkBehaviour needed)
+public class GameFlag : NetworkObject
+{
+    SyncVar<string> CapturedBy;
+
+    void Awake()
+    {
+        CapturedBy = Sync<string>(null);
+    }
+
+    [NetRpc(RPCTarget.All)]
+    public void Capture(string teamName)
+    {
+        if (IsOwner)
+            CapturedBy.Value = teamName;
     }
 }
 ```
