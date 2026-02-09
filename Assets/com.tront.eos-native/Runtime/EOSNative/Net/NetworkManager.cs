@@ -905,6 +905,13 @@ namespace EOSNative.Net
 
                 if (_objects.TryGetValue(networkId, out var obj))
                 {
+                    // Sender validation: only the owner can update an object's state
+                    if (obj.OwnerId != null && !sender.Equals(obj.OwnerId))
+                    {
+                        reader.Skip(dataLen);
+                        continue;
+                    }
+
                     // BufferLast: discard stale/out-of-order packets
                     // Uses wrapping comparison: seq is "newer" if (seq - last) as signed short > 0
                     short diff = (short)(sequence - obj.LastReceivedSequence);
@@ -996,6 +1003,14 @@ namespace EOSNative.Net
             bool destroyWithOwner = reader.ReadBool();
             byte syncVarCount = reader.ReadByte();
 
+            // Sender validation: only accept spawns from the claimed owner
+            if (ownerId != null && !sender.Equals(ownerId))
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "NetworkManager",
+                    $"Rejected spawn: sender {sender} != claimed owner {ownerId} for object {networkId}");
+                return;
+            }
+
             // Don't re-spawn if we already have it (e.g. we're the owner)
             if (_objects.ContainsKey(networkId)) return;
 
@@ -1041,6 +1056,14 @@ namespace EOSNative.Net
 
             if (_objects.TryGetValue(networkId, out var obj))
             {
+                // Sender validation: only the owner or host can despawn an object
+                if (obj.OwnerId != null && !sender.Equals(obj.OwnerId) && !sender.Equals(GetHostPuid()))
+                {
+                    EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "NetworkManager",
+                        $"Rejected despawn: sender {sender} is not owner/host for object {networkId}");
+                    return;
+                }
+
                 ushort prefabId = obj.PrefabId;
                 _objects.Remove(networkId);
                 _dirtyObjects.Remove(obj);
@@ -1065,6 +1088,14 @@ namespace EOSNative.Net
 
             if (_objects.TryGetValue(networkId, out var obj))
             {
+                // Sender validation: only the current owner or host can transfer authority
+                if (obj.OwnerId != null && !sender.Equals(obj.OwnerId) && !sender.Equals(GetHostPuid()))
+                {
+                    EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "NetworkManager",
+                        $"Rejected authority transfer: sender {sender} is not owner/host for object {networkId}");
+                    return;
+                }
+
                 var oldOwner = obj.OwnerId;
                 obj.OwnerId = newOwnerId;
                 obj.NotifyOwnerChanged(oldOwner, newOwnerId);
@@ -1216,6 +1247,9 @@ namespace EOSNative.Net
 
         private void HandleSnapshot(ProductUserId sender, NetReader reader)
         {
+            var hostPuid = GetHostPuid();
+            bool senderIsHost = hostPuid != null && sender.Equals(hostPuid);
+
             uint count = reader.ReadPackedUInt32();
 
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
@@ -1230,6 +1264,14 @@ namespace EOSNative.Net
                 Quaternion rotation = reader.ReadQuaternion();
                 bool destroyWithOwner = reader.ReadBool();
                 byte syncVarCount = reader.ReadByte();
+
+                // Sender validation: accept from host (full snapshot) or owner (reliable fallback)
+                if (!senderIsHost && ownerId != null && !sender.Equals(ownerId))
+                {
+                    EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "NetworkManager",
+                        $"Snapshot: sender {sender} is not owner/host for object {networkId}, skipping remainder");
+                    return; // Can't safely skip variable-length SyncVar data — bail on entire snapshot
+                }
 
                 if (_objects.ContainsKey(networkId))
                 {

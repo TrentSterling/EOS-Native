@@ -42,6 +42,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Shared room data (NetworkRoomState — live room properties with lobby attribute mirroring)
 - [x] Per-user data (NetworkPlayerState — per-player synced properties)
 - [x] Master client verification (OnRPCValidation callback + EnableOwnerOnlyRPCValidation helper)
+- [x] Sender validation on message handlers (HandleStateUpdate, HandleSpawn, HandleDespawn, HandleAuthority, HandleSnapshot verify sender == owner or host)
 - [ ] Spatial hash (interest management — only sync nearby objects)
 - [ ] Tick-based simulation (deterministic tick rate, decoupled from frame rate)
 - [x] Connection statistics / network profiler (RTT, packet loss, bandwidth)
@@ -84,6 +85,12 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Collider rollback (lag compensation for hit detection)
 - [ ] Study Valve networking docs (Source/CS:GO PDFs) for rollback architecture
 - [ ] Study Photon PUN architecture for shared-mode patterns
+
+**Security & Validation:**
+- [ ] Host-validated RPCs — `[NetRpc(Validated = true)]` option to route RPCs through host for validation before broadcast. Adds ~20-40ms latency but prevents RPC spoofing. Use for damage, scoring, economy. Research: 2-hop relay (sender→host→all), host-side validation callback, automatic fallback if host disconnects during relay.
+- [ ] Decompression size limit (cap `DecompressDeflate` output to prevent compression bombs)
+- [ ] Join code entropy increase (6-8 alphanumeric chars instead of 4-digit numeric)
+- [ ] Per-peer RPC rate limiting (cap messages/sec per sender to prevent flood DoS)
 
 **Advanced:**
 - [ ] Network rules (PurrNet-style validation rules)
@@ -297,3 +304,4 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] P2P handshake retry — Up to 5 retries at 2s intervals when in lobby but no peers connected. Handles timing/race conditions automatically (v2.17.2)
 - [x] Fix double Router.ProcessIncoming subscription — Auto-subscribe in EOSP2PManager.Router getter, removed manual wiring from P2PDemoManager and NetworkManager (v2.17.2)
 - [x] P2P diagnostic logging — Result checking on AcceptConnection/SendPacket, null-state warnings on Initialize/AcceptPeer, connection type/reason in events (v2.17.2)
+- [x] Sender validation on message handlers — HandleStateUpdate, HandleSpawn, HandleDespawn, HandleAuthority, HandleSnapshot verify sender is owner or host. Prevents peers from writing to objects they don't own, despawning others' objects, or claiming authority. Zero latency cost (v2.17.5)

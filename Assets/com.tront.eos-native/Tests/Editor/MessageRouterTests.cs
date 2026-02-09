@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
 using EOSNative.P2P;
 
 namespace EOSNative.Tests
@@ -60,17 +62,17 @@ namespace EOSNative.Tests
         }
 
         // Wrap data in a single-fragment packet header
-        // Fragment header: [seqHi:1][seqLo:1][fragmentIndex:1][fragmentCount:1][channelId:1][reserved:2] = 7 bytes
+        // Fragment header: [packetId:u32][fragmentIndex:u16][isLast:u8] = 7 bytes
         private byte[] WrapInFragment(byte[] data)
         {
             var packet = new byte[7 + data.Length];
-            packet[0] = 0; // seq high
-            packet[1] = 1; // seq low
-            packet[2] = 0; // fragment index
-            packet[3] = 1; // fragment count (1 = single)
-            packet[4] = 0; // channel
-            packet[5] = 0; // reserved
-            packet[6] = 0; // reserved
+            packet[0] = 1; // packetId byte 0
+            packet[1] = 0; // packetId byte 1
+            packet[2] = 0; // packetId byte 2
+            packet[3] = 0; // packetId byte 3
+            packet[4] = 0; // fragmentIndex byte 0
+            packet[5] = 0; // fragmentIndex byte 1
+            packet[6] = 1; // isLast = true (single fragment)
             Buffer.BlockCopy(data, 0, packet, 7, data.Length);
             return packet;
         }
@@ -84,7 +86,6 @@ namespace EOSNative.Tests
         {
             var router = new MessageRouter(null);
             int callCount = 0;
-            byte receivedMsgId = 0;
 
             router.Register(0x10, (sender, reader) =>
             {
@@ -333,14 +334,14 @@ namespace EOSNative.Tests
         public void HandlerException_DoesNotCrash()
         {
             var router = new MessageRouter(null);
-            int handler2Count = 0;
 
             router.Register(0x10, (sender, reader) =>
             {
                 throw new InvalidOperationException("Test exception");
             });
 
-            // Should not throw — exceptions are caught internally
+            // Should not throw — exceptions are caught internally (logged via Debug.LogError)
+            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(".*Test exception.*"));
             var packet = BuildSinglePacket(0x10, new byte[] { 0xAA });
             Assert.DoesNotThrow(() => router.ProcessIncoming(null, 0, packet));
         }

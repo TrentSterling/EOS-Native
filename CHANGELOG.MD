@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.17.5] - 2026-02-08
+
+### Added
+- **Sender validation on all network message handlers** — HandleStateUpdate, HandleSpawn, HandleDespawn, HandleAuthority, and HandleSnapshot now verify that the sender is authorized (owner or host) before applying state changes. Prevents peers from modifying objects they don't own, despawning other players' objects, or transferring authority without permission. Zero latency cost — just a reference comparison on each incoming message.
+
 ## [2.17.4] - 2026-02-08
 
 ### Added
