@@ -73,8 +73,18 @@ namespace EOSNative.Net
 
         #region Properties
 
-        /// <summary>True if this peer is the host (lowest PUID among all connected peers + self).</summary>
+        /// <summary>True if this peer is the host (lowest PUID among all connected peers + self). Always true in offline mode.</summary>
         public bool IsHost { get; private set; }
+
+        /// <summary>
+        /// When true, the networking layer runs entirely locally without EOS, P2P, or lobby connections.
+        /// All RPCs execute locally, SyncVars work but aren't sent, spawns are local-only.
+        /// You are always the host in offline mode. Set before OnEnable or call StartOfflineMode().
+        /// </summary>
+        public bool OfflineMode { get; private set; }
+
+        /// <summary>Set of NetworkIds owned by the local player in offline mode (no ProductUserId available).</summary>
+        private readonly HashSet<uint> _offlineOwnedNetworkIds = new();
 
         /// <summary>All active NetworkObjects, keyed by NetworkId.</summary>
         public IReadOnlyDictionary<uint, NetworkObject> Objects => _objects;
@@ -198,6 +208,51 @@ namespace EOSNative.Net
             }
         }
 
+        /// <summary>
+        /// Start offline mode. The networking layer runs entirely locally — no EOS login,
+        /// no P2P connections, no lobby required. You are always the host. RPCs execute locally,
+        /// SyncVars work but aren't transmitted. Call this instead of joining a lobby for single-player
+        /// or testing scenarios.
+        /// </summary>
+        public void StartOfflineMode()
+        {
+            if (OfflineMode) return;
+            OfflineMode = true;
+            IsHost = true;
+            _localIdPrefix = 0xFFFF;
+            _localIdCounter = 1;
+
+            // Create RoomState and PlayerState (host responsibility)
+            EnsureRoomState();
+            EnsureLocalPlayerState();
+
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager", "Offline mode started");
+        }
+
+        /// <summary>
+        /// Stop offline mode and clean up offline-only state. Call before going online
+        /// (joining a lobby). Does NOT despawn objects — call DespawnAll() first if needed.
+        /// </summary>
+        public void StopOfflineMode()
+        {
+            if (!OfflineMode) return;
+            OfflineMode = false;
+            _offlineOwnedNetworkIds.Clear();
+            _localIdPrefix = 0;
+            _localIdCounter = 0;
+
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager", "Offline mode stopped");
+        }
+
+        /// <summary>
+        /// Check if a NetworkObject is owned locally in offline mode.
+        /// Used by NetworkObject.IsOwner as a fallback when OwnerId is null.
+        /// </summary>
+        internal bool IsLocallyOwnedOffline(uint networkId)
+        {
+            return OfflineMode && _offlineOwnedNetworkIds.Contains(networkId);
+        }
+
         #endregion
 
         #region Prefab Registry
@@ -242,11 +297,15 @@ namespace EOSNative.Net
                 return null;
             }
 
-            var localPuid = EOSManager.Instance?.LocalProductUserId;
-            if (localPuid == null)
+            ProductUserId localPuid = null;
+            if (!OfflineMode)
             {
-                Debug.LogError("[NetworkManager] Cannot spawn — not logged in");
-                return null;
+                localPuid = EOSManager.Instance?.LocalProductUserId;
+                if (localPuid == null)
+                {
+                    Debug.LogError("[NetworkManager] Cannot spawn — not logged in");
+                    return null;
+                }
             }
 
             uint networkId = GenerateNetworkId();
@@ -258,16 +317,21 @@ namespace EOSNative.Net
 
             netObj.NetworkId = networkId;
             netObj.PrefabId = prefabId;
-            netObj.OwnerId = localPuid;
+            netObj.OwnerId = localPuid; // null in offline mode
             netObj.IsRegistered = true;
             _objects[networkId] = netObj;
+
+            if (OfflineMode)
+                _offlineOwnedNetworkIds.Add(networkId);
+
             netObj.NotifyNetworkSpawn();
 
-            // Broadcast spawn to all peers
-            BroadcastSpawn(netObj);
+            // Broadcast spawn to all peers (skip in offline mode)
+            if (!OfflineMode)
+                BroadcastSpawn(netObj);
 
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Spawned object {networkId} (prefab {prefabId})");
+                $"Spawned object {networkId} (prefab {prefabId}){(OfflineMode ? " [offline]" : "")}");
 
             return netObj;
         }
@@ -288,16 +352,20 @@ namespace EOSNative.Net
             ushort prefabId = obj.PrefabId;
             _objects.Remove(networkId);
             _dirtyObjects.Remove(obj);
+            _offlineOwnedNetworkIds.Remove(networkId);
             obj.IsRegistered = false;
             obj.NotifyNetworkDespawn();
             UnregisterRPCs(obj);
             ReturnToPool(prefabId, obj.gameObject);
 
-            // Broadcast despawn — use interest filtering if enabled
-            var writer = NetWriterPool.Get();
-            writer.WriteUInt32(networkId);
-            SendToInterestedPeers(MSG_DESPAWN, writer, obj, PacketReliability.ReliableOrdered, 1);
-            NetWriterPool.Return(writer);
+            if (!OfflineMode)
+            {
+                // Broadcast despawn — use interest filtering if enabled
+                var writer = NetWriterPool.Get();
+                writer.WriteUInt32(networkId);
+                SendToInterestedPeers(MSG_DESPAWN, writer, obj, PacketReliability.ReliableOrdered, 1);
+                NetWriterPool.Return(writer);
+            }
 
             // Clean up from interest manager
             if (InterestManagementEnabled)
@@ -305,6 +373,22 @@ namespace EOSNative.Net
 
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
                 $"Despawned object {networkId}");
+        }
+
+        /// <summary>
+        /// Despawn all registered NetworkObjects owned by this peer. Call before StopOfflineMode()
+        /// to clean up objects, or use for a full session reset.
+        /// </summary>
+        public void DespawnAll()
+        {
+            var toRemove = new List<NetworkObject>();
+            foreach (var obj in _objects.Values)
+            {
+                if (obj != null && obj.IsRegistered && (obj.IsOwner || IsHost))
+                    toRemove.Add(obj);
+            }
+            for (int i = 0; i < toRemove.Count; i++)
+                Despawn(toRemove[i]);
         }
 
         #endregion
@@ -398,6 +482,14 @@ namespace EOSNative.Net
             byte[] argData = argWriter.ToArray();
             NetWriterPool.Return(argWriter);
 
+            // Offline mode: always execute locally, never send remote
+            if (OfflineMode)
+            {
+                // In offline mode, treat all targets as local execution
+                ExecuteRPCLocal(target.NetworkId, nameHash, argData, argData.Length);
+                return;
+            }
+
             if (executeLocal)
                 ExecuteRPCLocal(target.NetworkId, nameHash, argData, argData.Length);
 
@@ -442,6 +534,17 @@ namespace EOSNative.Net
         public void SendRPC(NetworkObject target, string methodName, ProductUserId peer, params object[] args)
         {
             if (target == null || !target.IsRegistered) return;
+
+            // Offline mode: execute locally (no peers exist)
+            if (OfflineMode)
+            {
+                uint nameHash = FnvHash(methodName);
+                byte[] argData = SerializeRPCArgs(args);
+                if (argData != null)
+                    ExecuteRPCLocal(target.NetworkId, nameHash, argData, argData.Length);
+                return;
+            }
+
             if (peer == null) return;
 
             uint nameHash = FnvHash(methodName);
@@ -471,6 +574,17 @@ namespace EOSNative.Net
         public void SendRPC(NetworkObject target, string methodName, IEnumerable<ProductUserId> peers, params object[] args)
         {
             if (target == null || !target.IsRegistered) return;
+
+            // Offline mode: execute locally (no peers exist)
+            if (OfflineMode)
+            {
+                uint nameHash = FnvHash(methodName);
+                byte[] argData = SerializeRPCArgs(args);
+                if (argData != null)
+                    ExecuteRPCLocal(target.NetworkId, nameHash, argData, argData.Length);
+                return;
+            }
+
             if (peers == null) return;
 
             uint nameHash = FnvHash(methodName);
@@ -613,6 +727,13 @@ namespace EOSNative.Net
         {
             if (target == null || !target.IsRegistered) return;
 
+            // Offline mode: skip validation overhead, execute locally
+            if (OfflineMode)
+            {
+                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                return;
+            }
+
             if (IsHost)
             {
                 // We ARE the host — validate locally and broadcast directly
@@ -668,6 +789,13 @@ namespace EOSNative.Net
         public void SendRPCWeaved(NetworkObject target, uint methodHash, RPCTarget targets, byte[] argData)
         {
             if (target == null || !target.IsRegistered) return;
+
+            // Offline mode: always execute locally, never send remote
+            if (OfflineMode)
+            {
+                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                return;
+            }
 
             // Buffer host/owner-targeted RPCs during migration window
             if (_migrationInProgress && (targets == RPCTarget.Host || targets == RPCTarget.Owner))
@@ -752,6 +880,14 @@ namespace EOSNative.Net
         public void SendRPCWeavedToPeer(NetworkObject target, uint methodHash, ProductUserId peer, byte[] argData)
         {
             if (target == null || !target.IsRegistered) return;
+
+            // Offline mode: execute locally (no peers exist)
+            if (OfflineMode)
+            {
+                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                return;
+            }
+
             if (peer == null) return;
 
             var localPuid = EOSManager.Instance?.LocalProductUserId;
@@ -905,18 +1041,21 @@ namespace EOSNative.Net
 
         private void OnEnable()
         {
-            SubscribeRouter();
-
-            var p2p = EOSP2PManager.Instance;
-            p2p.OnPeerConnected += OnPeerConnected;
-            p2p.OnPeerDisconnected += OnPeerDisconnected;
-
-            // Subscribe to interest enter/exit for dynamic spawn/despawn
-            var im = InterestManager.Instance;
-            if (im != null)
+            if (!OfflineMode)
             {
-                im.OnInterestEnter += OnInterestEnter;
-                im.OnInterestExit += OnInterestExit;
+                SubscribeRouter();
+
+                var p2p = EOSP2PManager.Instance;
+                p2p.OnPeerConnected += OnPeerConnected;
+                p2p.OnPeerDisconnected += OnPeerDisconnected;
+
+                // Subscribe to interest enter/exit for dynamic spawn/despawn
+                var im = InterestManager.Instance;
+                if (im != null)
+                {
+                    im.OnInterestEnter += OnInterestEnter;
+                    im.OnInterestExit += OnInterestExit;
+                }
             }
 
             // Subscribe to tick simulation if active
@@ -1131,6 +1270,15 @@ namespace EOSNative.Net
                 return;
             }
 
+            // Offline mode: just clear dirty flags, no network send needed
+            if (OfflineMode)
+            {
+                for (int i = 0; i < _dirtyObjects.Count; i++)
+                    _dirtyObjects[i].ClearDirty();
+                _dirtyObjects.Clear();
+                return;
+            }
+
             // Pre-serialize each dirty object's delta data + increment sequences
             // (must happen once regardless of per-peer filtering)
             for (int i = 0; i < _dirtyObjects.Count; i++)
@@ -1305,6 +1453,8 @@ namespace EOSNative.Net
         /// </summary>
         private void CheckReliableFallback()
         {
+            if (OfflineMode) { _reliableFallbackObjects.Clear(); return; }
+
             float now = Time.time;
             for (int i = _reliableFallbackObjects.Count - 1; i >= 0; i--)
             {
@@ -1880,6 +2030,8 @@ namespace EOSNative.Net
 
         private void RecomputeHost()
         {
+            if (OfflineMode) return; // always host in offline mode
+
             var localPuid = EOSManager.Instance?.LocalProductUserId;
             if (localPuid == null) return;
 
@@ -2175,7 +2327,8 @@ namespace EOSNative.Net
 
         private void InitLocalIdPrefix()
         {
-            if (_localIdPrefix != 0) return;
+            if (_localIdPrefix != 0) return; // already set (or set by StartOfflineMode)
+            if (OfflineMode) return; // offline prefix is set by StartOfflineMode()
 
             var localPuid = EOSManager.Instance?.LocalProductUserId;
             if (localPuid == null) return;
@@ -2337,7 +2490,7 @@ namespace EOSNative.Net
             if (RoomState != null) return;
 
             var localPuid = EOSManager.Instance?.LocalProductUserId;
-            if (localPuid == null) return;
+            if (localPuid == null && !OfflineMode) return;
 
             var go = new GameObject("NetworkRoomState");
             if (EOSManager.Instance != null)
@@ -2349,18 +2502,23 @@ namespace EOSNative.Net
             var netObj = roomState.Net;
             netObj.NetworkId = NetworkRoomState.WELL_KNOWN_ID;
             netObj.PrefabId = NetworkRoomState.PREFAB_ID;
-            netObj.OwnerId = localPuid;
+            netObj.OwnerId = localPuid; // null in offline mode
             netObj.DestroyWithOwner = false;
             netObj.IsRegistered = true;
             _objects[netObj.NetworkId] = netObj;
             RoomState = roomState;
+
+            if (OfflineMode)
+                _offlineOwnedNetworkIds.Add(netObj.NetworkId);
+
             netObj.NotifyNetworkSpawn();
 
-            // Broadcast spawn to all peers
-            BroadcastSpawn(netObj);
+            // Broadcast spawn to all peers (skip in offline mode)
+            if (!OfflineMode)
+                BroadcastSpawn(netObj);
 
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                "RoomState created by host");
+                $"RoomState created by host{(OfflineMode ? " [offline]" : "")}");
         }
 
         /// <summary>
@@ -2371,11 +2529,11 @@ namespace EOSNative.Net
             if (LocalPlayerState != null) return;
 
             var localPuid = EOSManager.Instance?.LocalProductUserId;
-            if (localPuid == null) return;
+            if (localPuid == null && !OfflineMode) return;
 
             uint networkId = GenerateNetworkId();
 
-            var go = new GameObject($"PlayerState_{localPuid}");
+            var go = new GameObject(OfflineMode ? "PlayerState_Offline" : $"PlayerState_{localPuid}");
             if (EOSManager.Instance != null)
                 go.transform.SetParent(EOSManager.Instance.transform);
             else
@@ -2385,12 +2543,17 @@ namespace EOSNative.Net
             var netObj = playerState.Net;
             netObj.NetworkId = networkId;
             netObj.PrefabId = NetworkPlayerState.PREFAB_ID;
-            netObj.OwnerId = localPuid;
+            netObj.OwnerId = localPuid; // null in offline mode
             netObj.DestroyWithOwner = true;
             netObj.IsRegistered = true;
             _objects[networkId] = netObj;
-            _playerStates[localPuid] = playerState;
+            if (localPuid != null)
+                _playerStates[localPuid] = playerState;
             LocalPlayerState = playerState;
+
+            if (OfflineMode)
+                _offlineOwnedNetworkIds.Add(networkId);
+
             netObj.NotifyNetworkSpawn();
 
             // Initialize display name from registry
@@ -2400,11 +2563,12 @@ namespace EOSNative.Net
             if (IsSpectator)
                 playerState.SetCustom("_spectator", "1");
 
-            // Broadcast spawn to all peers
-            BroadcastSpawn(netObj);
+            // Broadcast spawn to all peers (skip in offline mode)
+            if (!OfflineMode)
+                BroadcastSpawn(netObj);
 
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Local PlayerState created (id={networkId})");
+                $"Local PlayerState created (id={networkId}){(OfflineMode ? " [offline]" : "")}");
         }
 
         /// <summary>

@@ -782,6 +782,44 @@ Fixed-rate simulation decoupled from rendering frame rate. When enabled, network
 
 **Configuration:** Set `TickSimulation.Instance.TickRate` before or during play. Common values: 20 (casual), 30 (standard), 60 (competitive). 0 = disabled (frame-based, backward compatible).
 
+## Offline Mode (v2.30.0)
+
+`NetworkManager.StartOfflineMode()` enables a fully local networking session without EOS login, P2P connections, or lobby. All RPCs execute locally, SyncVars work but aren't transmitted, spawns are local-only. You are always the host. Useful for single-player gameplay, testing, and prototyping.
+
+### API
+
+```csharp
+// Start offline mode (creates RoomState + PlayerState automatically)
+NetworkManager.Instance.StartOfflineMode();
+
+// Spawn objects normally — they work locally
+var obj = NetworkManager.Instance.Spawn(prefabId, position, rotation);
+obj.IsOwner; // true (tracked via _offlineOwnedNetworkIds)
+
+// RPCs execute locally regardless of target
+[NetRpc(RPCTarget.All)]
+void MyRpc(int value) { /* fires locally */ }
+
+// SyncVars work, just not transmitted
+myVar.Value = 42; // dirty flag cleared on next frame, no network send
+
+// Stop offline mode
+NetworkManager.Instance.DespawnAll();
+NetworkManager.Instance.StopOfflineMode();
+```
+
+### Design
+
+- **No fake ProductUserId** — `OwnerId` is null for offline objects. Ownership tracked via `_offlineOwnedNetworkIds` HashSet on NetworkManager.
+- **NetworkObject.IsOwner** falls back to `NetworkManager.IsLocallyOwnedOffline(NetworkId)` when `OwnerId` is null.
+- **ID prefix `0xFFFF`** — All offline-spawned objects use this prefix, distinct from any online prefix (derived from PUID hash).
+- **IsHost = true** — Always host in offline mode. RecomputeHost() is a no-op.
+- **All RPC paths guarded** — `SendRPC`, `SendRPCWeaved`, `SendRPCValidated`, `SendRPCWeavedToPeer`, and peer-targeted overloads all execute locally and return.
+- **SendStateUpdates** — Clears dirty flags without sending. CheckReliableFallback also no-ops.
+- **EnsureRoomState / EnsureLocalPlayerState** — Create objects with null OwnerId but tracked via offline ownership set.
+- **OnEnable** — Skips router subscription and P2P event hookups when offline.
+- **DespawnAll()** — Convenience method to despawn all owned/host objects before stopping offline mode.
+
 ## Automated Tests
 
 Editor-mode unit tests for core networking primitives. Uses Unity Test Framework (`com.unity.test-framework`).

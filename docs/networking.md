@@ -1284,3 +1284,49 @@ All Layer 2 networking messages use the `0xA0`-`0xAF` range:
 | `0xAC` | SCENE_LOADED_ACK | Reliable | 1 | sceneName |
 | `0xAD` | RPC_VALIDATED | Reliable | 1 | networkId, methodHash, originalTarget, argData |
 | `0xAE` | RPC_REBROADCAST | Reliable | 1 | networkId, methodHash, originalTarget, argData |
+
+## Offline Mode
+
+`NetworkManager.StartOfflineMode()` enables a fully local networking session — no EOS login, no P2P connections, no lobby required. Perfect for single-player gameplay, testing, and prototyping.
+
+```csharp
+// Start offline session
+NetworkManager.Instance.StartOfflineMode();
+// RoomState and PlayerState are auto-created, just like a normal host
+
+// Spawn and interact normally
+var obj = NetworkManager.Instance.Spawn(myPrefabId, pos, rot);
+obj.IsOwner; // true — ownership tracked locally
+
+// All RPCs execute locally
+[NetRpc(RPCTarget.All)]
+void TakeDamage(float amount) { Health.Value -= amount; } // works!
+
+// SyncVars work (dirty tracking + OnChanged), just not transmitted
+myVar.Value = 42;
+
+// Clean up
+NetworkManager.Instance.DespawnAll();
+NetworkManager.Instance.StopOfflineMode();
+```
+
+### Key Behaviors
+
+| Feature | Online | Offline |
+|---------|--------|---------|
+| IsHost | Elected (lowest PUID) | Always `true` |
+| IsOwner | `OwnerId == LocalProductUserId` | Tracked via `_offlineOwnedNetworkIds` |
+| RPCs | Sent/received over P2P | Execute locally immediately |
+| SyncVars | Dirty → serialize → send | Dirty flags cleared, no send |
+| Spawns | Broadcast to all peers | Local only |
+| RoomState | Created by host | Created automatically |
+| PlayerState | Created on peer connect | Created automatically |
+
+### Transitioning Online
+
+```csharp
+// Go from offline to online
+NetworkManager.Instance.DespawnAll();   // clean up offline objects
+NetworkManager.Instance.StopOfflineMode();
+// Now join a lobby normally — EOS login, P2P, etc.
+```

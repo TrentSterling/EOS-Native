@@ -2,6 +2,19 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.30.0] - 2026-02-09
+
+### Added
+- **Offline mode** — `NetworkManager.StartOfflineMode()` enables a fully local networking session without EOS login, P2P connections, or lobby. All RPCs execute locally, SyncVars work but aren't transmitted, spawns are local-only. You are always the host. Useful for single-player gameplay, testing, and prototyping.
+  - `StartOfflineMode()` / `StopOfflineMode()` — toggle offline mode on/off
+  - `OfflineMode` property — read current state
+  - `DespawnAll()` — despawn all owned/host objects (call before StopOfflineMode)
+  - `NetworkObject.IsOwner` — falls back to offline ownership tracking when `OwnerId` is null
+  - RoomState and PlayerState auto-created on `StartOfflineMode()` (same as normal host)
+  - All RPC paths guarded: `SendRPC`, `SendRPCWeaved`, `SendRPCValidated`, `SendRPCWeavedToPeer`, and peer-targeted overloads
+  - State sync, reliable fallback, host election, and interest enter/exit events all skip network I/O in offline mode
+  - ID prefix `0xFFFF` reserved for offline-spawned objects
+
 ## [2.29.0] - 2026-02-09
 
 ### Added

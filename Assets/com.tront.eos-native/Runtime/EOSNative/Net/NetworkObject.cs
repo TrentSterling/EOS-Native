@@ -39,7 +39,17 @@ namespace EOSNative.Net
         public bool DestroyWithOwner { get; set; } = false;
 
         /// <summary>True if the local peer owns this object.</summary>
-        public bool IsOwner => OwnerId != null && OwnerId == EOSManager.Instance?.LocalProductUserId;
+        public bool IsOwner
+        {
+            get
+            {
+                if (OwnerId != null)
+                    return OwnerId == EOSManager.Instance?.LocalProductUserId;
+                // Offline mode fallback: OwnerId is null but we track ownership via NetworkManager
+                var nm = NetworkManager.Instance;
+                return nm != null && nm.IsLocallyOwnedOffline(NetworkId);
+            }
+        }
 
         /// <summary>True if the local peer is the current host (lowest PUID).</summary>
         public bool IsHost => NetworkManager.Instance != null && NetworkManager.Instance.IsHost;

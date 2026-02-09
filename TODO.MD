@@ -95,6 +95,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 
 **Advanced:**
 - [x] Network rules (SyncVarWriteAccess + OnSyncVarWrite callback) (v2.25.0)
+- [x] Offline mode (local-only networking without EOS/P2P/lobby, for single-player and testing) (v2.30.0)
 - [ ] Dedicated server support (server joins lobby, server-authoritative validation)
 - [ ] Cloudscripting via VPS ($5 VPS for cloud validation / Discord bot integration)
 
