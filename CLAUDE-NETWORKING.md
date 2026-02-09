@@ -618,9 +618,9 @@ bool Validate_DealDamage(ProductUserId sender, NetworkObject target, byte[] argD
 }
 ```
 
-**Flow:** Client calls `DealDamage(50)` → weaver sends to host only (MSG_RPC_VALIDATED 0xA8) → host runs `Validate_DealDamage` if present (auto-approves if not) → host rebroadcasts (MSG_RPC_REBROADCAST 0xA9) → all peers execute.
+**Flow:** Client calls `DealDamage(50)` → weaver sends to host only (MSG_RPC_VALIDATED 0xAD) → host runs `Validate_DealDamage` if present (auto-approves if not) → host rebroadcasts (MSG_RPC_REBROADCAST 0xAE) → all peers execute.
 
-**Wire format (both 0xA8 and 0xA9):** `[networkId:u32][methodHash:u32][originalTarget:u8][argData...]`
+**Wire format (both 0xAD and 0xAE):** `[networkId:u32][methodHash:u32][originalTarget:u8][argData...]`
 
 **Key points:**
 - No `nameof` needed — weaver auto-discovers `Validate_X` by naming convention

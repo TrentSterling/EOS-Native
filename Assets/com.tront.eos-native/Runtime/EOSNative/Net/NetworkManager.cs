@@ -27,13 +27,16 @@ namespace EOSNative.Net
         private const byte MSG_SNAPSHOT_REQUEST = 0xA5;
         private const byte MSG_RPC = 0xA6;
         private const byte MSG_AUTHORITY_REQUEST = 0xA7;
-        private const byte MSG_RPC_VALIDATED = 0xA8;   // Client→Host: validated RPC request
-        private const byte MSG_RPC_REBROADCAST = 0xA9; // Host→All: approved validated RPC
+        // 0xA8-0xA9 reserved by NetworkStats (PING/PONG)
 
         // Scene management (0xAA-0xAC)
         private const byte MSG_SCENE_LOAD = 0xAA;
         private const byte MSG_SCENE_UNLOAD = 0xAB;
         private const byte MSG_SCENE_LOADED_ACK = 0xAC;
+
+        // Host-validated RPCs (0xAD-0xAE)
+        private const byte MSG_RPC_VALIDATED = 0xAD;   // Client→Host: validated RPC request
+        private const byte MSG_RPC_REBROADCAST = 0xAE; // Host→All: approved validated RPC
 
         // Chunked snapshot delivery
         private const int SNAPSHOT_CHUNK_SIZE = 16;

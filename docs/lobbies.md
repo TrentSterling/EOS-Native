@@ -57,9 +57,27 @@ var (result, data) = await lobby.CreateLobbyAsync(
 
 Voice and host migration are enabled by default. Use `.WithVoice(false)` or `.WithHostMigration(false)` to disable them.
 
+### With Custom Join Code Length
+
+By default, join codes are 6 digits. You can configure the length (4-8 digits) globally or per-lobby:
+
+```csharp
+// Global: change default for all lobbies
+EOSLobbyManager.Instance.JoinCodeLength = 4;  // shorter codes, easier to share
+
+// Per-lobby: override via LobbyOptions
+var (result, data) = await lobby.CreateLobbyAsync(
+    new LobbyOptions()
+        .WithName("Tournament")
+        .WithJoinCodeLength(8)  // longer code for this lobby only
+);
+```
+
+Shorter codes (4 digits) are easier to share verbally but have higher collision probability. Longer codes (6-8 digits) are safer for large player bases.
+
 ### With EOS LobbyId as Code
 
-Use the EOS-generated LobbyId instead of a random 4-digit code. Guarantees uniqueness — useful for chat history or invite links that key off the lobby code:
+Use the EOS-generated LobbyId instead of a random numeric code. Guarantees uniqueness — useful for chat history or invite links that key off the lobby code:
 
 ```csharp
 var (result, data) = await lobby.CreateLobbyAsync(
@@ -111,7 +129,8 @@ await lobby.SearchLobbiesAsync(options);  // -> LobbySearchOptions
 | `MaxPlayers` | Both | 4 | Max capacity / capacity filter |
 | `Password` | Create | null | Password protection |
 | `SkillLevel` | Both | null | Skill level for matchmaking |
-| `JoinCode` | Create | null | Custom join code (null = auto 4-digit) |
+| `JoinCode` | Create | null | Custom join code (null = auto-generated) |
+| `JoinCodeLength` | Create | null | Override join code length (4-8 digits) |
 | `UseEosLobbyId` | Create | false | Use EOS-generated ID as code |
 | `IsPublic` | Create | true | Publicly searchable |
 | `EnableVoice` | Create | true | Enable voice chat (RTC room) |
@@ -153,6 +172,7 @@ All fluent methods return the same `LobbyOptions` instance for chaining.
 | Method | Description |
 |--------|-------------|
 | `.WithJoinCode(string)` | Set custom join code |
+| `.WithJoinCodeLength(int)` | Override code length (4-8 digits) |
 | `.WithEosLobbyId()` | Use EOS-generated lobby ID as code |
 | `.WithVoice(bool)` | Enable/disable voice (default: true) |
 | `.WithMutedMic(bool)` | Start muted (default: false) |

@@ -494,6 +494,66 @@ NetworkManager.Instance.RegisterRPC(Net, "GotHitBy", reader =>
 });
 ```
 
+## SyncVar LOD
+
+Distance-based sync rate throttling. Attach `SyncVarLOD` to any NetworkObject to reduce bandwidth for distant objects. Works on the **owner side** — throttles how often dirty SyncVars are propagated to the send queue.
+
+### Quick Start
+
+```csharp
+// Just add the SyncVarLOD component alongside NetworkObject.
+// Default tiers work out of the box:
+//   0-20m:   full rate (every dirty frame)
+//   20-50m:  every 3rd dirty frame
+//   50-100m: every 10th dirty frame
+//   100m+:   no sync (object is culled)
+```
+
+### Custom Tiers
+
+```csharp
+var lod = GetComponent<SyncVarLOD>();
+
+lod.Tiers = new List<SyncVarLOD.Tier>
+{
+    new() { MaxDistance = 30f, SyncEveryNthFrame = 1 },   // full rate
+    new() { MaxDistance = 80f, SyncEveryNthFrame = 5 },   // 1/5 rate
+    new() { MaxDistance = 150f, SyncEveryNthFrame = 15 }, // 1/15 rate
+};
+// Beyond 150m: no sync at all
+```
+
+### How It Works
+
+1. Each `LateUpdate`, the component calculates the distance to the nearest peer's object
+2. Based on the distance, it selects the active tier
+3. When `NetworkObject.MarkDirty()` is called, `SyncVarLOD.ShouldPropagateDirty()` counts dirty frames and only allows propagation every Nth frame
+4. Objects beyond all tiers are fully culled (no sync traffic)
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Tiers` | `List<Tier>` | Distance tiers, sorted by MaxDistance ascending |
+| `AutoObserverPosition` | bool | Auto-detect nearest peer (default: true) |
+| `ObserverPosition` | Vector3 | Manual override for distance reference point |
+| `CurrentTier` | int | Active tier index (-1 = culled). Read-only |
+| `CurrentSyncRate` | int | Effective sync rate (0 = culled). Read-only |
+
+### Manual Observer Position
+
+For custom camera or spectator logic, disable auto-detection and set the observer position manually:
+
+```csharp
+var lod = GetComponent<SyncVarLOD>();
+lod.AutoObserverPosition = false;
+lod.ObserverPosition = Camera.main.transform.position;
+```
+
+### Difference from NetworkTransform LOD
+
+`SyncVarLOD` throttles **all SyncVars** on a NetworkObject at the dirty-flag level. `NetworkTransform` has its own built-in distance LOD that controls **interpolation quality** (spring vs tweened vs snap). They can be used together — SyncVarLOD controls send frequency while NetworkTransform LOD controls visual fidelity.
+
 ## NetworkTransform
 
 All-in-one transform sync component. Combines spring physics, buffered interpolation, velocity extrapolation, and distance-based LOD in a single component.
@@ -963,3 +1023,5 @@ All Layer 2 networking messages use the `0xA0`-`0xAF` range:
 | `0xAA` | SCENE_LOAD | Reliable | 1 | sceneName, additive(bool) |
 | `0xAB` | SCENE_UNLOAD | Reliable | 1 | sceneName |
 | `0xAC` | SCENE_LOADED_ACK | Reliable | 1 | sceneName |
+| `0xAD` | RPC_VALIDATED | Reliable | 1 | networkId, methodHash, originalTarget, argData |
+| `0xAE` | RPC_REBROADCAST | Reliable | 1 | networkId, methodHash, originalTarget, argData |

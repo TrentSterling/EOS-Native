@@ -2,10 +2,18 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.18.1] - 2026-02-08
+
+### Fixed
+- **Message ID collision** — Host-validated RPC message IDs (0xA8/0xA9) collided with NetworkStats PING/PONG. Moved to 0xAD/0xAE. Without this fix, validated RPCs and connection stats would interfere with each other.
+
+### Added
+- **Docsify documentation** for host-validated RPCs, SyncVar LOD, and configurable join codes.
+
 ## [2.18.0] - 2026-02-08
 
 ### Added
-- **Host-validated RPCs** — `[NetRpc(RPCTarget.All, Validated = true)]` routes RPCs through the host for validation before broadcast. Client sends to host only; host runs a `Validate_MethodName(ProductUserId, NetworkObject, byte[])` method (auto-discovered by naming convention, no `nameof` needed), then rebroadcasts if approved. Adds ~20-40ms latency (one extra hop). Without a validator method, the host auto-approves (relay-only mode). New message types: `MSG_RPC_VALIDATED` (0xA8) and `MSG_RPC_REBROADCAST` (0xA9). IL weaver updated to emit `SendRPCValidated` for validated RPCs.
+- **Host-validated RPCs** — `[NetRpc(RPCTarget.All, Validated = true)]` routes RPCs through the host for validation before broadcast. Client sends to host only; host runs a `Validate_MethodName(ProductUserId, NetworkObject, byte[])` method (auto-discovered by naming convention, no `nameof` needed), then rebroadcasts if approved. Adds ~20-40ms latency (one extra hop). Without a validator method, the host auto-approves (relay-only mode). New message types: `MSG_RPC_VALIDATED` (0xAD) and `MSG_RPC_REBROADCAST` (0xAE). IL weaver updated to emit `SendRPCValidated` for validated RPCs.
 - **SyncVar LOD** — `SyncVarLOD` component on NetworkObject defines distance-based sync tiers. Owner-side throttle: objects far from the nearest observer sync less frequently. Default tiers: 0-20m full rate, 20-50m every 3rd frame, 50-100m every 10th frame, 100m+ culled. Auto-discovers nearest peer position. Customizable via Inspector or code.
 - **Configurable join code length** — `EOSLobbyManager.JoinCodeLength` (default 6, range 4-8). Higher values reduce brute-force risk (4=10K, 6=1M, 8=100M possibilities). Per-lobby override via `LobbyOptions.WithJoinCodeLength(n)` or `LobbyCreateOptions.JoinCodeLength`.
 - **`NetReader.ReadBytesRemaining()`** — Reads all remaining bytes from current position.
