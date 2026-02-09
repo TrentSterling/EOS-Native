@@ -94,7 +94,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Per-peer RPC rate limiting (cap messages/sec per sender to prevent flood DoS) (v2.19.0)
 
 **Advanced:**
-- [ ] Network rules (PurrNet-style validation rules)
+- [x] Network rules (SyncVarWriteAccess + OnSyncVarWrite callback) (v2.25.0)
 - [ ] Dedicated server support (server joins lobby, server-authoritative validation)
 - [ ] Cloudscripting via VPS ($5 VPS for cloud validation / Discord bot integration)
 

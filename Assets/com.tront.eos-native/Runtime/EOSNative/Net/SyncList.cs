@@ -47,6 +47,7 @@ namespace EOSNative.Net
         private NetworkObject _owner;
         private byte _index;
         private bool _dirty;
+        private readonly SyncVarWriteAccess _writeAccess;
 
         /// <summary>
         /// Fires when the list changes. Args: (operation, index, oldItem, newItem).
@@ -54,22 +55,37 @@ namespace EOSNative.Net
         /// </summary>
         public event Action<SyncListOp, int, T, T> OnChanged;
 
+        /// <summary>Who can write to this SyncList.</summary>
+        public SyncVarWriteAccess WriteAccess => _writeAccess;
+
         #region Constructor
 
-        internal SyncList(NetworkObject owner, List<T> initial, byte index)
+        internal SyncList(NetworkObject owner, List<T> initial, byte index, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
         {
             _owner = owner;
             _items = initial ?? new List<T>();
             _index = index;
+            _writeAccess = writeAccess;
         }
 
         #endregion
 
-        #region List Operations (owner-write guarded)
+        #region List Operations (write-access guarded)
+
+        private bool CanWrite()
+        {
+            switch (_writeAccess)
+            {
+                case SyncVarWriteAccess.Owner: return _owner.IsOwner;
+                case SyncVarWriteAccess.Host: return _owner.IsHost;
+                case SyncVarWriteAccess.All: return true;
+                default: return _owner.IsOwner;
+            }
+        }
 
         public void Add(T item)
         {
-            if (_owner != null && _owner.IsRegistered && !_owner.IsOwner) return;
+            if (_owner != null && _owner.IsRegistered && !CanWrite()) return;
 
             _items.Add(item);
             RecordOp(SyncListOp.Add, _items.Count - 1, default, item);
@@ -77,7 +93,7 @@ namespace EOSNative.Net
 
         public void Insert(int index, T item)
         {
-            if (_owner != null && _owner.IsRegistered && !_owner.IsOwner) return;
+            if (_owner != null && _owner.IsRegistered && !CanWrite()) return;
 
             _items.Insert(index, item);
             RecordOp(SyncListOp.Insert, index, default, item);
@@ -85,7 +101,7 @@ namespace EOSNative.Net
 
         public void RemoveAt(int index)
         {
-            if (_owner != null && _owner.IsRegistered && !_owner.IsOwner) return;
+            if (_owner != null && _owner.IsRegistered && !CanWrite()) return;
             if (index < 0 || index >= _items.Count) return;
 
             T old = _items[index];
@@ -103,7 +119,7 @@ namespace EOSNative.Net
 
         public void Set(int index, T value)
         {
-            if (_owner != null && _owner.IsRegistered && !_owner.IsOwner) return;
+            if (_owner != null && _owner.IsRegistered && !CanWrite()) return;
             if (index < 0 || index >= _items.Count) return;
 
             T old = _items[index];
@@ -121,7 +137,7 @@ namespace EOSNative.Net
 
         public void Clear()
         {
-            if (_owner != null && _owner.IsRegistered && !_owner.IsOwner) return;
+            if (_owner != null && _owner.IsRegistered && !CanWrite()) return;
             if (_items.Count == 0) return;
 
             _items.Clear();

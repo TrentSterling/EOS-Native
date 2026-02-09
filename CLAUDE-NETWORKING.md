@@ -687,6 +687,44 @@ bool Validate_DealDamage(ProductUserId sender, NetworkObject target, byte[] argD
 - Rebroadcast only accepted from host (sender == GetHostPuid())
 - If host IS the caller, validation + rebroadcast happens locally
 
+## Network Rules — SyncVar Write Access (v2.25.0)
+
+Per-variable write access control for SyncVar, SyncList, and SyncDictionary. Replaces the hardcoded owner-only write guard with a configurable `SyncVarWriteAccess` enum.
+
+**Enum:** `SyncVarWriteAccess` in `SyncVar.cs`
+- `Owner` (0, default) — only the NetworkObject owner can write
+- `Host` (1) — only the host peer can write
+- `All` (2) — any peer can write (last-write-wins)
+
+**Registration API:**
+```csharp
+Health = Sync(100f);                                    // Owner (default)
+GamePhase = Sync(0, SyncVarWriteAccess.Host);           // Host-only
+SharedState = Sync("", SyncVarWriteAccess.All);         // Anyone
+Inventory = SyncList<string>(writeAccess: SyncVarWriteAccess.Host);
+Scores = SyncDictionary<string, int>(writeAccess: SyncVarWriteAccess.All);
+```
+
+**Write-time guard:** Each `SyncVar<T>.Value` setter calls `CanWrite()` which checks the local peer against the WriteAccess level. Non-writers' assignments are silently ignored (same as before for owner-only).
+
+**Receiver-side validation:** `HandleStateUpdate` calls `ValidateSyncVarSender()`:
+1. If `OnSyncVarWrite` callback is set → use it (custom rules)
+2. Otherwise check `NetworkObject.MaxWriteAccess` (most permissive SyncVar on the object):
+   - `All` → accept from anyone
+   - `Host` → accept from owner OR host
+   - `Owner` → accept from owner only
+
+**`OnSyncVarWrite` callback** on NetworkManager — mirrors `OnRPCValidation` pattern:
+```csharp
+public Func<ProductUserId, NetworkObject, bool> OnSyncVarWrite;
+```
+
+**Convenience helpers:**
+- `EnableOwnerOnlySyncVarValidation()` — forces all writes to owner-only (ignores WriteAccess)
+- `EnableOwnerOrHostSyncVarValidation()` — allows owner OR host to write any object
+
+**`NetworkObject.MaxWriteAccess`** — returns most permissive `SyncVarWriteAccess` among all SyncVars. Early-outs on `All`. Used for efficient O(1) receiver-side checks (avoids per-SyncVar iteration on every packet).
+
 ## Tick-Based Simulation (v2.22.0)
 
 Fixed-rate simulation decoupled from rendering frame rate. When enabled, network state updates fire at a consistent tick rate instead of every frame.

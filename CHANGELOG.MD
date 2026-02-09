@@ -2,6 +2,21 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.25.0] - 2026-02-09
+
+### Added
+- **Network rules (SyncVar write access)** — `SyncVarWriteAccess` enum controls who can write to each SyncVar, SyncList, and SyncDictionary. Set per-variable during registration:
+  - `Owner` (default) — only the object owner can write. Same as previous behavior.
+  - `Host` — only the host peer can write. Useful for server-managed game state (scores, timers, match phase).
+  - `All` — any peer can write (last-write-wins). Use for collaborative state like shared whiteboards.
+  - Usage: `Health = Sync<float>(100f, SyncVarWriteAccess.Owner)`, `GamePhase = Sync<int>(0, SyncVarWriteAccess.Host)`, `SharedScore = Sync<int>(0, SyncVarWriteAccess.All)`
+  - SyncList and SyncDictionary also support WriteAccess: `Inventory = SyncList<string>(writeAccess: SyncVarWriteAccess.Owner)`
+  - Receiver-side validation in `HandleStateUpdate` now checks `MaxWriteAccess` — Host-access objects accept updates from owner OR host, All-access objects accept from anyone.
+- **`OnSyncVarWrite` callback** on NetworkManager — optional custom validation for incoming state updates, mirroring `OnRPCValidation`. Return true to allow, false to reject. Null = default SyncVarWriteAccess rules.
+- **`EnableOwnerOnlySyncVarValidation()`** — convenience helper that forces all SyncVar writes to be owner-only, ignoring WriteAccess levels.
+- **`EnableOwnerOrHostSyncVarValidation()`** — convenience helper that allows owner OR host to write any object's state.
+- **`NetworkObject.MaxWriteAccess`** — returns the most permissive WriteAccess among all SyncVars on the object. Used internally for efficient receiver-side validation.
+
 ## [2.24.0] - 2026-02-09
 
 ### Added

@@ -87,6 +87,14 @@ namespace EOSNative.Net
         public Func<ProductUserId, NetworkObject, uint, bool> OnRPCValidation;
 
         /// <summary>
+        /// Optional SyncVar write validation callback. If set, called before applying any incoming
+        /// state update to a NetworkObject. Return true to allow, false to reject.
+        /// Null = default validation (checks SyncVarWriteAccess rules automatically).
+        /// Parameters: (sender ProductUserId, target NetworkObject) → bool.
+        /// </summary>
+        public Func<ProductUserId, NetworkObject, bool> OnSyncVarWrite;
+
+        /// <summary>
         /// Maximum messages accepted per peer per second. 0 = unlimited (default).
         /// Excess messages from a peer are silently dropped for that second.
         /// </summary>
@@ -786,6 +794,30 @@ namespace EOSNative.Net
             OnRPCValidation = (sender, target, hash) => target != null && target.OwnerId == sender;
         }
 
+        /// <summary>
+        /// Convenience: sets OnSyncVarWrite to only allow state updates from the object's owner.
+        /// Ignores SyncVarWriteAccess levels — all SyncVars become strictly owner-only.
+        /// </summary>
+        public void EnableOwnerOnlySyncVarValidation()
+        {
+            OnSyncVarWrite = (sender, target) => target != null && target.OwnerId == sender;
+        }
+
+        /// <summary>
+        /// Convenience: sets OnSyncVarWrite to allow the owner OR the host to write state.
+        /// Useful for host-authoritative games where the host may override any object's state.
+        /// </summary>
+        public void EnableOwnerOrHostSyncVarValidation()
+        {
+            OnSyncVarWrite = (sender, target) =>
+            {
+                if (target == null) return false;
+                if (target.OwnerId == sender) return true;
+                var hostPuid = GetHostPuid();
+                return hostPuid != null && sender.Equals(hostPuid);
+            };
+        }
+
         #endregion
 
         #region Private Fields
@@ -1207,8 +1239,8 @@ namespace EOSNative.Net
 
                 if (_objects.TryGetValue(networkId, out var obj))
                 {
-                    // Sender validation: only the owner can update an object's state
-                    if (obj.OwnerId != null && !sender.Equals(obj.OwnerId))
+                    // Sender validation: check write access rules
+                    if (!ValidateSyncVarSender(sender, obj))
                     {
                         reader.Skip(dataLen);
                         continue;
@@ -1233,6 +1265,36 @@ namespace EOSNative.Net
                     // Skip unknown object data
                     reader.Skip(dataLen);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Validates whether a sender is allowed to write state to a NetworkObject.
+        /// Checks OnSyncVarWrite callback first (custom rules), then falls back to
+        /// SyncVarWriteAccess-based validation.
+        /// </summary>
+        private bool ValidateSyncVarSender(ProductUserId sender, NetworkObject obj)
+        {
+            // Custom callback takes priority — if set, it's the sole authority
+            if (OnSyncVarWrite != null)
+                return OnSyncVarWrite(sender, obj);
+
+            // Default validation based on SyncVarWriteAccess
+            var maxAccess = obj.MaxWriteAccess;
+            switch (maxAccess)
+            {
+                case SyncVarWriteAccess.All:
+                    return true;
+                case SyncVarWriteAccess.Host:
+                    // Allow owner OR host
+                    if (obj.OwnerId != null && sender.Equals(obj.OwnerId)) return true;
+                    var hostPuid = GetHostPuid();
+                    return hostPuid != null && sender.Equals(hostPuid);
+                case SyncVarWriteAccess.Owner:
+                default:
+                    // Only owner (original behavior)
+                    if (obj.OwnerId == null) return true; // no owner assigned yet
+                    return sender.Equals(obj.OwnerId);
             }
         }
 

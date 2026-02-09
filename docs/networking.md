@@ -195,9 +195,61 @@ Health.OnChanged += (oldValue, newValue) =>
 };
 ```
 
-### Owner-Write Guard
+### Write Access Rules
 
-Only the owning peer can set `Value`. Writes from non-owners are silently ignored. Setting to the same value is a no-op (no dirty flag, no network traffic).
+By default, only the object owner can write SyncVars (`SyncVarWriteAccess.Owner`). You can change this per-variable during registration:
+
+```csharp
+// Owner-only (default)
+Health = Sync(100f);
+Health = Sync(100f, SyncVarWriteAccess.Owner);  // same thing
+
+// Host-only — useful for game state managed by the host
+GamePhase = Sync(0, SyncVarWriteAccess.Host);
+MatchTimer = Sync(0f, SyncVarWriteAccess.Host);
+
+// Any peer — last-write-wins, no conflict resolution
+SharedScore = Sync(0, SyncVarWriteAccess.All);
+```
+
+SyncList and SyncDictionary also support write access:
+
+```csharp
+// Host-managed inventory
+Inventory = SyncList<string>(writeAccess: SyncVarWriteAccess.Host);
+
+// Anyone can add scores
+Scores = SyncDictionary<string, int>(writeAccess: SyncVarWriteAccess.All);
+```
+
+**Receiver-side validation:** When a state update arrives, `HandleStateUpdate` checks the object's most permissive `SyncVarWriteAccess`. Owner-only objects reject updates from non-owners. Host-access objects accept from owner OR host. All-access objects accept from anyone.
+
+### Custom SyncVar Validation
+
+For custom rules beyond Owner/Host/All, use the `OnSyncVarWrite` callback on NetworkManager:
+
+```csharp
+// Custom: only allow writes within 10 meters of the object
+NetworkManager.Instance.OnSyncVarWrite = (sender, target) =>
+{
+    if (target.OwnerId == sender) return true;  // owner always allowed
+    float dist = Vector3.Distance(target.transform.position, GetPlayerPos(sender));
+    return dist < 10f;
+};
+```
+
+Convenience helpers:
+
+```csharp
+// Strict owner-only (ignores WriteAccess levels — all SyncVars become owner-only)
+NetworkManager.Instance.EnableOwnerOnlySyncVarValidation();
+
+// Owner OR host can write any object
+NetworkManager.Instance.EnableOwnerOrHostSyncVarValidation();
+
+// Clear custom validation (back to default WriteAccess rules)
+NetworkManager.Instance.OnSyncVarWrite = null;
+```
 
 ### SetInternal
 

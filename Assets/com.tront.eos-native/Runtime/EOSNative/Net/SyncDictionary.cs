@@ -45,6 +45,7 @@ namespace EOSNative.Net
         private readonly NetworkObject _owner;
         private readonly byte _index;
         private bool _dirty;
+        private readonly SyncVarWriteAccess _writeAccess;
 
         /// <summary>
         /// Fires when the dictionary changes. Args: (operation, key, oldValue, newValue).
@@ -52,23 +53,38 @@ namespace EOSNative.Net
         /// </summary>
         public event Action<SyncDictOp, TKey, TValue, TValue> OnChanged;
 
+        /// <summary>Who can write to this SyncDictionary.</summary>
+        public SyncVarWriteAccess WriteAccess => _writeAccess;
+
         #region Constructor
 
-        internal SyncDictionary(NetworkObject owner, Dictionary<TKey, TValue> initial, byte index)
+        internal SyncDictionary(NetworkObject owner, Dictionary<TKey, TValue> initial, byte index, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
         {
             _owner = owner;
             _dict = initial ?? new Dictionary<TKey, TValue>();
             _index = index;
+            _writeAccess = writeAccess;
         }
 
         #endregion
 
-        #region Dictionary Operations (owner-write guarded)
+        #region Dictionary Operations (write-access guarded)
+
+        private bool CanWrite()
+        {
+            switch (_writeAccess)
+            {
+                case SyncVarWriteAccess.Owner: return _owner.IsOwner;
+                case SyncVarWriteAccess.Host: return _owner.IsHost;
+                case SyncVarWriteAccess.All: return true;
+                default: return _owner.IsOwner;
+            }
+        }
 
         /// <summary>Set a key to a value. Adds if not present, updates if existing.</summary>
         public void Set(TKey key, TValue value)
         {
-            if (_owner != null && _owner.IsRegistered && !_owner.IsOwner) return;
+            if (_owner != null && _owner.IsRegistered && !CanWrite()) return;
 
             TValue oldValue = default;
             _dict.TryGetValue(key, out oldValue);
@@ -90,7 +106,7 @@ namespace EOSNative.Net
         /// <summary>Remove a key. Returns true if the key existed.</summary>
         public bool Remove(TKey key)
         {
-            if (_owner != null && _owner.IsRegistered && !_owner.IsOwner) return false;
+            if (_owner != null && _owner.IsRegistered && !CanWrite()) return false;
 
             if (!_dict.TryGetValue(key, out var oldValue))
                 return false;
@@ -103,7 +119,7 @@ namespace EOSNative.Net
         /// <summary>Remove all entries.</summary>
         public void Clear()
         {
-            if (_owner != null && _owner.IsRegistered && !_owner.IsOwner) return;
+            if (_owner != null && _owner.IsRegistered && !CanWrite()) return;
             if (_dict.Count == 0) return;
 
             _dict.Clear();
