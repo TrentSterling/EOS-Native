@@ -150,6 +150,13 @@ namespace EOSNative.Voice
         [Tooltip("Height offset for raycast origin/target (approximate head height)")]
         [SerializeField] private float _occlusionRayHeight = 1.5f;
 
+        [Header("Spatial Grid (100+ Players)")]
+        [Tooltip("Use a spatial hash grid for proximity lookups instead of brute-force O(N^2). Enables efficient proximity voice for 100+ players.")]
+        [SerializeField] private bool _useSpatialGrid = false;
+
+        [Tooltip("Grid cell size (units). Should be roughly maxHearingDistance / 2. Smaller = more cells but tighter queries.")]
+        [SerializeField] private float _gridCellSize = 15f;
+
         [Header("Update Settings")]
         [Tooltip("How often to update volumes (seconds)")]
         [SerializeField] private float _updateInterval = 0.1f;
@@ -227,6 +234,20 @@ namespace EOSNative.Voice
             set => _occlusionVolumeMultiplier = Mathf.Clamp01(value);
         }
 
+        /// <summary>Whether the spatial hash grid is enabled for proximity lookups.</summary>
+        public bool UseSpatialGrid
+        {
+            get => _useSpatialGrid;
+            set => _useSpatialGrid = value;
+        }
+
+        /// <summary>Grid cell size in world units. Defaults to maxHearingDistance / 2.</summary>
+        public float GridCellSize
+        {
+            get => _gridCellSize;
+            set => _gridCellSize = Mathf.Max(1f, value);
+        }
+
         #endregion
 
         #region Private Fields
@@ -247,6 +268,11 @@ namespace EOSNative.Voice
 
         // Occlusion tracking
         private readonly Dictionary<string, bool> _playerOccluded = new();
+
+        // Spatial hash grid for O(N) proximity checks with 100+ players
+        private readonly Dictionary<long, HashSet<string>> _gridCells = new();
+        private readonly Dictionary<string, long> _puidCells = new();
+        private readonly HashSet<string> _nearbyPuids = new();
 
         #endregion
 
@@ -417,6 +443,7 @@ namespace EOSNative.Voice
             _playersInRange.Remove(puid);
             _playerZones.Remove(puid);
             _playerOccluded.Remove(puid);
+            RemoveFromGrid(puid);
         }
 
         /// <summary>
@@ -431,6 +458,7 @@ namespace EOSNative.Voice
             _playerZones.Clear();
             _playerOccluded.Clear();
             _localPlayerTransform = null;
+            ClearGrid();
         }
 
         /// <summary>
@@ -595,10 +623,41 @@ namespace EOSNative.Voice
                 AutoDiscoverPlayers();
             }
 
-            // Update each tracked player
-            foreach (var puid in voiceManager.GetAllParticipants())
+            // With spatial grid: only process nearby players for proximity modes
+            if (_useSpatialGrid && (_zoneMode == VoiceZoneMode.Proximity || _zoneMode == VoiceZoneMode.TeamProximity))
             {
-                UpdatePlayerVolume(puid);
+                UpdateSpatialGrid();
+                GetNearbyPuids(_localPlayerTransform != null ? _localPlayerTransform.position : Vector3.zero);
+
+                // Process nearby players at calculated volume
+                foreach (var puid in _nearbyPuids)
+                {
+                    UpdatePlayerVolume(puid);
+                }
+
+                // Mute far-away players that are NOT in nearby cells
+                foreach (var puid in voiceManager.GetAllParticipants())
+                {
+                    if (_nearbyPuids.Contains(puid)) continue;
+
+                    float lastVolume = _lastVolumes.TryGetValue(puid, out float lv) ? lv : -999f;
+                    if (Mathf.Abs(_minVolume - lastVolume) >= _volumeChangeThreshold)
+                    {
+                        voiceManager.SetParticipantVolume(puid, _minVolume);
+                        _lastVolumes[puid] = _minVolume;
+
+                        if (_playersInRange.Remove(puid))
+                            OnPlayerExitedRange?.Invoke(puid);
+                    }
+                }
+            }
+            else
+            {
+                // Brute-force: update every participant (original O(N) behavior)
+                foreach (var puid in voiceManager.GetAllParticipants())
+                {
+                    UpdatePlayerVolume(puid);
+                }
             }
         }
 
@@ -775,6 +834,104 @@ namespace EOSNative.Voice
             return _playerOccluded.TryGetValue(puid, out bool occluded) && occluded;
         }
 
+        #endregion
+
+        #region Spatial Hash Grid
+
+        /// <summary>
+        /// Update all player positions in the spatial hash grid.
+        /// </summary>
+        private void UpdateSpatialGrid()
+        {
+            float cellSize = _gridCellSize > 0 ? _gridCellSize : _maxHearingDistance / 2f;
+
+            foreach (var kvp in _playerTransforms)
+            {
+                if (kvp.Value == null) continue;
+
+                long newCell = PositionToGridCell(kvp.Value.position, cellSize);
+
+                if (_puidCells.TryGetValue(kvp.Key, out long oldCell))
+                {
+                    if (oldCell == newCell) continue;
+
+                    // Remove from old cell
+                    if (_gridCells.TryGetValue(oldCell, out var oldSet))
+                    {
+                        oldSet.Remove(kvp.Key);
+                        if (oldSet.Count == 0) _gridCells.Remove(oldCell);
+                    }
+                }
+
+                // Add to new cell
+                if (!_gridCells.TryGetValue(newCell, out var set))
+                {
+                    set = new HashSet<string>();
+                    _gridCells[newCell] = set;
+                }
+                set.Add(kvp.Key);
+                _puidCells[kvp.Key] = newCell;
+            }
+        }
+
+        /// <summary>
+        /// Query the spatial grid for all PUIDs in the local player's cell + 8 neighbors.
+        /// </summary>
+        private void GetNearbyPuids(Vector3 localPos)
+        {
+            _nearbyPuids.Clear();
+            float cellSize = _gridCellSize > 0 ? _gridCellSize : _maxHearingDistance / 2f;
+
+            int cx = Mathf.FloorToInt(localPos.x / cellSize);
+            int cz = Mathf.FloorToInt(localPos.z / cellSize);
+
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    long key = ((long)(cx + dx) << 32) | (uint)(cz + dz);
+                    if (_gridCells.TryGetValue(key, out var set))
+                    {
+                        foreach (var puid in set)
+                            _nearbyPuids.Add(puid);
+                    }
+                }
+            }
+        }
+
+        private static long PositionToGridCell(Vector3 pos, float cellSize)
+        {
+            int cx = Mathf.FloorToInt(pos.x / cellSize);
+            int cz = Mathf.FloorToInt(pos.z / cellSize);
+            return ((long)cx << 32) | (uint)cz;
+        }
+
+        /// <summary>Remove a PUID from the spatial grid.</summary>
+        private void RemoveFromGrid(string puid)
+        {
+            if (_puidCells.TryGetValue(puid, out long cell))
+            {
+                _puidCells.Remove(puid);
+                if (_gridCells.TryGetValue(cell, out var set))
+                {
+                    set.Remove(puid);
+                    if (set.Count == 0) _gridCells.Remove(cell);
+                }
+            }
+        }
+
+        /// <summary>Clear all spatial grid data.</summary>
+        private void ClearGrid()
+        {
+            _gridCells.Clear();
+            _puidCells.Clear();
+            _nearbyPuids.Clear();
+        }
+
+        #endregion
+
+        #region Volume Reset
+
         private void ResetAllVolumes()
         {
             var voiceManager = EOSVoiceManager.Instance;
@@ -828,6 +985,8 @@ namespace EOSNative.Voice
             if (Application.isPlaying && manager.IsActive)
             {
                 EditorGUILayout.Space(5);
+                if (manager.UseSpatialGrid)
+                    EditorGUILayout.LabelField("Spatial Grid: ON", EditorStyles.miniBoldLabel);
                 var inRange = manager.GetPlayersInRange();
                 EditorGUILayout.LabelField($"Players in Range: {inRange.Count}");
 

@@ -144,6 +144,30 @@ Works with all voice zone modes. The occlusion multiplier stacks with proximity 
 
 **Performance:** One raycast per participant per update cycle (~10/sec). Negligible cost for up to 16 players.
 
+### Spatial Hash Grid (100+ Players)
+
+For large player counts (100+), the brute-force proximity check becomes expensive. Enable `UseSpatialGrid` to use a 2D spatial hash grid for O(N) lookups instead of O(N^2):
+
+```csharp
+var zones = EOSVoiceZoneManager.Instance;
+
+zones.UseSpatialGrid = true;
+zones.GridCellSize = 15f; // roughly maxHearingDistance / 2
+```
+
+When enabled (in Proximity or TeamProximity mode):
+- All player positions are hashed into grid cells each update cycle
+- Only players in the local player's cell + 8 neighbors are processed for volume calculation
+- Far-away players are immediately set to minimum volume without distance checks
+- Grid is automatically cleaned up on UnregisterPlayer/ClearAllPlayers
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| UseSpatialGrid | false | Enable grid-based proximity |
+| GridCellSize | 15 | Cell size in world units (use maxHearingDistance / 2) |
+
+The grid operates on the XZ plane (same as the networking `SpatialHashGrid`). Set `GridCellSize` to roughly half your `MaxHearingDistance` for optimal cell granularity.
+
 ### Auto-Discover
 
 When `_autoDiscoverNetworkObjects` is enabled (default), the zone manager automatically scans `NetworkManager.Instance.Objects` for GameObjects tagged with the configured `_playerTag` (default `"Player"`). It registers their transforms by PUID for position tracking.

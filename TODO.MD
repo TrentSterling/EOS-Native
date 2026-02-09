@@ -73,7 +73,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] NetworkVoicePlayer — NetworkBehaviour auto-wiring EOSVoicePlayer to NetworkObject ownership
 - [x] VOIP speaking indicator — Animated sphere above player head when talking
 - [x] Audio occlusion (raycast-based wall muting) (v2.23.0)
-- [ ] Grid-based spatial partitioning (for 100+ players)
+- [x] Grid-based spatial partitioning (for 100+ players) (v2.27.0)
 - [ ] Voice priority system (bandwidth management at scale)
 
 **Multi-Transport & Crossplay:**

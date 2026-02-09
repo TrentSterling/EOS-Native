@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.27.0] - 2026-02-09
+
+### Added
+- **Voice spatial hash grid** — Optional grid-based spatial partitioning for proximity voice with 100+ players. When `UseSpatialGrid = true`, `EOSVoiceZoneManager` hashes all player positions into a 2D grid (XZ plane) and only processes players in nearby cells (9-neighbor lookup). Far-away players are immediately muted without distance calculation. Reduces proximity checks from O(N^2) to O(N). Configurable `GridCellSize` (default 15 units, should be ~maxHearingDistance/2). Active in Proximity and TeamProximity modes. Grid data auto-cleaned on unregister/clear.
+
 ## [2.26.0] - 2026-02-09
 
 ### Added
