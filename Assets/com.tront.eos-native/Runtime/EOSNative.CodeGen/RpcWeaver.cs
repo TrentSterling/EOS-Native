@@ -68,7 +68,7 @@ namespace EOSNative.CodeGen
                 var rpcMethods = FindRpcMethods(type);
                 if (rpcMethods.Count == 0) continue;
 
-                var invokeHandlers = new List<(uint hash, string name, MethodDefinition invoker)>();
+                var invokeHandlers = new List<(uint hash, string name, MethodDefinition invoker, bool validated)>();
 
                 foreach (var rpcMethod in rpcMethods)
                 {
@@ -86,6 +86,17 @@ namespace EOSNative.CodeGen
                     if (attr.HasConstructorArguments && attr.ConstructorArguments.Count > 0)
                         target = (int)attr.ConstructorArguments[0].Value;
 
+                    // Check for Validated = true (named property on the attribute)
+                    bool validated = false;
+                    if (attr.HasProperties)
+                    {
+                        foreach (var prop in attr.Properties)
+                        {
+                            if (prop.Name == "Validated" && prop.Argument.Value is bool v)
+                                validated = v;
+                        }
+                    }
+
                     uint methodHash = FnvHash(rpcMethod.Name);
 
                     // 1. Create UserCode_ method (move original body)
@@ -95,10 +106,10 @@ namespace EOSNative.CodeGen
                     // 2. Create __InvokeNetRpc_ method (deserialize + call UserCode_)
                     var invoker = CreateInvokerMethod(type, rpcMethod, userCode);
                     type.Methods.Add(invoker);
-                    invokeHandlers.Add((methodHash, rpcMethod.Name, invoker));
+                    invokeHandlers.Add((methodHash, rpcMethod.Name, invoker, validated));
 
                     // 3. Rewrite original method body (dispatch stub)
-                    RewriteAsDispatchStub(rpcMethod, methodHash, target);
+                    RewriteAsDispatchStub(rpcMethod, methodHash, target, validated);
 
                     modified = true;
                 }
@@ -300,9 +311,9 @@ namespace EOSNative.CodeGen
 
         /// <summary>
         /// Rewrite the original method body to be a dispatch stub that serializes args
-        /// and calls NetworkManager.Instance.SendRPCWeaved(Net, hash, target, argData).
+        /// and calls SendRPCWeaved or SendRPCValidated depending on the validated flag.
         /// </summary>
-        private void RewriteAsDispatchStub(MethodDefinition method, uint methodHash, int rpcTarget)
+        private void RewriteAsDispatchStub(MethodDefinition method, uint methodHash, int rpcTarget, bool validated = false)
         {
             method.Body.Instructions.Clear();
             method.Body.Variables.Clear();
@@ -339,14 +350,16 @@ namespace EOSNative.CodeGen
             il.Emit(OpCodes.Ldloc, writerVar);
             il.Emit(OpCodes.Call, _types.NetWriterPool_Return);
 
-            // NetworkManager.Instance.SendRPCWeaved(this.Net, hash, target, data);
+            // NetworkManager.Instance.SendRPCWeaved/SendRPCValidated(this.Net, hash, target, data);
             il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);  // NetworkManager.Instance
             il.Emit(OpCodes.Ldarg_0);                                   // this
             il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_Net);      // .Net
             il.Emit(OpCodes.Ldc_I4, unchecked((int)methodHash));        // hash (uint as int literal)
             il.Emit(OpCodes.Ldc_I4, rpcTarget);                        // RPCTarget enum value
             il.Emit(OpCodes.Ldloc, dataVar);                            // argData
-            il.Emit(OpCodes.Callvirt, _types.NetworkManager_SendRPCWeaved);
+            il.Emit(OpCodes.Callvirt, validated
+                ? _types.NetworkManager_SendRPCValidated
+                : _types.NetworkManager_SendRPCWeaved);
 
             il.Emit(OpCodes.Ret);
         }
@@ -399,7 +412,7 @@ namespace EOSNative.CodeGen
         /// }
         /// </summary>
         private void GenerateRegisterMethod(TypeDefinition type,
-            List<(uint hash, string name, MethodDefinition invoker)> handlers)
+            List<(uint hash, string name, MethodDefinition invoker, bool validated)> handlers)
         {
             // Remove existing __RegisterNetRPCs if the weaver already generated one
             var existing = type.Methods.FirstOrDefault(m => m.Name == "__RegisterNetRPCs");
@@ -436,7 +449,7 @@ namespace EOSNative.CodeGen
             }
 
             // For each RPC: NetworkManager.Instance.RegisterRPC(Net, hash, "name", __InvokeNetRpc_Name)
-            foreach (var (hash, name, invoker) in handlers)
+            foreach (var (hash, name, invoker, validated) in handlers)
             {
                 // NetworkManager.Instance
                 il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);
@@ -453,6 +466,27 @@ namespace EOSNative.CodeGen
                 il.Emit(OpCodes.Newobj, _types.ActionOfNetReader_Ctor);
                 // RegisterRPC(NetworkObject, uint, string, Action<NetReader>)
                 il.Emit(OpCodes.Callvirt, _types.NetworkManager_RegisterRPC_Hash);
+
+                // If validated, mark as requiring host validation + register validator if found
+                if (validated)
+                {
+                    il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);
+                    il.Emit(OpCodes.Ldc_I4, unchecked((int)hash));
+                    il.Emit(OpCodes.Callvirt, _types.NetworkManager_MarkRPCValidated);
+
+                    // Auto-discover Validate_MethodName(ProductUserId, NetworkObject, byte[]) → bool
+                    var validatorMethod = FindValidatorMethod(type, name);
+                    if (validatorMethod != null)
+                    {
+                        // RegisterRPCValidator(hash, new Func<ProductUserId, NetworkObject, byte[], bool>(this, Validate_X))
+                        il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);
+                        il.Emit(OpCodes.Ldc_I4, unchecked((int)hash));
+                        il.Emit(OpCodes.Ldarg_0);
+                        il.Emit(OpCodes.Ldftn, validatorMethod);
+                        il.Emit(OpCodes.Newobj, _types.FuncValidator_Ctor);
+                        il.Emit(OpCodes.Callvirt, _types.NetworkManager_RegisterRPCValidator);
+                    }
+                }
             }
 
             il.Emit(OpCodes.Ret);
@@ -462,6 +496,26 @@ namespace EOSNative.CodeGen
         #endregion
 
         #region Utilities
+
+        /// <summary>
+        /// Auto-discover a validator method for a validated RPC by naming convention.
+        /// Looks for: bool Validate_MethodName(ProductUserId sender, NetworkObject target, byte[] argData)
+        /// </summary>
+        private MethodDefinition FindValidatorMethod(TypeDefinition type, string rpcName)
+        {
+            string validatorName = "Validate_" + rpcName;
+            foreach (var method in type.Methods)
+            {
+                if (method.Name != validatorName) continue;
+                if (method.ReturnType.FullName != "System.Boolean") continue;
+                if (method.Parameters.Count != 3) continue;
+                if (method.Parameters[0].ParameterType.FullName != "Epic.OnlineServices.ProductUserId") continue;
+                if (method.Parameters[1].ParameterType.FullName != "EOSNative.Net.NetworkObject") continue;
+                if (method.Parameters[2].ParameterType.FullName != "System.Byte[]") continue;
+                return method;
+            }
+            return null; // No validator found — RPC will auto-approve on host (relay-only)
+        }
 
         private static uint FnvHash(string str)
         {

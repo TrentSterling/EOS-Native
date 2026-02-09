@@ -62,9 +62,10 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Explore NetworkBehaviour-only architecture (each NB gets its own ID, no separate NetworkObject needed)
 
 **SyncVar LOD System** (community request — AlmightyMikkel):
-- [ ] SyncVar LOD tiers — component where you specify X LOD distances, each defining which components/SyncVars sync and at what rate
-- [ ] Tick-ladder for SyncVars — dynamic sync rate based on distance (like NetworkTransform LOD but for ALL SyncVars)
+- [x] SyncVar LOD tiers — `SyncVarLOD` component with configurable distance tiers and sync rate multipliers (v2.18.0)
+- [x] Distance-based sync throttle — auto-discovers nearest peer, throttles MarkDirty() on owner side (v2.18.0)
 - [ ] Per-component LOD checkboxes — Inspector UI to toggle what syncs at each tier
+- [ ] Per-SyncVar LOD masks — selectively sync specific vars at each tier (currently all-or-nothing)
 
 **Spatial Voice:**
 - [x] EOSVoiceZoneManager — 5 modes (Global, Proximity, Team, TeamProximity, Custom), volume ducking, auto-discover
@@ -87,9 +88,9 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Study Photon PUN architecture for shared-mode patterns
 
 **Security & Validation:**
-- [ ] Host-validated RPCs — `[NetRpc(Validated = true)]` option to route RPCs through host for validation before broadcast. Adds ~20-40ms latency but prevents RPC spoofing. Use for damage, scoring, economy. Research: 2-hop relay (sender→host→all), host-side validation callback, automatic fallback if host disconnects during relay.
+- [x] Host-validated RPCs — `[NetRpc(Validated = true)]` routes through host, auto-discovers `Validate_X` methods (v2.18.0)
+- [x] Configurable join code length — default 6 digits (1M possibilities), range 4-8 (v2.18.0)
 - [ ] Decompression size limit (cap `DecompressDeflate` output to prevent compression bombs)
-- [ ] Join code entropy increase (6-8 alphanumeric chars instead of 4-digit numeric)
 - [ ] Per-peer RPC rate limiting (cap messages/sec per sender to prevent flood DoS)
 
 **Advanced:**
@@ -305,3 +306,6 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Fix double Router.ProcessIncoming subscription — Auto-subscribe in EOSP2PManager.Router getter, removed manual wiring from P2PDemoManager and NetworkManager (v2.17.2)
 - [x] P2P diagnostic logging — Result checking on AcceptConnection/SendPacket, null-state warnings on Initialize/AcceptPeer, connection type/reason in events (v2.17.2)
 - [x] Sender validation on message handlers — HandleStateUpdate, HandleSpawn, HandleDespawn, HandleAuthority, HandleSnapshot verify sender is owner or host. Prevents peers from writing to objects they don't own, despawning others' objects, or claiming authority. Zero latency cost (v2.17.5)
+- [x] Host-validated RPCs — `[NetRpc(Validated = true)]` routes RPCs through host, auto-discovers `Validate_X` methods by naming convention, host rebroadcasts if approved. Adds ~20-40ms latency (one hop). New msg types 0xA8/0xA9. IL weaver updated (v2.18.0)
+- [x] SyncVar LOD — `SyncVarLOD` component with distance-based sync tiers, owner-side throttle, auto nearest-peer distance, customizable tiers via Inspector (v2.18.0)
+- [x] Configurable join code length — `JoinCodeLength` on EOSLobbyManager (default 6, range 4-8), per-lobby override via LobbyOptions (v2.18.0)

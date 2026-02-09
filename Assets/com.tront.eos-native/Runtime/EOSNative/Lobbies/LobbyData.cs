@@ -18,7 +18,7 @@ namespace EOSNative.Lobbies
         public string LobbyId;
 
         /// <summary>
-        /// Our custom 4-digit join code.
+        /// Our custom numeric join code.
         /// </summary>
         public string JoinCode;
 
@@ -225,12 +225,17 @@ namespace EOSNative.Lobbies
         public string BucketId = "v1";
 
         /// <summary>
-        /// Custom 4-digit join code. If null, one will be generated.
+        /// Custom numeric join code. If null, one will be generated.
         /// </summary>
         public string JoinCode = null;
 
         /// <summary>
-        /// Use EOS-generated LobbyId as the join code instead of a random 4-digit code.
+        /// Length of auto-generated join code (4-8 digits). Null = use EOSLobbyManager default (6).
+        /// </summary>
+        public int? JoinCodeLength = null;
+
+        /// <summary>
+        /// Use EOS-generated LobbyId as the join code instead of a random numeric code.
         /// </summary>
         public bool UseEosLobbyId = false;
 
@@ -844,10 +849,16 @@ namespace EOSNative.Lobbies
         #region Create-Only Fields (ignored during search)
 
         /// <summary>
-        /// Custom join code. If null, a random 4-digit code is generated.
+        /// Custom join code. If null, a random numeric code is generated.
         /// Create-only.
         /// </summary>
         public string JoinCode;
+
+        /// <summary>
+        /// Length of auto-generated join codes (4-8 digits). Null = use EOSLobbyManager default (6).
+        /// Create-only.
+        /// </summary>
+        public int? JoinCodeLength;
 
         /// <summary>
         /// Use EOS-generated LobbyId as the join code.
@@ -969,6 +980,7 @@ namespace EOSNative.Lobbies
         #region Fluent Builder Methods - Create-Only
 
         public LobbyOptions WithJoinCode(string code) { JoinCode = code; return this; }
+        public LobbyOptions WithJoinCodeLength(int length) { JoinCodeLength = Math.Max(4, Math.Min(8, length)); return this; }
         public LobbyOptions WithEosLobbyId() { UseEosLobbyId = true; return this; }
         public LobbyOptions WithVoice(bool enabled = true) { EnableVoice = enabled; return this; }
         public LobbyOptions WithMutedMic(bool muted = true) { StartMuted = muted; return this; }
@@ -1020,6 +1032,7 @@ namespace EOSNative.Lobbies
                 Password = Password,
                 SkillLevel = SkillLevel,
                 JoinCode = JoinCode,
+                JoinCodeLength = JoinCodeLength,
                 UseEosLobbyId = UseEosLobbyId,
                 IsPublic = IsPublic,
                 EnableVoice = EnableVoice,
@@ -1172,7 +1185,7 @@ namespace EOSNative.Lobbies
     public static class LobbyAttributes
     {
         /// <summary>
-        /// The 4-digit join code (searchable).
+        /// The numeric join code (searchable).
         /// </summary>
         public const string JOIN_CODE = "JOIN_CODE";
 

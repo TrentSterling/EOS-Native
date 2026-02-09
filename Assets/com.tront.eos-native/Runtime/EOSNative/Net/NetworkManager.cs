@@ -27,6 +27,8 @@ namespace EOSNative.Net
         private const byte MSG_SNAPSHOT_REQUEST = 0xA5;
         private const byte MSG_RPC = 0xA6;
         private const byte MSG_AUTHORITY_REQUEST = 0xA7;
+        private const byte MSG_RPC_VALIDATED = 0xA8;   // Client→Host: validated RPC request
+        private const byte MSG_RPC_REBROADCAST = 0xA9; // Host→All: approved validated RPC
 
         // Scene management (0xAA-0xAC)
         private const byte MSG_SCENE_LOAD = 0xAA;
@@ -549,6 +551,81 @@ namespace EOSNative.Net
         }
 
         /// <summary>
+        /// Register a validator for a host-validated RPC. Called by weaver-generated __RegisterNetRPCs().
+        /// The validator runs on the host before rebroadcasting. Return true to approve, false to reject.
+        /// </summary>
+        public void RegisterRPCValidator(uint methodHash, Func<ProductUserId, NetworkObject, byte[], bool> validator)
+        {
+            _rpcValidators[methodHash] = validator;
+            _validatedRpcHashes.Add(methodHash);
+        }
+
+        /// <summary>
+        /// Mark a method hash as requiring host validation (even without a custom validator).
+        /// If no validator is registered, the host auto-approves (relay-only mode).
+        /// </summary>
+        public void MarkRPCValidated(uint methodHash)
+        {
+            _validatedRpcHashes.Add(methodHash);
+        }
+
+        /// <summary>
+        /// Send a validated RPC through the host. Called by weaver for [NetRpc(Validated = true)].
+        /// Client sends to host only. Host validates, then rebroadcasts to all.
+        /// </summary>
+        public void SendRPCValidated(NetworkObject target, uint methodHash, RPCTarget originalTarget, byte[] argData)
+        {
+            if (target == null || !target.IsRegistered) return;
+
+            if (IsHost)
+            {
+                // We ARE the host — validate locally and broadcast directly
+                var localPuid = EOSManager.Instance?.LocalProductUserId;
+                if (!RunRPCValidator(methodHash, localPuid, target, argData))
+                {
+                    Debug.LogWarning($"[NetworkManager] Validated RPC rejected locally: object={target.NetworkId}, hash=0x{methodHash:X8}");
+                    return;
+                }
+
+                // Execute locally per original target rules
+                bool executeLocal = originalTarget switch
+                {
+                    RPCTarget.All => true,
+                    RPCTarget.Others => false,
+                    RPCTarget.Host => true,
+                    RPCTarget.Owner => target.IsOwner,
+                    RPCTarget.Players => !IsSpectator,
+                    _ => false,
+                };
+                if (executeLocal)
+                    ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+
+                // Rebroadcast to all peers using MSG_RPC_REBROADCAST
+                var writer = NetWriterPool.Get();
+                writer.WriteUInt32(target.NetworkId);
+                writer.WriteUInt32(methodHash);
+                writer.WriteByte((byte)originalTarget);
+                writer.WriteBytesRaw(argData, 0, argData.Length);
+                Router.SendToAll(MSG_RPC_REBROADCAST, writer, PacketReliability.ReliableOrdered, 1);
+                NetWriterPool.Return(writer);
+            }
+            else
+            {
+                // Send to host for validation via MSG_RPC_VALIDATED
+                var hostPuid = GetHostPuid();
+                if (hostPuid == null) return;
+
+                var writer = NetWriterPool.Get();
+                writer.WriteUInt32(target.NetworkId);
+                writer.WriteUInt32(methodHash);
+                writer.WriteByte((byte)originalTarget);
+                writer.WriteBytesRaw(argData, 0, argData.Length);
+                Router.SendToPeer(MSG_RPC_VALIDATED, writer, hostPuid, PacketReliability.ReliableOrdered, 1);
+                NetWriterPool.Return(writer);
+            }
+        }
+
+        /// <summary>
         /// Send a pre-serialized RPC. Called by weaver-generated dispatch stubs.
         /// Args are already packed into argData by the generated serialization code.
         /// </summary>
@@ -719,6 +796,12 @@ namespace EOSNative.Net
             public byte[] ArgData;
         }
 
+        // Host-validated RPCs: per-RPC validator methods registered by weaver
+        // Key: methodHash, Value: validator func (sender, target, argData) → bool
+        private readonly Dictionary<uint, Func<ProductUserId, NetworkObject, byte[], bool>> _rpcValidators = new();
+        // Track which method hashes require host validation
+        private readonly HashSet<uint> _validatedRpcHashes = new();
+
         private MessageRouter Router => EOSP2PManager.Instance.Router;
 
         private struct RPCKey : IEquatable<RPCKey>
@@ -795,6 +878,8 @@ namespace EOSNative.Net
             Router.Register(MSG_SNAPSHOT, HandleSnapshot);
             Router.Register(MSG_SNAPSHOT_REQUEST, HandleSnapshotRequest);
             Router.Register(MSG_RPC, HandleRPC);
+            Router.Register(MSG_RPC_VALIDATED, HandleRPCValidated);
+            Router.Register(MSG_RPC_REBROADCAST, HandleRPCRebroadcast);
             Router.Register(MSG_AUTHORITY_REQUEST, HandleAuthorityRequest);
 
             // Scene management messages
@@ -1385,6 +1470,117 @@ namespace EOSNative.Net
             {
                 Debug.LogError($"[NetworkManager] Local RPC error on object {networkId}: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Host receives this when a client sends a [NetRpc(Validated = true)] RPC.
+        /// The host runs the validator and, if approved, rebroadcasts to all peers.
+        /// Wire format: [networkId:u32][methodHash:u32][originalTarget:u8][argData...]
+        /// </summary>
+        private void HandleRPCValidated(ProductUserId sender, NetReader reader)
+        {
+            if (!IsHost) return; // Only the host handles validated RPCs
+
+            uint networkId = reader.ReadUInt32();
+            uint methodHash = reader.ReadUInt32();
+            byte originalTarget = reader.ReadByte();
+            byte[] argData = reader.ReadBytesRemaining();
+
+            _objects.TryGetValue(networkId, out var targetObj);
+
+            // Run per-method validator (if registered), otherwise auto-approve
+            if (!RunRPCValidator(methodHash, sender, targetObj, argData))
+            {
+                Debug.LogWarning($"[NetworkManager] Validated RPC rejected: sender={sender}, object={networkId}, hash=0x{methodHash:X8}");
+                return;
+            }
+
+            // Approved — rebroadcast to all peers (including back to sender)
+            var writer = NetWriterPool.Get();
+            writer.WriteUInt32(networkId);
+            writer.WriteUInt32(methodHash);
+            writer.WriteByte(originalTarget);
+            writer.WriteBytesRaw(argData, 0, argData.Length);
+            Router.SendToAll(MSG_RPC_REBROADCAST, writer, PacketReliability.ReliableOrdered, 1);
+            NetWriterPool.Return(writer);
+
+            // Also execute on host per target rules
+            var targets = (RPCTarget)originalTarget;
+            bool executeOnHost = targets switch
+            {
+                RPCTarget.All => true,
+                RPCTarget.Others => false, // "Others" from sender's perspective — host IS an "other"
+                RPCTarget.Host => true,
+                RPCTarget.Owner => targetObj != null && targetObj.IsOwner,
+                RPCTarget.Players => !IsSpectator,
+                _ => false,
+            };
+
+            // For RPCTarget.Others, host should still execute (sender meant "all except me")
+            if (targets == RPCTarget.Others)
+                executeOnHost = true;
+
+            if (executeOnHost)
+                ExecuteRPCLocal(networkId, methodHash, argData, argData.Length);
+        }
+
+        /// <summary>
+        /// All peers receive this when the host rebroadcasts an approved validated RPC.
+        /// Wire format: [networkId:u32][methodHash:u32][originalTarget:u8][argData...]
+        /// </summary>
+        private void HandleRPCRebroadcast(ProductUserId sender, NetReader reader)
+        {
+            // Only accept rebroadcasts from the host
+            var hostPuid = GetHostPuid();
+            if (hostPuid == null || !sender.Equals(hostPuid))
+            {
+                Debug.LogWarning($"[NetworkManager] Rejected RPC rebroadcast from non-host {sender}");
+                return;
+            }
+
+            uint networkId = reader.ReadUInt32();
+            uint methodHash = reader.ReadUInt32();
+            byte originalTarget = reader.ReadByte();
+            byte[] argData = reader.ReadBytesRemaining();
+
+            // Check if we should execute based on the original target
+            var targets = (RPCTarget)originalTarget;
+            var localPuid = EOSManager.Instance?.LocalProductUserId;
+            _objects.TryGetValue(networkId, out var targetObj);
+
+            bool execute = targets switch
+            {
+                RPCTarget.All => true,
+                RPCTarget.Others => true, // We're an "other" — the sender already excluded themselves
+                RPCTarget.Host => IsHost,
+                RPCTarget.Owner => targetObj != null && targetObj.IsOwner,
+                RPCTarget.Players => !IsSpectator,
+                _ => false,
+            };
+
+            if (execute)
+                ExecuteRPCLocal(networkId, methodHash, argData, argData.Length);
+        }
+
+        /// <summary>
+        /// Run the per-method validator for a validated RPC. Returns true if approved.
+        /// If no validator is registered for this hash, auto-approves (relay-only mode).
+        /// </summary>
+        private bool RunRPCValidator(uint methodHash, ProductUserId sender, NetworkObject target, byte[] argData)
+        {
+            if (_rpcValidators.TryGetValue(methodHash, out var validator))
+            {
+                try
+                {
+                    return validator(sender, target, argData);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[NetworkManager] RPC validator error for hash 0x{methodHash:X8}: {ex.Message}");
+                    return false; // Reject on validator error
+                }
+            }
+            return true; // No validator = auto-approve (relay-only)
         }
 
         #endregion

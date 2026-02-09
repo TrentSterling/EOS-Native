@@ -14,7 +14,7 @@ namespace EOSNative.Lobbies
 {
     /// <summary>
     /// Manages EOS lobby operations: create, search, join, leave.
-    /// Uses 4-digit join codes for easy sharing.
+    /// Uses numeric join codes for easy sharing.
     /// </summary>
     public class EOSLobbyManager : MonoBehaviour
     {
@@ -208,8 +208,12 @@ namespace EOSNative.Lobbies
                 return (Result.NotConfigured, default);
             }
 
-            // Generate join code if not provided
+            // Generate join code if not provided (respect per-lobby length override)
+            int savedLength = _joinCodeLength;
+            if (options.JoinCodeLength.HasValue)
+                _joinCodeLength = Math.Clamp(options.JoinCodeLength.Value, 4, 8);
             string joinCode = options.JoinCode ?? GenerateJoinCode();
+            _joinCodeLength = savedLength;
 
             // Check if code is already in use
             var (searchResult, existingLobbies) = await SearchLobbiesAsync(new LobbySearchOptions
@@ -704,7 +708,7 @@ namespace EOSNative.Lobbies
         }
 
         /// <summary>
-        /// Searches for a lobby by its 4-digit join code.
+        /// Searches for a lobby by its numeric join code.
         /// </summary>
         public async Task<(Result result, LobbyData? lobby)> FindLobbyByCodeAsync(string joinCode)
         {
@@ -841,7 +845,7 @@ namespace EOSNative.Lobbies
         #region Public API - Join
 
         /// <summary>
-        /// Joins a lobby by its 4-digit join code.
+        /// Joins a lobby by its numeric join code.
         /// </summary>
         public async Task<(Result result, LobbyData lobby)> JoinLobbyByCodeAsync(string joinCode)
         {
@@ -1192,11 +1196,23 @@ namespace EOSNative.Lobbies
         #region Public API - Utility
 
         /// <summary>
-        /// Generates a random 4-digit join code.
+        /// Length of generated join codes (default: 6). Range: 4-8 digits.
+        /// Higher values reduce brute-force risk (4=10K, 6=1M, 8=100M possibilities).
         /// </summary>
-        public static string GenerateJoinCode()
+        public int JoinCodeLength
         {
-            return _random.Next(0, 10000).ToString("D4");
+            get => _joinCodeLength;
+            set => _joinCodeLength = Math.Max(4, Math.Min(8, value));
+        }
+        private int _joinCodeLength = 6;
+
+        /// <summary>
+        /// Generates a random join code using the configured <see cref="JoinCodeLength"/>.
+        /// </summary>
+        public string GenerateJoinCode()
+        {
+            int max = (int)Math.Pow(10, _joinCodeLength);
+            return _random.Next(0, max).ToString($"D{_joinCodeLength}");
         }
 
         /// <summary>

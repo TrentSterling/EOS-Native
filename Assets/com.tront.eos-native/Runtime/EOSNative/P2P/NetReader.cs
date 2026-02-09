@@ -284,6 +284,12 @@ namespace EOSNative.P2P
             return result;
         }
 
+        /// <summary>Read all remaining bytes from the current position to the end.</summary>
+        public byte[] ReadBytesRemaining()
+        {
+            return ReadBytesRaw(Remaining);
+        }
+
         #endregion
 
         #region EOS Types

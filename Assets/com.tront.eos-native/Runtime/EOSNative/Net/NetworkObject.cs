@@ -124,10 +124,24 @@ namespace EOSNative.Net
             return syncDict;
         }
 
+        /// <summary>Cached SyncVarLOD component (null if none). Set on first MarkDirty call.</summary>
+        private SyncVarLOD _lod;
+        private bool _lodChecked;
+
         /// <summary>Called by SyncVar setters when a value changes.</summary>
         internal void MarkDirty()
         {
             if (_isDirty) return;
+
+            // LOD throttle: if SyncVarLOD is present, it may suppress this dirty flag
+            if (!_lodChecked)
+            {
+                _lod = GetComponent<SyncVarLOD>();
+                _lodChecked = true;
+            }
+            if (_lod != null && !_lod.ShouldPropagateDirty())
+                return;
+
             _isDirty = true;
             if (IsRegistered)
                 NetworkManager.Instance?.OnObjectDirty(this);

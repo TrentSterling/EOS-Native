@@ -33,6 +33,9 @@ namespace EOSNative.CodeGen
         public MethodReference NetworkManager_get_Instance;
         public MethodReference NetworkManager_RegisterRPC_Hash;
         public MethodReference NetworkManager_SendRPCWeaved;
+        public MethodReference NetworkManager_SendRPCValidated;
+        public MethodReference NetworkManager_MarkRPCValidated;
+        public MethodReference NetworkManager_RegisterRPCValidator;
         public MethodReference NetworkBehaviour_get_Net;
         public MethodReference NetWriterPool_Get;
         public MethodReference NetWriterPool_Return;
@@ -40,6 +43,12 @@ namespace EOSNative.CodeGen
 
         // Action<NetReader> constructor
         public MethodReference ActionOfNetReader_Ctor;
+
+        // Func<ProductUserId, NetworkObject, byte[], bool> for RPC validators
+        public TypeReference FuncValidatorType;
+        public MethodReference FuncValidator_Ctor;
+        public TypeReference ProductUserIdType;
+        public TypeReference BoolType;
 
         private readonly ModuleDefinition _module;
         private TypeDefinition _netSerializersDef;
@@ -116,6 +125,22 @@ namespace EOSNative.CodeGen
                     "EOSNative.Net.RPCTarget",
                     "System.Byte[]"));
 
+            // NetworkManager.SendRPCValidated(NetworkObject, uint, RPCTarget, byte[])
+            NetworkManager_SendRPCValidated = _module.ImportReference(
+                FindMethod(nmDef, "SendRPCValidated", 4,
+                    "EOSNative.Net.NetworkObject",
+                    "System.UInt32",
+                    "EOSNative.Net.RPCTarget",
+                    "System.Byte[]"));
+
+            // NetworkManager.MarkRPCValidated(uint)
+            NetworkManager_MarkRPCValidated = _module.ImportReference(
+                FindMethod(nmDef, "MarkRPCValidated", 1));
+
+            // NetworkManager.RegisterRPCValidator(uint, Func<ProductUserId, NetworkObject, byte[], bool>)
+            NetworkManager_RegisterRPCValidator = _module.ImportReference(
+                FindMethod(nmDef, "RegisterRPCValidator", 2));
+
             // NetworkBehaviour.Net getter
             var nbDef = ResolveTypeDef(eosNativeAsm, "EOSNative.Net.NetworkBehaviour");
             NetworkBehaviour_get_Net = _module.ImportReference(
@@ -141,6 +166,29 @@ namespace EOSNative.CodeGen
             var actionCtor = FindMethod(actionTypeDef, ".ctor", 2);
             ActionOfNetReader_Ctor = _module.ImportReference(actionCtor);
             ActionOfNetReader_Ctor.DeclaringType = actionClosed;
+
+            // Func<ProductUserId, NetworkObject, byte[], bool> for RPC validators
+            BoolType = _module.TypeSystem.Boolean;
+
+            // Find EOS ProductUserId type
+            var eosAsm = FindAssemblyByTypeName("Epic.OnlineServices.ProductUserId");
+            if (eosAsm != null)
+                ProductUserIdType = ResolveTypeRef(eosAsm, "Epic.OnlineServices.ProductUserId");
+            else
+                ProductUserIdType = _module.TypeSystem.Object; // Fallback — shouldn't happen
+
+            var funcOpenType = _module.ImportReference(typeof(Func<,,,>));
+            var funcClosed = new GenericInstanceType(funcOpenType);
+            funcClosed.GenericArguments.Add(ProductUserIdType);
+            funcClosed.GenericArguments.Add(NetworkObjectType);
+            funcClosed.GenericArguments.Add(ByteArrayType);
+            funcClosed.GenericArguments.Add(BoolType);
+            FuncValidatorType = funcClosed;
+
+            var funcTypeDef = funcOpenType.Resolve();
+            var funcCtorDef = FindMethod(funcTypeDef, ".ctor", 2);
+            FuncValidator_Ctor = _module.ImportReference(funcCtorDef);
+            FuncValidator_Ctor.DeclaringType = funcClosed;
         }
 
         /// <summary>

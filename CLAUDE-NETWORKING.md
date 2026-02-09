@@ -599,6 +599,36 @@ NetworkManager.Instance.OnRPCValidation = (sender, target, hash) =>
 };
 ```
 
+## Host-Validated RPCs
+
+Mark RPCs with `Validated = true` to route them through the host for validation before broadcast. The host can run game-specific checks (range, cooldowns, economy) and reject unauthorized RPCs.
+
+```csharp
+// On your NetworkBehaviour:
+[NetRpc(RPCTarget.All, Validated = true)]
+public void DealDamage(float amount) { Health.Value -= amount; }
+
+// Optional validator (auto-discovered by naming convention):
+// Runs ONLY on host. Return true = approve, false = reject.
+bool Validate_DealDamage(ProductUserId sender, NetworkObject target, byte[] argData)
+{
+    if (amount > 100) return false;  // cap damage
+    // Deserialize args if needed: var reader = new NetReader(argData, 0, argData.Length);
+    return true;
+}
+```
+
+**Flow:** Client calls `DealDamage(50)` → weaver sends to host only (MSG_RPC_VALIDATED 0xA8) → host runs `Validate_DealDamage` if present (auto-approves if not) → host rebroadcasts (MSG_RPC_REBROADCAST 0xA9) → all peers execute.
+
+**Wire format (both 0xA8 and 0xA9):** `[networkId:u32][methodHash:u32][originalTarget:u8][argData...]`
+
+**Key points:**
+- No `nameof` needed — weaver auto-discovers `Validate_X` by naming convention
+- Without a validator method, host auto-approves (relay-only mode — still prevents direct peer spoofing)
+- Adds ~20-40ms latency (one extra hop through host)
+- Rebroadcast only accepted from host (sender == GetHostPuid())
+- If host IS the caller, validation + rebroadcast happens locally
+
 ## Automated Tests
 
 Editor-mode unit tests for core networking primitives. Uses Unity Test Framework (`com.unity.test-framework`).

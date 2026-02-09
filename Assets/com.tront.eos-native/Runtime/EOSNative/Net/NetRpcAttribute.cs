@@ -26,6 +26,14 @@ namespace EOSNative.Net
         /// <summary>Who receives this RPC when the method is called.</summary>
         public RPCTarget Target { get; }
 
+        /// <summary>
+        /// If true, this RPC is routed through the host for validation before being
+        /// broadcast to all peers. The host runs the Validate_MethodName method (if present)
+        /// and only rebroadcasts if it returns true. Adds ~20-40ms latency (one extra hop).
+        /// The IL weaver auto-discovers validation methods by convention — no nameof needed.
+        /// </summary>
+        public bool Validated { get; set; }
+
         public NetRpcAttribute(RPCTarget target = RPCTarget.All)
         {
             Target = target;
