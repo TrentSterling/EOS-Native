@@ -2,6 +2,14 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.31.0] - 2026-02-09
+
+### Added
+- **Client-side prediction** — `NetworkPrediction` component records object state every tick into a `StateHistory` ring buffer (64 entries = ~2.1s at 30Hz). When authoritative corrections arrive (e.g. from host-validated RPCs), `ApplyCorrection()` compares predicted vs actual state — if error exceeds configurable thresholds (0.05m position, 5 deg rotation), physics snaps immediately while a visual offset blends to zero over 0.1s using exponential decay. Coexists with NetworkTransform (separate concerns).
+- **Lag compensation** — `LagCompensation.Compensate(rttMs, callback)` rewinds all tracked `NetworkPrediction` objects to their historical positions (half-RTT in the past), calls `Physics.SyncTransforms()` so raycasts see rewound colliders, executes the callback, then restores all positions in a crash-safe `finally` block. Overload `Compensate(ProductUserId, callback)` auto-fetches RTT from `NetworkStats`.
+- **`StateSnapshot` struct** — Immutable physics state snapshot (tick, position, rotation, velocity, angular velocity).
+- **`StateHistory` class** — O(1) ring buffer with `Record()`, `TryGetAtTick()`, `GetInterpolated()` (sub-tick lerp/slerp), `Clear()`, `NewestTick`, `OldestTick`, `Count`.
+
 ## [2.30.0] - 2026-02-09
 
 ### Added

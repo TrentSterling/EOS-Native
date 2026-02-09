@@ -18,6 +18,9 @@ High-level networking built on the P2P Transport Toolkit (Layer 1). Provides obj
 - **SyncList\<T\>** — Synchronized list with operation-based delta sync (Add/Set/RemoveAt/Insert/Clear). Only changed ops sent over the wire.
 - **SyncDictionary\<TKey, TValue\>** — Synchronized dictionary with operation-based delta sync (Set/Remove/Clear). Key-value pairs for inventories, scores, game state.
 - **NetSerializers** — Static type registry for serialization. Built-in handlers for all common types + `INetSerializable` for custom.
+- **NetworkPrediction** — Opt-in prediction + lag compensation component. Records state every tick into a `StateHistory` ring buffer. `ApplyCorrection()` for authoritative corrections with visual smoothing.
+- **LagCompensation** — Static rewind utility. `Compensate(rttMs, callback)` rewinds all tracked objects, syncs physics, executes callback (raycasts etc.), then restores. Crash-safe via `finally`.
+- **StateSnapshot / StateHistory** — Immutable physics state struct + O(1) ring buffer with interpolated lookup.
 
 ### Usage
 
@@ -842,3 +845,65 @@ Editor-mode unit tests for core networking primitives. Uses Unity Test Framework
 | `PacketCompressionTests.cs` | ~10 | Deflate compress/decompress round-trip, various sizes, offsets, empty data, random data, threshold edge cases |
 
 **Run:** Window > General > Test Runner > EditMode > Run All
+
+## Client-Side Prediction & Lag Compensation (v2.31.0)
+
+Three files in `Runtime/EOSNative/Net/`: `StateSnapshot.cs`, `NetworkPrediction.cs`, `LagCompensation.cs`.
+
+### Design Philosophy
+
+EOS-Native uses peer-to-peer authority — each peer owns their objects and moves them locally. This means:
+- **Owner movement needs no prediction** — you already move locally, state is authoritative
+- **Host-validated RPCs** (`[NetRpc(Validated = true)]`) need prediction: client acts optimistically, host may reject, client must rollback
+- **Hit detection** needs lag compensation: rewind all objects to where the shooter saw them
+
+### StateSnapshot + StateHistory
+
+`StateSnapshot` is an immutable struct: `uint Tick, Vector3 Position, Quaternion Rotation, Vector3 Velocity, Vector3 AngularVelocity`.
+
+`StateHistory` is a fixed-capacity ring buffer (default 64 entries = ~2.1s at 30Hz):
+- `Record(snapshot)` — O(1) write, overwrites oldest when full
+- `TryGetAtTick(tick, out snapshot)` — O(1) direct index lookup
+- `GetInterpolated(float tickFloat)` — sub-tick lerp/slerp between floor/ceil entries
+- `Clear()`, `NewestTick`, `OldestTick`, `Count`
+
+### NetworkPrediction
+
+`[RequireComponent(typeof(NetworkObject))]` component. Opt-in per object.
+
+**Recording:** Subscribes to `TickSimulation.OnTick`. Every tick, captures position, rotation, velocity, angular velocity into `StateHistory`.
+
+**Correction:** `ApplyCorrection(tick, pos, rot, vel, angVel)`:
+1. Looks up predicted state at that tick in history
+2. If position error > `_correctionThreshold` (0.05m) or rotation error > `_rotationCorrectionThreshold` (5°):
+   - Saves visual offset (current pos - auth pos)
+   - Snaps physics (transform + rigidbody) to authoritative state
+   - Starts visual blend
+
+**Visual smoothing:** In `LateUpdate`, exponential decay blends `_visualOffset` and `_visualRotOffset` to zero over `_correctionBlendTime` (0.1s). Physics is always at the authoritative position; only the rendered position has an offset. Stops blending when offset < 0.01m and rotation < 0.1°.
+
+**Config (Inspector):**
+- `_correctionThreshold` — position error below which corrections are ignored (default 0.05m)
+- `_rotationCorrectionThreshold` — rotation error threshold (default 5°)
+- `_correctionBlendTime` — visual blend duration (default 0.1s)
+- `_historyCapacity` — ring buffer size (default 64)
+
+**Auto-registers** with `LagCompensation` on OnEnable/OnDisable.
+
+### LagCompensation
+
+Static class. All `NetworkPrediction` components auto-register.
+
+**`Compensate(float rttMs, Action callback)`:**
+1. Save position, rotation, velocity, angular velocity of all tracked objects
+2. Calculate rewind tick: `CurrentTick - (rttMs / 2000 / FixedTickTime)`
+3. Rewind all objects using `StateHistory.GetInterpolated(targetTick)`
+4. `Physics.SyncTransforms()` — colliders move to rewound positions
+5. Execute callback (user does Physics.Raycast, OverlapSphere, etc.)
+6. Restore all objects to saved state (in `finally` block — crash-safe)
+7. `Physics.SyncTransforms()` again
+
+**`Compensate(ProductUserId shooter, Action callback)`:**
+Auto-fetches RTT from `NetworkStats.Instance.RTT(shooter)`. If RTT unknown, executes without rewind.
+
+**`TrackedCount`** — number of registered objects (for debugging/UI)

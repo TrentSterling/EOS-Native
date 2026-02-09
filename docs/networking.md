@@ -1330,3 +1330,118 @@ NetworkManager.Instance.DespawnAll();   // clean up offline objects
 NetworkManager.Instance.StopOfflineMode();
 // Now join a lobby normally — EOS login, P2P, etc.
 ```
+
+## Client-Side Prediction & Lag Compensation
+
+Opt-in prediction and lag compensation for networked objects. Three components in `Runtime/EOSNative/Net/`.
+
+### When You Need This
+
+EOS-Native uses peer-to-peer authority — you already move your own objects locally (no prediction needed for basic movement). Prediction matters when:
+
+- **Host-validated RPCs** — You act optimistically, but the host might reject. If the host sends back a different state, `NetworkPrediction` smoothly corrects your object.
+- **Hit detection** — When a player fires a weapon, they see other players where they were ~half-RTT ago. `LagCompensation` rewinds all objects so raycasts match what the shooter saw.
+
+### Setup
+
+Add `NetworkPrediction` to any GameObject that already has a `NetworkObject`:
+
+```csharp
+// On your player prefab — just add the component
+[RequireComponent(typeof(NetworkObject))]
+public class Player : NetworkBehaviour
+{
+    // NetworkPrediction auto-registers for history recording + lag compensation
+}
+```
+
+Enable tick simulation (required for prediction timing):
+
+```csharp
+TickSimulation.Instance.TickRate = 30; // 30 ticks/sec
+```
+
+### Prediction Correction
+
+When you receive an authoritative state (e.g. from a host-validated RPC result):
+
+```csharp
+var prediction = GetComponent<NetworkPrediction>();
+
+// Host says "at tick 150, you were actually at this position"
+prediction.ApplyCorrection(
+    tick: 150,
+    authPosition: serverPos,
+    authRotation: serverRot,
+    authVelocity: serverVel,
+    authAngularVelocity: Vector3.zero
+);
+// If error > threshold: physics snaps, visual blends smoothly over 0.1s
+// If error < threshold: nothing happens (prediction was accurate)
+```
+
+### Lag-Compensated Hit Detection
+
+Rewind all tracked objects and do raycasts against where they were:
+
+```csharp
+// Option 1: Specify RTT directly (milliseconds)
+LagCompensation.Compensate(80f, () =>
+{
+    if (Physics.Raycast(muzzle, direction, out var hit, maxRange))
+    {
+        var health = hit.collider.GetComponent<Health>();
+        health?.TakeDamage(25);
+    }
+});
+// Objects are automatically restored after the callback
+
+// Option 2: Pass the shooter's PUID (auto-fetches RTT from NetworkStats)
+LagCompensation.Compensate(shooterPuid, () =>
+{
+    if (Physics.Raycast(muzzle, direction, out var hit, maxRange))
+        hit.collider.GetComponent<Health>()?.TakeDamage(25);
+});
+```
+
+### Configuration
+
+`NetworkPrediction` Inspector settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Correction Threshold | 0.05m | Position error below which corrections are ignored |
+| Rotation Correction Threshold | 5° | Rotation error below which corrections are ignored |
+| Correction Blend Time | 0.1s | Visual smoothing duration after a correction |
+| History Capacity | 64 | Ring buffer size (~2.1s at 30Hz) |
+
+### How It Works
+
+1. **Every tick**, `NetworkPrediction` records position/rotation/velocity into a `StateHistory` ring buffer
+2. **On correction**, compares predicted state at that tick vs authoritative state
+3. **If error exceeds threshold**: physics snaps to authoritative position, visual offset blends to zero via exponential decay in LateUpdate
+4. **For lag compensation**: all tracked objects rewind to `CurrentTick - (RTT/2 / TickTime)`, Physics.SyncTransforms() makes colliders match, callback executes, then everything restores
+
+### API Reference
+
+```csharp
+// StateHistory
+history.Record(snapshot);                    // O(1) write
+history.TryGetAtTick(tick, out snapshot);    // O(1) lookup
+history.GetInterpolated(tickFloat);          // sub-tick lerp/slerp
+history.Clear();
+history.Count;       // entries in buffer
+history.NewestTick;  // most recent tick
+history.OldestTick;  // oldest tick still in buffer
+
+// NetworkPrediction
+prediction.ApplyCorrection(tick, pos, rot, vel, angVel);
+prediction.History;                // StateHistory reference
+prediction.IsBlending;             // true during visual correction
+prediction.VisualOffsetMagnitude;  // current offset (for debug UI)
+
+// LagCompensation
+LagCompensation.Compensate(rttMs, callback);      // rewind by RTT
+LagCompensation.Compensate(shooterPuid, callback); // auto-fetch RTT
+LagCompensation.TrackedCount;                      // registered objects
+```

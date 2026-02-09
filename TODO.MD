@@ -82,8 +82,8 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Spectator mode (IsSpectator flag, RPCTarget.Players, host election skip, spawn guard)
 
 **Prediction & Rollback:**
-- [ ] Client-side prediction (input prediction for owned objects)
-- [ ] Collider rollback (lag compensation for hit detection)
+- [x] Client-side prediction (input prediction for owned objects) (v2.31.0)
+- [x] Collider rollback (lag compensation for hit detection) (v2.31.0)
 - [ ] Study Valve networking docs (Source/CS:GO PDFs) for rollback architecture
 - [ ] Study Photon PUN architecture for shared-mode patterns
 
