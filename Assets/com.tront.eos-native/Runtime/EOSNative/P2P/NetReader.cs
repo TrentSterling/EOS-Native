@@ -11,6 +11,12 @@ namespace EOSNative.P2P
     /// </summary>
     public sealed class NetReader
     {
+        /// <summary>Maximum allowed string byte length (64 KB). Prevents OOM from malicious packets.</summary>
+        public const int MaxStringBytes = 65535;
+
+        /// <summary>Maximum allowed byte array length (1 MB). Prevents OOM from malicious packets.</summary>
+        public const int MaxBytesLength = 1048576;
+
         private byte[] _buffer;
         private int _offset;
         private int _count;
@@ -200,6 +206,9 @@ namespace EOSNative.P2P
         {
             ushort byteCount = ReadUInt16();
             if (byteCount == 0) return string.Empty;
+            if (byteCount > MaxStringBytes)
+                throw new InvalidOperationException(
+                    $"NetReader: string byte count {byteCount} exceeds max {MaxStringBytes}");
 
             CheckBounds(byteCount);
             string value = Encoding.UTF8.GetString(_buffer, _offset + _position, byteCount);
@@ -264,6 +273,9 @@ namespace EOSNative.P2P
         {
             ushort length = ReadUInt16();
             if (length == 0) return Array.Empty<byte>();
+            if (length > MaxBytesLength)
+                throw new InvalidOperationException(
+                    $"NetReader: byte array length {length} exceeds max {MaxBytesLength}");
 
             CheckBounds(length);
             var result = new byte[length];

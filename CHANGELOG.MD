@@ -2,6 +2,19 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.19.0] - 2026-02-08
+
+### Added
+- **Security hardening** — 7 defensive measures against malicious packets:
+  - **Decompression size limit** — `DecompressDeflate` capped at 1 MB output. Prevents compression bomb attacks.
+  - **Per-peer RPC rate limiting** — `NetworkManager.MaxMessagesPerPeerPerSecond` (0 = unlimited). Excess messages silently dropped.
+  - **SHA256 password hashing** — Lobby passwords hashed with SHA256+salt instead of non-deterministic `GetHashCode()`.
+  - **Fragment reassembly limits** — Max 8 pending assemblies per sender, max fragment index 256 (~300 KB). Prevents memory exhaustion.
+  - **Batch count validation** — Max 256 messages per batch packet. Oversized batches rejected.
+  - **String/byte length caps** — `NetReader.MaxStringBytes` (64 KB), `NetReader.MaxBytesLength` (1 MB). Prevents OOM from crafted packets.
+  - **Pooled buffer zeroing** — `NetWriter.Reset()` clears written data to prevent stale data leaks between messages.
+  - **Invite payload validation** — Max 512 chars, printable characters only. Rejects control characters.
+
 ## [2.18.1] - 2026-02-08
 
 ### Fixed

@@ -176,10 +176,14 @@ namespace EOSNative.P2P
             }
         }
 
+        /// <summary>Maximum messages per batch packet. Prevents flood via crafted batch.</summary>
+        public const int MaxBatchCount = 256;
+
         private void DispatchBatch(ProductUserId sender, byte[] data, int start, int length)
         {
             if (length < 2) return;
             ushort count = (ushort)(data[start] | (data[start + 1] << 8));
+            if (count > MaxBatchCount) return; // reject oversized batch
             int offset = start + 2;
             int end = start + length;
 
@@ -432,6 +436,9 @@ namespace EOSNative.P2P
 
         #region Compression
 
+        /// <summary>Maximum decompressed output size (1 MB). Prevents compression bomb attacks.</summary>
+        public const int MaxDecompressedSize = 1048576;
+
         internal static byte[] CompressDeflate(byte[] data, int offset, int count)
         {
             using var output = new MemoryStream();
@@ -447,7 +454,18 @@ namespace EOSNative.P2P
             using var input = new MemoryStream(data, offset, count);
             using var deflate = new DeflateStream(input, CompressionMode.Decompress);
             using var output = new MemoryStream();
-            deflate.CopyTo(output);
+
+            var buffer = new byte[4096];
+            int totalRead = 0;
+            int bytesRead;
+            while ((bytesRead = deflate.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                totalRead += bytesRead;
+                if (totalRead > MaxDecompressedSize)
+                    throw new InvalidOperationException(
+                        $"Decompressed data exceeds {MaxDecompressedSize} bytes — possible compression bomb");
+                output.Write(buffer, 0, bytesRead);
+            }
             return output.ToArray();
         }
 

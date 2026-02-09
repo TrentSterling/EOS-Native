@@ -23,6 +23,12 @@ namespace EOSNative.P2P
         /// <summary>Seconds before incomplete fragment sets are discarded.</summary>
         public const float StaleTimeout = 5f;
 
+        /// <summary>Maximum pending fragment assemblies per sender. Prevents memory exhaustion.</summary>
+        public const int MaxPendingPerSender = 8;
+
+        /// <summary>Maximum fragment index. Caps reassembled packet size at ~300 KB.</summary>
+        public const int MaxFragmentIndex = 256;
+
         private uint _nextPacketId;
 
         // Key for pending fragment reassembly
@@ -135,11 +141,18 @@ namespace EOSNative.P2P
                 return result;
             }
 
+            // Reject fragments with index beyond safety limit
+            if (fragmentIndex >= MaxFragmentIndex) return null;
+
             // Multi-fragment reassembly
             var key = new FragmentKey { Sender = sender, PacketId = packetId, Channel = channel };
 
             if (!_pending.TryGetValue(key, out var assembly))
             {
+                // Check per-sender limit before creating new assembly
+                if (CountPendingForSender(sender) >= MaxPendingPerSender)
+                    return null; // drop — sender has too many pending assemblies
+
                 assembly = new FragmentAssembly
                 {
                     Fragments = new byte[16][], // start with capacity for 16 fragments
@@ -217,6 +230,17 @@ namespace EOSNative.P2P
 
             for (int i = 0; i < _staleKeys.Count; i++)
                 _pending.Remove(_staleKeys[i]);
+        }
+
+        private int CountPendingForSender(ProductUserId sender)
+        {
+            int count = 0;
+            foreach (var kvp in _pending)
+            {
+                if (kvp.Key.Sender == sender)
+                    count++;
+            }
+            return count;
         }
 
         /// <summary>Clear all pending fragments for a specific sender.</summary>

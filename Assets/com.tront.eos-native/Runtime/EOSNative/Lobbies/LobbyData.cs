@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 using Epic.OnlineServices;
 using Epic.OnlineServices.Lobby;
 
@@ -342,11 +344,24 @@ namespace EOSNative.Lobbies
             if (!string.IsNullOrEmpty(Region))
                 attrs[LobbyAttributes.REGION] = Region;
             if (!string.IsNullOrEmpty(Password))
-                attrs[LobbyAttributes.PASSWORD] = Password.GetHashCode().ToString(); // Store hash, not password
+                attrs[LobbyAttributes.PASSWORD] = HashPassword(Password);
             if (SkillLevel.HasValue)
                 attrs[LobbyAttributes.SKILL_LEVEL] = SkillLevel.Value.ToString();
 
             return attrs;
+        }
+
+        /// <summary>
+        /// Hash a lobby password using SHA256 with a fixed salt.
+        /// Deterministic across runtimes (unlike GetHashCode).
+        /// </summary>
+        internal static string HashPassword(string password)
+        {
+            const string salt = "EOSNative_LobbyPw_v1";
+            using var sha = SHA256.Create();
+            byte[] bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(salt + password));
+            // Return first 16 hex chars (64-bit) — enough for password matching, fits in lobby attribute
+            return BitConverter.ToString(bytes, 0, 8).Replace("-", "").ToLowerInvariant();
         }
     }
 

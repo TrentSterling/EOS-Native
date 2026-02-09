@@ -19,18 +19,18 @@ All open tasks for EOS-Native, organized by category and priority.
 ## Security & Validation (from security audit)
 
 - [x] Host-validated RPCs — `[NetRpc(Validated = true)]` 2-hop relay through host (v2.18.0)
-- [ ] Decompression size limit — cap DecompressDeflate output to prevent compression bombs
+- [x] Decompression size limit — 1 MB cap on DecompressDeflate output (v2.19.0)
 - [x] Join code entropy — configurable length 4-8 digits, default 6 (v2.18.0)
-- [ ] Per-peer RPC rate limiting — cap messages/sec per sender to prevent flood DoS
+- [x] Per-peer RPC rate limiting — `MaxMessagesPerPeerPerSecond` on NetworkManager (v2.19.0)
 - [ ] Network rules — PurrNet-style validation rules
-- [ ] Password hashing — replace GetHashCode() with SHA256+salt for lobby passwords
+- [x] Password hashing — SHA256+salt for lobby passwords (v2.19.0)
 - [ ] Credential storage — move ClientSecret/EncryptionKey out of ScriptableObject plaintext
 - [ ] Remove EOSConfig.asset from git — add to .gitignore, document user must create own
-- [ ] Fragment reassembly limits — cap pending assemblies per sender, cap fragment index
-- [ ] Batch count validation — reject batch packets with count > reasonable limit
-- [ ] String/byte array length caps — limit ReadString/ReadBytes to prevent OOM
-- [ ] Pooled buffer zeroing — clear NetWriter buffer on Reset() to prevent stale data leaks
-- [ ] Invite payload validation — size limit + character validation on EOSCustomInvites
+- [x] Fragment reassembly limits — max 8 per sender, max index 256 (v2.19.0)
+- [x] Batch count validation — max 256 messages per batch (v2.19.0)
+- [x] String/byte array length caps — 64KB strings, 1MB byte arrays (v2.19.0)
+- [x] Pooled buffer zeroing — Array.Clear on NetWriter.Reset() (v2.19.0)
+- [x] Invite payload validation — 512 char limit, printable chars only (v2.19.0)
 - [ ] Tighter ProGuard rules — narrow `-keep` to public APIs only
 
 ## Spatial Voice

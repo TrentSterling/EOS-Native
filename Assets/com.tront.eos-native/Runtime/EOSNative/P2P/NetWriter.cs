@@ -25,6 +25,8 @@ namespace EOSNative.P2P
 
         public void Reset()
         {
+            if (_position > 0)
+                Array.Clear(_buffer, 0, _position);
             _position = 0;
         }
 

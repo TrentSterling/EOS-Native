@@ -86,6 +86,12 @@ namespace EOSNative.Net
         /// </summary>
         public Func<ProductUserId, NetworkObject, uint, bool> OnRPCValidation;
 
+        /// <summary>
+        /// Maximum messages accepted per peer per second. 0 = unlimited (default).
+        /// Excess messages from a peer are silently dropped for that second.
+        /// </summary>
+        public int MaxMessagesPerPeerPerSecond { get; set; }
+
         /// <summary>Enable/disable Deflate compression for message payloads above threshold.</summary>
         public bool CompressionEnabled
         {
@@ -799,6 +805,10 @@ namespace EOSNative.Net
             public byte[] ArgData;
         }
 
+        // Per-peer message rate limiting
+        private readonly Dictionary<ProductUserId, int> _peerMessageCounts = new();
+        private float _rateLimitResetTime;
+
         // Host-validated RPCs: per-RPC validator methods registered by weaver
         // Key: methodHash, Value: validator func (sender, target, argData) → bool
         private readonly Dictionary<uint, Func<ProductUserId, NetworkObject, byte[], bool>> _rpcValidators = new();
@@ -862,6 +872,27 @@ namespace EOSNative.Net
 
             // Check for reliable fallback — resend state reliably if not re-dirtied
             CheckReliableFallback();
+
+            // Reset per-peer message counters every second
+            if (MaxMessagesPerPeerPerSecond > 0 && Time.unscaledTime >= _rateLimitResetTime)
+            {
+                _peerMessageCounts.Clear();
+                _rateLimitResetTime = Time.unscaledTime + 1f;
+            }
+        }
+
+        /// <summary>
+        /// Check if a peer has exceeded their message rate limit.
+        /// Returns true if the message should be dropped.
+        /// </summary>
+        private bool IsRateLimited(ProductUserId sender)
+        {
+            if (MaxMessagesPerPeerPerSecond <= 0) return false;
+
+            _peerMessageCounts.TryGetValue(sender, out int count);
+            if (count >= MaxMessagesPerPeerPerSecond) return true;
+            _peerMessageCounts[sender] = count + 1;
+            return false;
         }
 
         #endregion
@@ -1428,6 +1459,8 @@ namespace EOSNative.Net
 
         private void HandleRPC(ProductUserId sender, NetReader reader)
         {
+            if (IsRateLimited(sender)) return;
+
             uint networkId = reader.ReadUInt32();
             uint methodHash = reader.ReadUInt32();
             // Args are left in the reader for the handler to consume
@@ -1482,6 +1515,7 @@ namespace EOSNative.Net
         /// </summary>
         private void HandleRPCValidated(ProductUserId sender, NetReader reader)
         {
+            if (IsRateLimited(sender)) return;
             if (!IsHost) return; // Only the host handles validated RPCs
 
             uint networkId = reader.ReadUInt32();

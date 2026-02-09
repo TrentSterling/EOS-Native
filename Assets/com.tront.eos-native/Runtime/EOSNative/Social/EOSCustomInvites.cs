@@ -137,6 +137,9 @@ namespace EOSNative.Social
 
         #region Public API
 
+        /// <summary>Maximum invite payload length in characters.</summary>
+        public const int MaxPayloadLength = 512;
+
         /// <summary>
         /// Set the payload that will be sent with invites.
         /// Usually contains lobby join code or connection info.
@@ -146,10 +149,30 @@ namespace EOSNative.Social
             if (!IsReady)
                 return Result.NotConfigured;
 
+            payload ??= "";
+
+            // Validate payload size
+            if (payload.Length > MaxPayloadLength)
+            {
+                Debug.LogWarning($"[EOSCustomInvites] Payload too long ({payload.Length} > {MaxPayloadLength})");
+                return Result.InvalidParameters;
+            }
+
+            // Validate printable characters only (no control chars except whitespace)
+            for (int i = 0; i < payload.Length; i++)
+            {
+                char c = payload[i];
+                if (c != '\n' && c != '\r' && c != '\t' && char.IsControl(c))
+                {
+                    Debug.LogWarning($"[EOSCustomInvites] Payload contains invalid control character at index {i}");
+                    return Result.InvalidParameters;
+                }
+            }
+
             var options = new SetCustomInviteOptions
             {
                 LocalUserId = _localUserId,
-                Payload = payload ?? ""
+                Payload = payload
             };
 
             var result = _customInvitesInterface.SetCustomInvite(ref options);
@@ -550,9 +573,13 @@ namespace EOSNative.Social
         /// </summary>
         public bool TryGetLobbyCode(out string code)
         {
-            // Assume 4-digit codes for now
-            if (!string.IsNullOrEmpty(Payload) && Payload.Length == 4)
+            // Join codes are 4-8 digit numeric strings
+            if (!string.IsNullOrEmpty(Payload) && Payload.Length >= 4 && Payload.Length <= 8)
             {
+                for (int i = 0; i < Payload.Length; i++)
+                {
+                    if (!char.IsDigit(Payload[i])) { code = null; return false; }
+                }
                 code = Payload;
                 return true;
             }
