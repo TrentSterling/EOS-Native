@@ -69,6 +69,11 @@ await EOSLobbyChatManager.Instance.SendChatMessageAsync("Hello!");
 | **Replay System** | Recording, Playback, Highlights, Voice Recording |
 | **Advanced** | Anti-Cheat, Cloud Storage, Architecture |
 
+## Links
+
+- [Blog Post](https://blog.tront.xyz/posts/eos-native/)
+- [TrontCloud](https://tront.xyz/trontcloud/) - Optional persistent backend for stats, leaderboards, and achievements
+
 ## Support
 
 - [Troubleshooting](troubleshooting.md)
