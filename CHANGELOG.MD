@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.28.0] - 2026-02-09
+
+### Added
+- **Voice priority system** — Bandwidth management for large player counts. `MaxActiveVoiceStreams` (default 0 = unlimited) limits simultaneous voice streams. When exceeded, lowest-priority participants are automatically muted. Priority scoring: speaking players (+1000), proximity (closer = higher), same team (+100). Applied after volume calculation each update cycle. Participants already at min volume don't count toward the limit. Query: `GetPlayerPriority(puid)` for debugging.
+
 ## [2.27.0] - 2026-02-09
 
 ### Added

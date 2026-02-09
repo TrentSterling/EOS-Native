@@ -168,6 +168,28 @@ When enabled (in Proximity or TeamProximity mode):
 
 The grid operates on the XZ plane (same as the networking `SpatialHashGrid`). Set `GridCellSize` to roughly half your `MaxHearingDistance` for optimal cell granularity.
 
+### Voice Priority (Bandwidth Management)
+
+Limit simultaneous voice streams when player count exceeds what the audio pipeline can handle:
+
+```csharp
+var zones = EOSVoiceZoneManager.Instance;
+
+zones.MaxActiveVoiceStreams = 16; // 0 = unlimited (default)
+```
+
+When the number of audible participants exceeds `MaxActiveVoiceStreams`, the lowest-priority players are muted. Priority scoring:
+
+| Factor | Score | Description |
+|--------|-------|-------------|
+| Speaking | +1000 | Currently transmitting voice |
+| Proximity | 0 to maxDistance | Closer = higher priority |
+| Same team | +100 | Team/TeamProximity modes only |
+
+Players already at minimum volume (out of range) don't count toward the limit.
+
+**Query:** `zones.GetPlayerPriority(puid)` returns the current priority score for debugging (-1 if not scored).
+
 ### Auto-Discover
 
 When `_autoDiscoverNetworkObjects` is enabled (default), the zone manager automatically scans `NetworkManager.Instance.Objects` for GameObjects tagged with the configured `_playerTag` (default `"Player"`). It registers their transforms by PUID for position tracking.

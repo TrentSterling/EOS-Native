@@ -74,7 +74,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] VOIP speaking indicator — Animated sphere above player head when talking
 - [x] Audio occlusion (raycast-based wall muting) (v2.23.0)
 - [x] Grid-based spatial partitioning (for 100+ players) (v2.27.0)
-- [ ] Voice priority system (bandwidth management at scale)
+- [x] Voice priority system (bandwidth management at scale) (v2.28.0)
 
 **Multi-Transport & Crossplay:**
 - [ ] Multi-transport support (EOS + Steam crossplay)

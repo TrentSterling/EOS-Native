@@ -52,7 +52,9 @@ Singleton that controls WHO you hear and at WHAT volume. Works alongside `EOSVoi
 
 **Spatial Hash Grid (v2.27.0):** For 100+ players, `UseSpatialGrid = true` hashes player positions into 2D grid cells (XZ plane). Only nearby cells (9-neighbor lookup) are checked for proximity. Far players immediately muted. O(N) instead of O(N^2). `GridCellSize` defaults to 15 (use maxHearingDistance/2). Active in Proximity and TeamProximity modes only. Grid auto-cleaned on UnregisterPlayer/ClearAllPlayers.
 
-**Update loop:** Every `_updateInterval` (0.1s), iterate participants (or nearby grid cells if spatial grid enabled), calculate volume, apply occlusion + ducking, call `EOSVoiceManager.SetParticipantVolume()` if change > threshold.
+**Voice Priority (v2.28.0):** `MaxActiveVoiceStreams` (0 = unlimited) limits simultaneous audible streams. After volume calculation, ranks all audible participants by priority (speaking +1000, inverse distance, same team +100) and mutes the lowest-priority ones over the limit. `GetPlayerPriority(puid)` for debugging.
+
+**Update loop:** Every `_updateInterval` (0.1s), iterate participants (or nearby grid cells if spatial grid enabled), calculate volume, apply occlusion + ducking, enforce priority limit, call `EOSVoiceManager.SetParticipantVolume()` if change > threshold.
 
 ```csharp
 // Set mode

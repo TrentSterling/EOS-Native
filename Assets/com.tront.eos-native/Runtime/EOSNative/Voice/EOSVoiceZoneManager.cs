@@ -150,6 +150,10 @@ namespace EOSNative.Voice
         [Tooltip("Height offset for raycast origin/target (approximate head height)")]
         [SerializeField] private float _occlusionRayHeight = 1.5f;
 
+        [Header("Voice Priority (Bandwidth Management)")]
+        [Tooltip("Maximum simultaneous voice streams. 0 = unlimited. When exceeded, lowest-priority participants are muted.")]
+        [SerializeField] private int _maxActiveVoiceStreams = 0;
+
         [Header("Spatial Grid (100+ Players)")]
         [Tooltip("Use a spatial hash grid for proximity lookups instead of brute-force O(N^2). Enables efficient proximity voice for 100+ players.")]
         [SerializeField] private bool _useSpatialGrid = false;
@@ -234,6 +238,17 @@ namespace EOSNative.Voice
             set => _occlusionVolumeMultiplier = Mathf.Clamp01(value);
         }
 
+        /// <summary>
+        /// Maximum simultaneous voice streams. 0 = unlimited (default).
+        /// When exceeded, lowest-priority participants are muted.
+        /// Speaking participants always have highest priority, then sorted by proximity.
+        /// </summary>
+        public int MaxActiveVoiceStreams
+        {
+            get => _maxActiveVoiceStreams;
+            set => _maxActiveVoiceStreams = Mathf.Max(0, value);
+        }
+
         /// <summary>Whether the spatial hash grid is enabled for proximity lookups.</summary>
         public bool UseSpatialGrid
         {
@@ -273,6 +288,9 @@ namespace EOSNative.Voice
         private readonly Dictionary<long, HashSet<string>> _gridCells = new();
         private readonly Dictionary<string, long> _puidCells = new();
         private readonly HashSet<string> _nearbyPuids = new();
+
+        // Voice priority system
+        private readonly List<(string puid, float priority)> _priorityList = new();
 
         #endregion
 
@@ -659,6 +677,12 @@ namespace EOSNative.Voice
                     UpdatePlayerVolume(puid);
                 }
             }
+
+            // Voice priority: mute lowest-priority participants when over limit
+            if (_maxActiveVoiceStreams > 0)
+            {
+                EnforcePriorityLimit(voiceManager);
+            }
         }
 
         private void UpdatePlayerVolume(string puid)
@@ -930,6 +954,72 @@ namespace EOSNative.Voice
 
         #endregion
 
+        #region Voice Priority
+
+        /// <summary>
+        /// Enforce voice stream limit by muting lowest-priority participants.
+        /// Priority scoring: speaking (+1000), then inverse distance (closer = higher).
+        /// Participants already at min volume are excluded from counting.
+        /// </summary>
+        private void EnforcePriorityLimit(EOSVoiceManager voiceManager)
+        {
+            _priorityList.Clear();
+
+            foreach (var puid in voiceManager.GetAllParticipants())
+            {
+                float vol = _lastVolumes.TryGetValue(puid, out float v) ? v : 0f;
+                if (vol <= _minVolume + 0.1f) continue; // already muted — skip
+
+                float priority = 0f;
+
+                // Speaking = highest priority
+                if (voiceManager.IsSpeaking(puid))
+                    priority += 1000f;
+
+                // Closer = higher priority (inverse distance)
+                float dist = GetDistanceToPlayer(puid);
+                if (dist >= 0f)
+                    priority += Mathf.Max(0f, _maxHearingDistance - dist);
+
+                // Same team = slight boost
+                if ((_zoneMode == VoiceZoneMode.Team || _zoneMode == VoiceZoneMode.TeamProximity) &&
+                    _playerTeams.TryGetValue(puid, out int team) && team == _localTeam)
+                    priority += 100f;
+
+                _priorityList.Add((puid, priority));
+            }
+
+            // If under limit, nothing to do
+            if (_priorityList.Count <= _maxActiveVoiceStreams) return;
+
+            // Sort descending by priority
+            _priorityList.Sort((a, b) => b.priority.CompareTo(a.priority));
+
+            // Mute everyone beyond the limit
+            for (int i = _maxActiveVoiceStreams; i < _priorityList.Count; i++)
+            {
+                string puid = _priorityList[i].puid;
+                voiceManager.SetParticipantVolume(puid, _minVolume);
+                _lastVolumes[puid] = _minVolume;
+
+                if (_playersInRange.Remove(puid))
+                    OnPlayerExitedRange?.Invoke(puid);
+            }
+        }
+
+        /// <summary>Get the current priority score of a participant (for debugging). Returns -1 if not scored.</summary>
+        public float GetPlayerPriority(string puid)
+        {
+            for (int i = 0; i < _priorityList.Count; i++)
+            {
+                if (_priorityList[i].puid == puid)
+                    return _priorityList[i].priority;
+            }
+            return -1f;
+        }
+
+        #endregion
+
         #region Volume Reset
 
         private void ResetAllVolumes()
@@ -987,6 +1077,8 @@ namespace EOSNative.Voice
                 EditorGUILayout.Space(5);
                 if (manager.UseSpatialGrid)
                     EditorGUILayout.LabelField("Spatial Grid: ON", EditorStyles.miniBoldLabel);
+                if (manager.MaxActiveVoiceStreams > 0)
+                    EditorGUILayout.LabelField($"Priority Limit: {manager.MaxActiveVoiceStreams}", EditorStyles.miniBoldLabel);
                 var inRange = manager.GetPlayersInRange();
                 EditorGUILayout.LabelField($"Players in Range: {inRange.Count}");
 
