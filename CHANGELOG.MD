@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.26.0] - 2026-02-09
+
+### Added
+- **SyncVarLOD custom Inspector** — Per-SyncVar checkboxes for each distance tier. In Play Mode, shows checkboxes for every registered SyncVar (by index) per tier — toggle to include/exclude specific SyncVars at each distance. In Edit Mode, shows hex mask field. Runtime status section shows active tier, sync rate, observer distance, SyncVar mask. Add/Remove Tier buttons for easy tier management. Active tier highlighted with `[ACTIVE]` label.
+
 ## [2.25.0] - 2026-02-09
 
 ### Added

@@ -290,4 +290,153 @@ namespace EOSNative.Editor
             EditorUtility.SetDirty(target);
         }
     }
+
+    [CustomEditor(typeof(SyncVarLOD))]
+    public class SyncVarLODEditor : UnityEditor.Editor
+    {
+        private bool[] _tierFoldouts = new bool[8];
+
+        public override void OnInspectorGUI()
+        {
+            var lod = (SyncVarLOD)target;
+            var netObj = lod.GetComponent<NetworkObject>();
+
+            serializedObject.Update();
+
+            EditorGUILayout.LabelField("SyncVar LOD", EditorStyles.boldLabel);
+
+            // Auto observer toggle
+            var autoObs = serializedObject.FindProperty("AutoObserverPosition");
+            if (autoObs != null) EditorGUILayout.PropertyField(autoObs);
+
+            // Tier list
+            var tiersProp = serializedObject.FindProperty("Tiers");
+            if (tiersProp != null)
+            {
+                EditorGUILayout.Space(5);
+                EditorGUILayout.LabelField("Distance Tiers", EditorStyles.boldLabel);
+
+                int syncVarCount = Application.isPlaying && netObj != null ? netObj.SyncVarCount : 0;
+
+                for (int i = 0; i < tiersProp.arraySize; i++)
+                {
+                    if (i >= _tierFoldouts.Length) break;
+
+                    var tier = tiersProp.GetArrayElementAtIndex(i);
+                    var distProp = tier.FindPropertyRelative("MaxDistance");
+                    var nthProp = tier.FindPropertyRelative("SyncEveryNthFrame");
+                    var maskProp = tier.FindPropertyRelative("SyncVarMask");
+
+                    string tierLabel = distProp != null ? $"Tier {i}: 0-{distProp.floatValue}m" : $"Tier {i}";
+                    if (Application.isPlaying && lod.CurrentTier == i)
+                        tierLabel += " [ACTIVE]";
+
+                    _tierFoldouts[i] = EditorGUILayout.Foldout(_tierFoldouts[i], tierLabel, true);
+
+                    if (_tierFoldouts[i])
+                    {
+                        EditorGUI.indentLevel++;
+
+                        if (distProp != null) EditorGUILayout.PropertyField(distProp, new GUIContent("Max Distance"));
+                        if (nthProp != null) EditorGUILayout.PropertyField(nthProp, new GUIContent("Sync Every Nth"));
+
+                        // SyncVarMask: show as checkboxes in Play Mode if we have SyncVar info
+                        if (maskProp != null)
+                        {
+                            if (Application.isPlaying && syncVarCount > 0)
+                            {
+                                EditorGUILayout.LabelField("SyncVar Mask", EditorStyles.miniBoldLabel);
+                                uint mask = (uint)maskProp.intValue;
+                                bool changed = false;
+
+                                for (int sv = 0; sv < syncVarCount; sv++)
+                                {
+                                    bool enabled = (mask & (1u << sv)) != 0;
+                                    bool newVal = EditorGUILayout.Toggle($"  SyncVar [{sv}]", enabled);
+                                    if (newVal != enabled)
+                                    {
+                                        if (newVal)
+                                            mask |= (1u << sv);
+                                        else
+                                            mask &= ~(1u << sv);
+                                        changed = true;
+                                    }
+                                }
+
+                                if (changed)
+                                {
+                                    maskProp.intValue = (int)mask;
+                                    // Update runtime tier data
+                                    if (i < lod.Tiers.Count)
+                                    {
+                                        var t = lod.Tiers[i];
+                                        t.SyncVarMask = mask;
+                                        lod.Tiers[i] = t;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // Edit mode: show as hex
+                                string hexStr = $"0x{(uint)maskProp.intValue:X8}";
+                                string newHex = EditorGUILayout.TextField("SyncVar Mask", hexStr);
+                                if (newHex != hexStr)
+                                {
+                                    if (newHex.StartsWith("0x") || newHex.StartsWith("0X"))
+                                        newHex = newHex.Substring(2);
+                                    if (uint.TryParse(newHex, System.Globalization.NumberStyles.HexNumber, null, out uint parsed))
+                                        maskProp.intValue = (int)parsed;
+                                }
+
+                                EditorGUILayout.HelpBox("Enter Play Mode to see per-SyncVar checkboxes.", MessageType.None);
+                            }
+                        }
+
+                        EditorGUI.indentLevel--;
+                    }
+                }
+
+                EditorGUILayout.Space(3);
+                EditorGUILayout.BeginHorizontal();
+                if (GUILayout.Button("Add Tier"))
+                {
+                    tiersProp.InsertArrayElementAtIndex(tiersProp.arraySize);
+                    var newTier = tiersProp.GetArrayElementAtIndex(tiersProp.arraySize - 1);
+                    newTier.FindPropertyRelative("MaxDistance").floatValue = 200f;
+                    newTier.FindPropertyRelative("SyncEveryNthFrame").intValue = 20;
+                    newTier.FindPropertyRelative("SyncVarMask").intValue = unchecked((int)0xFFFFFFFF);
+                }
+                if (tiersProp.arraySize > 1 && GUILayout.Button("Remove Last"))
+                    tiersProp.DeleteArrayElementAtIndex(tiersProp.arraySize - 1);
+                EditorGUILayout.EndHorizontal();
+            }
+
+            // Runtime status
+            if (Application.isPlaying)
+            {
+                EditorGUILayout.Space(5);
+                EditorGUILayout.LabelField("Runtime Status", EditorStyles.boldLabel);
+
+                using (new EditorGUI.DisabledGroupScope(true))
+                {
+                    string tierStr = lod.CurrentTier >= 0 ? $"Tier {lod.CurrentTier}" : "Culled";
+                    EditorGUILayout.TextField("Active Tier", tierStr);
+                    EditorGUILayout.IntField("Sync Rate", lod.CurrentSyncRate);
+                    EditorGUILayout.TextField("SyncVar Mask", $"0x{lod.CurrentSyncVarMask:X8}");
+
+                    if (netObj != null)
+                    {
+                        float dist = Vector3.Distance(lod.transform.position, lod.ObserverPosition);
+                        EditorGUILayout.FloatField("Observer Distance", dist);
+                        EditorGUILayout.IntField("SyncVar Count", netObj.SyncVarCount);
+                    }
+                }
+
+                // Repaint during play mode to show live updates
+                Repaint();
+            }
+
+            serializedObject.ApplyModifiedProperties();
+        }
+    }
 }

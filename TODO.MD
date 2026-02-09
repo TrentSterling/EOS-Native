@@ -64,7 +64,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 **SyncVar LOD System** (community request — AlmightyMikkel):
 - [x] SyncVar LOD tiers — `SyncVarLOD` component with configurable distance tiers and sync rate multipliers (v2.18.0)
 - [x] Distance-based sync throttle — auto-discovers nearest peer, throttles MarkDirty() on owner side (v2.18.0)
-- [ ] Per-component LOD checkboxes — Inspector UI to toggle what syncs at each tier
+- [x] Per-component LOD checkboxes — SyncVarLOD Inspector with per-SyncVar toggles per tier (v2.26.0)
 - [x] Per-SyncVar LOD masks — selectively sync specific vars at each tier (v2.24.0)
 
 **Spatial Voice:**
