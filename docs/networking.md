@@ -554,6 +554,68 @@ lod.ObserverPosition = Camera.main.transform.position;
 
 `SyncVarLOD` throttles **all SyncVars** on a NetworkObject at the dirty-flag level. `NetworkTransform` has its own built-in distance LOD that controls **interpolation quality** (spring vs tweened vs snap). They can be used together — SyncVarLOD controls send frequency while NetworkTransform LOD controls visual fidelity.
 
+## Tick-Based Simulation
+
+By default, network state updates fire every rendered frame. Enable tick-based simulation for a fixed, deterministic update rate decoupled from frame rate.
+
+### Quick Start
+
+```csharp
+// Enable 30 ticks/sec simulation:
+TickSimulation.Instance.TickRate = 30;
+
+// Subscribe to ticks for deterministic game logic:
+TickSimulation.Instance.OnTick += (tick, dt) =>
+{
+    // Runs exactly 30 times per second regardless of frame rate
+    SimulateGameLogic(dt);
+};
+```
+
+### How It Works
+
+`TickSimulation` uses an accumulator: each frame adds `Time.deltaTime`, and whenever the accumulator exceeds `FixedTickTime` (1/TickRate), a tick fires. Multiple ticks can fire per frame (lag spike catch-up), capped at 10 to prevent lockups.
+
+When active:
+- **NetworkManager** sends state updates on tick boundaries instead of every frame
+- **SyncVarLOD** calculates distance tiers once per tick instead of every frame
+- **Packet polling** and **message flushing** remain frame-based (receive ASAP)
+
+### Render Interpolation
+
+Use `Alpha` to smooth rendering between ticks:
+
+```csharp
+void Update()
+{
+    float t = TickSimulation.Instance.Alpha;
+    transform.position = Vector3.Lerp(previousTickPosition, currentTickPosition, t);
+}
+```
+
+### Configuration
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| TickRate | 30 | Ticks/sec. 0 = disabled (frame-based). Common: 20, 30, 60 |
+| CurrentTick | 0 | Monotonic tick counter |
+| SimulationTime | 0 | Tick-based time (CurrentTick * FixedTickTime) |
+| Alpha | 0 | 0..1 fraction of tick elapsed (for render interpolation) |
+
+### NetworkBehaviour Convenience
+
+```csharp
+public class MyBehaviour : NetworkBehaviour
+{
+    void SomeMethod()
+    {
+        uint tick = CurrentTick;      // Current simulation tick
+        float dt = FixedTickTime;     // Fixed tick delta time
+        bool active = Manager.IsTickBased; // Is tick simulation enabled?
+    }
+}
+```
+
 ## Interest Management
 
 Spatial interest management controls which objects each peer receives updates for, based on proximity. Instead of broadcasting every object to every peer, each peer only receives state for objects within their visibility range. This dramatically reduces bandwidth in large game worlds.

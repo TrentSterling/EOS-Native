@@ -32,6 +32,12 @@ namespace EOSNative.Net
         /// <summary>Shortcut to NetworkManager.Instance.</summary>
         protected NetworkManager Manager => NetworkManager.Instance;
 
+        /// <summary>Current simulation tick (0 if tick simulation is disabled).</summary>
+        protected uint CurrentTick => TickSimulation.Instance?.CurrentTick ?? 0;
+
+        /// <summary>Fixed tick delta time (0 if tick simulation is disabled).</summary>
+        protected float FixedTickTime => TickSimulation.Instance?.FixedTickTime ?? 0f;
+
         /// <summary>
         /// Create and register a SyncVar on the NetworkObject.
         /// Call in Awake() after base.Awake().

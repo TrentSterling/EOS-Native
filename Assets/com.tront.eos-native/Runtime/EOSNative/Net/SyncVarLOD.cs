@@ -13,20 +13,23 @@ namespace EOSNative.Net
     /// is propagated to the NetworkManager's send queue. Remote peers receive
     /// updates at the throttled rate automatically.
     ///
+    /// When tick simulation is active, the N value refers to ticks instead of frames,
+    /// giving consistent throttling regardless of frame rate.
+    ///
     /// <example>
     /// <code>
     /// // Default tiers:
-    /// // 0-20m:   full rate (every dirty frame)
-    /// // 20-50m:  every 3rd dirty frame
-    /// // 50-100m: every 10th dirty frame
+    /// // 0-20m:   full rate (every dirty frame/tick)
+    /// // 20-50m:  every 3rd dirty frame/tick
+    /// // 50-100m: every 10th dirty frame/tick
     /// // 100m+:   no sync (object is too far)
     ///
     /// // Or customize:
     /// lod.Tiers = new List&lt;SyncVarLOD.Tier&gt;
     /// {
-    ///     new() { MaxDistance = 30f, SyncEveryNthFrame = 1 },
-    ///     new() { MaxDistance = 80f, SyncEveryNthFrame = 5 },
-    ///     new() { MaxDistance = 150f, SyncEveryNthFrame = 15 },
+    ///     new() { MaxDistance = 30f, SyncEveryNth = 1 },
+    ///     new() { MaxDistance = 80f, SyncEveryNth = 5 },
+    ///     new() { MaxDistance = 150f, SyncEveryNth = 15 },
     /// };
     /// </code>
     /// </example>
@@ -36,7 +39,7 @@ namespace EOSNative.Net
     {
         /// <summary>
         /// A distance tier defining sync frequency.
-        /// Objects within MaxDistance sync every SyncEveryNthFrame dirty frames.
+        /// Objects within MaxDistance sync every SyncEveryNth dirty events (frames or ticks).
         /// </summary>
         [Serializable]
         public struct Tier
@@ -45,9 +48,11 @@ namespace EOSNative.Net
             public float MaxDistance;
 
             /// <summary>
-            /// Sync every Nth dirty frame. 1 = full rate, 3 = every 3rd frame, etc.
+            /// Sync every Nth dirty event. 1 = full rate, 3 = every 3rd, etc.
+            /// When tick simulation is active, N counts ticks; otherwise counts frames.
             /// Higher values = less bandwidth, more latency for updates.
             /// </summary>
+            [Tooltip("Sync every Nth dirty event (frame or tick). 1 = full rate.")]
             public int SyncEveryNthFrame;
         }
 
@@ -90,6 +95,7 @@ namespace EOSNative.Net
 
         private NetworkObject _net;
         private int _dirtyCounter;
+        private uint _lastTickUpdated;
 
         private void Awake()
         {
@@ -100,6 +106,14 @@ namespace EOSNative.Net
         {
             if (_net == null || !_net.IsOwner || !_net.IsRegistered) return;
 
+            // When tick simulation is active, observer/tier updates happen on tick
+            var tick = TickSimulation.Instance;
+            if (tick != null && tick.IsEnabled)
+            {
+                if (tick.CurrentTick == _lastTickUpdated) return;
+                _lastTickUpdated = tick.CurrentTick;
+            }
+
             if (AutoObserverPosition)
                 UpdateObserverPosition();
 
@@ -109,6 +123,7 @@ namespace EOSNative.Net
         /// <summary>
         /// Called by NetworkObject.MarkDirty() when SyncVarLOD is present.
         /// Returns true if the dirty flag should propagate, false if throttled.
+        /// Counts frames normally, or ticks when tick simulation is active.
         /// </summary>
         internal bool ShouldPropagateDirty()
         {

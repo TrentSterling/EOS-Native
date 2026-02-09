@@ -44,7 +44,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Master client verification (OnRPCValidation callback + EnableOwnerOnlyRPCValidation helper)
 - [x] Sender validation on message handlers (HandleStateUpdate, HandleSpawn, HandleDespawn, HandleAuthority, HandleSnapshot verify sender == owner or host)
 - [x] Spatial hash (interest management — only sync nearby objects) (v2.20.0)
-- [ ] Tick-based simulation (deterministic tick rate, decoupled from frame rate)
+- [x] Tick-based simulation (deterministic tick rate, decoupled from frame rate) (v2.22.0)
 - [x] Connection statistics / network profiler (RTT, packet loss, bandwidth)
 - [x] Auto-reconnect (automatic reconnection with state recovery)
 

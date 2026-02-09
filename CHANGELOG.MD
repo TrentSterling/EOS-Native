@@ -2,6 +2,19 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.22.0] - 2026-02-09
+
+### Added
+- **Tick-based simulation** — `TickSimulation` singleton drives network state updates at a fixed rate (default 30 ticks/sec), decoupled from the rendering frame rate. When active, `NetworkManager.SendStateUpdates()` and `CheckReliableFallback()` fire on tick boundaries via `OnPostTick` instead of every frame. `SyncVarLOD` observer/tier calculations update once per tick instead of every frame. Packet polling and message flushing remain frame-based for responsiveness.
+  - `TickSimulation.Instance.TickRate` — 0 = disabled (frame-based, default), 20/30/60 = common values
+  - `TickSimulation.Instance.CurrentTick` — monotonically increasing tick counter
+  - `TickSimulation.Instance.SimulationTime` — tick-based time independent of `Time.time`
+  - `TickSimulation.Instance.Alpha` — interpolation fraction (0..1) for smooth rendering between ticks
+  - `TickSimulation.Instance.OnTick` — event for custom deterministic game logic
+  - `NetworkBehaviour.CurrentTick` / `FixedTickTime` — convenience accessors
+  - `NetworkManager.IsTickBased` — read-only status property
+  - Spiral-of-death protection: max 10 ticks per frame to prevent lockups on frame spikes
+
 ## [2.21.0] - 2026-02-08
 
 ### Added

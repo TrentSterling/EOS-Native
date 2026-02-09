@@ -101,6 +101,12 @@ namespace EOSNative.Net
         /// </summary>
         public bool InterestManagementEnabled { get; set; }
 
+        /// <summary>
+        /// True when tick-based simulation is active. When enabled, state updates are sent
+        /// at the tick rate instead of every frame. Read-only — configure via TickSimulation.Instance.TickRate.
+        /// </summary>
+        public bool IsTickBased => TickSimulation.Instance != null && TickSimulation.Instance.IsEnabled;
+
         /// <summary>Enable/disable Deflate compression for message payloads above threshold.</summary>
         public bool CompressionEnabled
         {
@@ -831,6 +837,9 @@ namespace EOSNative.Net
         // Interest management: reusable buffer for filtered peer lists
         private readonly List<ProductUserId> _interestedPeersBuffer = new();
 
+        // Tick simulation subscription tracking
+        private bool _tickSubscribed;
+
         private MessageRouter Router => EOSP2PManager.Instance.Router;
 
         private struct RPCKey : IEquatable<RPCKey>
@@ -877,6 +886,9 @@ namespace EOSNative.Net
                 im.OnInterestEnter += OnInterestEnter;
                 im.OnInterestExit += OnInterestExit;
             }
+
+            // Subscribe to tick simulation if active
+            SubscribeTickSimulation();
         }
 
         private void OnDisable()
@@ -894,22 +906,59 @@ namespace EOSNative.Net
                 im.OnInterestEnter -= OnInterestEnter;
                 im.OnInterestExit -= OnInterestExit;
             }
+
+            UnsubscribeTickSimulation();
+        }
+
+        private void SubscribeTickSimulation()
+        {
+            var tick = TickSimulation.Instance;
+            if (tick != null && tick.IsEnabled)
+            {
+                tick.OnPostTick -= OnSimulationPostTick;
+                tick.OnPostTick += OnSimulationPostTick;
+                _tickSubscribed = true;
+            }
+        }
+
+        private void UnsubscribeTickSimulation()
+        {
+            if (_tickSubscribed)
+            {
+                var tick = TickSimulation.Instance;
+                if (tick != null)
+                    tick.OnPostTick -= OnSimulationPostTick;
+                _tickSubscribed = false;
+            }
         }
 
         private void LateUpdate()
         {
-            if (_dirtyObjects.Count > 0)
-                SendStateUpdates();
+            // When tick simulation is active, state updates are driven by OnPostTick instead
+            if (!_tickSubscribed)
+            {
+                // Frame-based path (tick system disabled or not yet active)
+                if (_dirtyObjects.Count > 0)
+                    SendStateUpdates();
 
-            // Check for reliable fallback — resend state reliably if not re-dirtied
-            CheckReliableFallback();
+                CheckReliableFallback();
+            }
 
-            // Reset per-peer message counters every second
+            // Rate limit reset always runs frame-based (doesn't need tick precision)
             if (MaxMessagesPerPeerPerSecond > 0 && Time.unscaledTime >= _rateLimitResetTime)
             {
                 _peerMessageCounts.Clear();
                 _rateLimitResetTime = Time.unscaledTime + 1f;
             }
+        }
+
+        /// <summary>Called by TickSimulation.OnPostTick — sends state updates on tick boundary.</summary>
+        private void OnSimulationPostTick()
+        {
+            if (_dirtyObjects.Count > 0)
+                SendStateUpdates();
+
+            CheckReliableFallback();
         }
 
         /// <summary>

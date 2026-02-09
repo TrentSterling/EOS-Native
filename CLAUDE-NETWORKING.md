@@ -687,6 +687,45 @@ bool Validate_DealDamage(ProductUserId sender, NetworkObject target, byte[] argD
 - Rebroadcast only accepted from host (sender == GetHostPuid())
 - If host IS the caller, validation + rebroadcast happens locally
 
+## Tick-Based Simulation (v2.22.0)
+
+Fixed-rate simulation decoupled from rendering frame rate. When enabled, network state updates fire at a consistent tick rate instead of every frame.
+
+**File:** `Net/TickSimulation.cs` — MonoBehaviour singleton, auto-creates under EOSManager.
+
+**How it works:**
+- Accumulator-driven: `_tickAccumulator += Time.deltaTime`, fires ticks when `>= FixedTickTime`
+- Multiple ticks per frame allowed (handles lag spikes), capped at 10 to prevent spiral of death
+- `OnTick(uint tickIndex, float fixedDeltaTime)` — for deterministic game logic
+- `OnPostTick()` — used by NetworkManager to send state updates after game logic
+
+**NetworkManager integration:**
+- `OnEnable` subscribes `OnSimulationPostTick` to `TickSimulation.OnPostTick`
+- `LateUpdate` checks `_tickSubscribed`: if true, skips state updates (they run on tick); if false, runs frame-based
+- `SendStateUpdates()` + `CheckReliableFallback()` move to tick boundary when active
+- Rate limit reset stays frame-based (doesn't need tick precision)
+- Packet polling and message flushing stay frame-based (EOSP2PManager.Update/LateUpdate)
+
+**SyncVarLOD integration:**
+- Observer position + tier calculations run once per tick instead of every frame
+- `_lastTickUpdated` tracks last processed tick to skip redundant updates
+- Dirty counter still counts MarkDirty calls, but MarkDirty only fires on tick boundaries now
+
+**Public API:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `TickRate` | int | Ticks/sec (0 = disabled, 30 = default) |
+| `FixedTickTime` | float | 1/TickRate seconds |
+| `CurrentTick` | uint | Monotonic tick counter |
+| `SimulationTime` | float | CurrentTick * FixedTickTime |
+| `Alpha` | float | 0..1 interpolation fraction for rendering between ticks |
+| `IsEnabled` | bool | True if TickRate > 0 |
+
+**NetworkBehaviour convenience:** `CurrentTick`, `FixedTickTime` protected properties.
+
+**Configuration:** Set `TickSimulation.Instance.TickRate` before or during play. Common values: 20 (casual), 30 (standard), 60 (competitive). 0 = disabled (frame-based, backward compatible).
+
 ## Automated Tests
 
 Editor-mode unit tests for core networking primitives. Uses Unity Test Framework (`com.unity.test-framework`).
