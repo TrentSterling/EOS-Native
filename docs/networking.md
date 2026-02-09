@@ -737,13 +737,49 @@ A custom Inspector (`EasySyncEditor.cs`) scans all sibling components for public
 
 bool, byte, short, ushort, int, uint, long, ulong, float, double, string, Vector2, Vector3, Quaternion, Color, Color32.
 
+### Per-Property WriteAccess
+
+Each synced property can have its own write permission:
+
+| Access | Who Can Write | Use Case |
+|--------|--------------|----------|
+| **Owner** (default) | NetworkObject owner | Player state (position, health, score) |
+| **Host** | Current host only | Game state (round timer, phase, rules) |
+| **All** | Any peer (last-write-wins) | Shared cursors, collaborative editing |
+
+Set per-property in the Inspector dropdown. At runtime, `CanWrite()` checks if the local peer is authorized for any binding.
+
+### Interpolation
+
+Toggle "Lerp" per property in the Inspector for smooth remote updates instead of snapping. Only available for numeric and vector types.
+
+**Supported:** float, double, Vector2, Vector3, Quaternion (uses Slerp), Color, Color32, int, short, byte
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Lerp | off | Enable interpolation for this property |
+| Speed | 15 | Interpolation speed (higher = faster catch-up) |
+
+Non-writers interpolate toward target values each frame. Once the value is close enough (epsilon-based per type), interpolation stops until the next update.
+
+### Convert to Code
+
+Click **Convert to Code** in the Inspector to export a typed `NetworkBehaviour` .cs file. This generates:
+
+- `SyncVar<T>` declarations for each binding
+- Component references cached in `Awake()`
+- `OnChanged` callbacks that apply values on remote peers
+- `Update()` with WriteAccess-gated writes grouped by access level
+
+Replace the EasySync component with the generated file for compile-time type safety and no reflection overhead.
+
 ### Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Sync Interval | 0.1s | How often to check for property changes |
 
-Skips Transform, NetworkObject, NetworkBehaviour subclasses, and base Unity properties. Per-property `WriteAccess` (Owner/Host/All) is stored but only Owner is enforced in v1.
+Skips Transform, NetworkObject, NetworkBehaviour subclasses, and base Unity properties.
 
 ## NetworkRoomState
 

@@ -38,12 +38,12 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] EasySync — Normcore-style no-code property sync (Inspector checkboxes, reflection-based)
 - [x] Scene object auto-ownership — pre-existing scene objects auto-assign to host
 - [x] [NetRpc] attribute + IL post-processor — typed RPCs with zero-boilerplate (Mirror/FishNet/Fusion style)
-- [ ] EasySync v2 — per-property WriteAccess (Host/All), interpolation toggle, "Convert to Code" export
+- [x] EasySync v2 — per-property WriteAccess (Host/All), interpolation toggle, "Convert to Code" export (v2.21.0)
 - [x] Shared room data (NetworkRoomState — live room properties with lobby attribute mirroring)
 - [x] Per-user data (NetworkPlayerState — per-player synced properties)
 - [x] Master client verification (OnRPCValidation callback + EnableOwnerOnlyRPCValidation helper)
 - [x] Sender validation on message handlers (HandleStateUpdate, HandleSpawn, HandleDespawn, HandleAuthority, HandleSnapshot verify sender == owner or host)
-- [ ] Spatial hash (interest management — only sync nearby objects)
+- [x] Spatial hash (interest management — only sync nearby objects) (v2.20.0)
 - [ ] Tick-based simulation (deterministic tick rate, decoupled from frame rate)
 - [x] Connection statistics / network profiler (RTT, packet loss, bandwidth)
 - [x] Auto-reconnect (automatic reconnection with state recovery)
@@ -90,8 +90,8 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 **Security & Validation:**
 - [x] Host-validated RPCs — `[NetRpc(Validated = true)]` routes through host, auto-discovers `Validate_X` methods (v2.18.0)
 - [x] Configurable join code length — default 6 digits (1M possibilities), range 4-8 (v2.18.0)
-- [ ] Decompression size limit (cap `DecompressDeflate` output to prevent compression bombs)
-- [ ] Per-peer RPC rate limiting (cap messages/sec per sender to prevent flood DoS)
+- [x] Decompression size limit (cap `DecompressDeflate` output to prevent compression bombs) (v2.19.0)
+- [x] Per-peer RPC rate limiting (cap messages/sec per sender to prevent flood DoS) (v2.19.0)
 
 **Advanced:**
 - [ ] Network rules (PurrNet-style validation rules)

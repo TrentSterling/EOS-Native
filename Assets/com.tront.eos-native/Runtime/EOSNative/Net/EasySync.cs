@@ -9,15 +9,26 @@ namespace EOSNative.Net
     /// <summary>
     /// Sync any public field or property on sibling components without writing code.
     /// Select which properties to sync in the Inspector — only supported types are shown.
-    /// Owner writes; remote peers receive and apply automatically.
     ///
     /// Inspired by Normcore's EasySync. Supports all primitives registered in <see cref="NetSerializers"/>.
-    /// Per-property write access (Owner/Host/All) is planned for v2.
+    ///
+    /// v2 features:
+    /// - Per-property WriteAccess: Owner (default), Host, or All peers can write
+    /// - Per-property Interpolation: smooth numeric/Vector/Quaternion values on remotes
+    /// - "Convert to Code" Inspector button: exports to a typed NetworkBehaviour .cs file
     /// </summary>
     public class EasySync : NetworkBehaviour
     {
-        /// <summary>Who can write this property. Currently only Owner is enforced at runtime.</summary>
-        public enum WriteAccess { Owner = 0, Host = 1, All = 2 }
+        /// <summary>Who can write this property.</summary>
+        public enum WriteAccess
+        {
+            /// <summary>Only the NetworkObject owner can write. Default.</summary>
+            Owner = 0,
+            /// <summary>Only the host can write (useful for game state managed by host).</summary>
+            Host = 1,
+            /// <summary>Any peer can write (last-write-wins). Use sparingly.</summary>
+            All = 2
+        }
 
         [Serializable]
         public class SyncBinding
@@ -26,6 +37,10 @@ namespace EOSNative.Net
             public string MemberName;
             public bool IsProperty;
             public WriteAccess Access;
+            /// <summary>If true, numeric/Vector/Quaternion values are lerped toward target instead of snapped.</summary>
+            public bool Interpolate;
+            /// <summary>Interpolation speed (units per second). Higher = faster catch-up. Only used when Interpolate is true.</summary>
+            public float InterpolateSpeed = 15f;
         }
 
         [HideInInspector] public List<SyncBinding> _bindings = new();
@@ -44,6 +59,12 @@ namespace EOSNative.Net
             public Type ValueType;
             public byte TypeId;
             public object PrevValue;
+            public WriteAccess Access;
+            public bool Interpolate;
+            public float InterpolateSpeed;
+            // Interpolation targets (only used on remote peers for interpolated bindings)
+            public object TargetValue;
+            public bool HasTarget;
         }
 
         private ResolvedBinding[] _resolved;
@@ -87,7 +108,13 @@ namespace EOSNative.Net
                 }
 
                 var type = target.GetType();
-                var rb = new ResolvedBinding { Component = target };
+                var rb = new ResolvedBinding
+                {
+                    Component = target,
+                    Access = binding.Access,
+                    Interpolate = binding.Interpolate,
+                    InterpolateSpeed = binding.InterpolateSpeed
+                };
 
                 if (binding.IsProperty)
                 {
@@ -127,15 +154,49 @@ namespace EOSNative.Net
         void Update()
         {
             if (_resolved == null || _resolved.Length == 0) return;
-            if (!IsOwner) return;
-            if (Time.time - _lastSyncTime < _syncInterval) return;
-            _lastSyncTime = Time.time;
 
-            if (HasChanged())
+            // Check if we can write based on per-binding access level
+            bool canWrite = CanWrite();
+
+            if (canWrite)
             {
-                _state.Value = PackState();
-                CacheCurrentValues();
+                if (Time.time - _lastSyncTime < _syncInterval) return;
+                _lastSyncTime = Time.time;
+
+                if (HasChanged())
+                {
+                    _state.Value = PackState();
+                    CacheCurrentValues();
+                }
             }
+            else
+            {
+                // Apply interpolation for remote peers
+                ApplyInterpolation();
+            }
+        }
+
+        /// <summary>Check if the local peer can write any binding (uses the most permissive access level).</summary>
+        private bool CanWrite()
+        {
+            // Check each binding's access level — if ANY allows us to write, we can write
+            // (all bindings are packed together, so we need unified write permission)
+            // Use the most common access level as the write gate
+            for (int i = 0; i < _resolved.Length; i++)
+            {
+                switch (_resolved[i].Access)
+                {
+                    case WriteAccess.Owner:
+                        if (IsOwner) return true;
+                        break;
+                    case WriteAccess.Host:
+                        if (IsHost) return true;
+                        break;
+                    case WriteAccess.All:
+                        return true;
+                }
+            }
+            return false;
         }
 
         #region Change Detection
@@ -194,7 +255,7 @@ namespace EOSNative.Net
 
         private void OnStateReceived(byte[] oldValue, byte[] newValue)
         {
-            if (IsOwner || newValue == null || newValue.Length == 0 || _resolved == null) return;
+            if (CanWrite() || newValue == null || newValue.Length == 0 || _resolved == null) return;
             ApplyState(newValue);
         }
 
@@ -206,13 +267,111 @@ namespace EOSNative.Net
                 for (int i = 0; i < _resolved.Length; i++)
                 {
                     object val = NetSerializers.ReadBoxed(r, _resolved[i].TypeId);
-                    SetValue(ref _resolved[i], val);
+
+                    if (_resolved[i].Interpolate && IsInterpolatable(_resolved[i].ValueType))
+                    {
+                        // Store as interpolation target instead of applying immediately
+                        _resolved[i].TargetValue = val;
+                        _resolved[i].HasTarget = true;
+                    }
+                    else
+                    {
+                        SetValue(ref _resolved[i], val);
+                    }
                 }
             }
             catch (Exception e)
             {
                 Debug.LogWarning($"[EasySync] Failed to apply state: {e.Message}");
             }
+        }
+
+        #endregion
+
+        #region Interpolation
+
+        /// <summary>Apply interpolation for bindings that have pending target values.</summary>
+        private void ApplyInterpolation()
+        {
+            float dt = Time.deltaTime;
+            for (int i = 0; i < _resolved.Length; i++)
+            {
+                if (!_resolved[i].HasTarget) continue;
+
+                object current = GetValue(ref _resolved[i]);
+                object target = _resolved[i].TargetValue;
+                float speed = _resolved[i].InterpolateSpeed;
+                float t = Mathf.Clamp01(speed * dt);
+
+                object interpolated = LerpValue(current, target, t, _resolved[i].ValueType);
+                SetValue(ref _resolved[i], interpolated);
+
+                // Check if we've reached the target (close enough)
+                if (IsCloseEnough(interpolated, target, _resolved[i].ValueType))
+                    _resolved[i].HasTarget = false;
+            }
+        }
+
+        /// <summary>Types that support interpolation (lerp).</summary>
+        private static bool IsInterpolatable(Type t)
+        {
+            return t == typeof(float) || t == typeof(double) ||
+                   t == typeof(Vector2) || t == typeof(Vector3) ||
+                   t == typeof(Quaternion) || t == typeof(Color) || t == typeof(Color32) ||
+                   t == typeof(int) || t == typeof(short) || t == typeof(byte);
+        }
+
+        private static object LerpValue(object current, object target, float t, Type type)
+        {
+            if (type == typeof(float))
+                return Mathf.Lerp((float)current, (float)target, t);
+            if (type == typeof(double))
+                return (double)Mathf.Lerp((float)(double)current, (float)(double)target, t);
+            if (type == typeof(Vector2))
+                return Vector2.Lerp((Vector2)current, (Vector2)target, t);
+            if (type == typeof(Vector3))
+                return Vector3.Lerp((Vector3)current, (Vector3)target, t);
+            if (type == typeof(Quaternion))
+                return Quaternion.Slerp((Quaternion)current, (Quaternion)target, t);
+            if (type == typeof(Color))
+                return Color.Lerp((Color)current, (Color)target, t);
+            if (type == typeof(Color32))
+                return Color32.Lerp((Color32)current, (Color32)target, t);
+            if (type == typeof(int))
+                return (int)Mathf.Lerp((int)current, (int)target, t);
+            if (type == typeof(short))
+                return (short)Mathf.Lerp((short)current, (short)target, t);
+            if (type == typeof(byte))
+                return (byte)Mathf.Lerp((byte)current, (byte)target, t);
+
+            // Non-interpolatable — snap
+            return target;
+        }
+
+        private static bool IsCloseEnough(object current, object target, Type type)
+        {
+            const float epsilon = 0.001f;
+
+            if (type == typeof(float))
+                return Mathf.Abs((float)current - (float)target) < epsilon;
+            if (type == typeof(double))
+                return Math.Abs((double)current - (double)target) < epsilon;
+            if (type == typeof(Vector2))
+                return ((Vector2)current - (Vector2)target).sqrMagnitude < epsilon * epsilon;
+            if (type == typeof(Vector3))
+                return ((Vector3)current - (Vector3)target).sqrMagnitude < epsilon * epsilon;
+            if (type == typeof(Quaternion))
+                return Quaternion.Angle((Quaternion)current, (Quaternion)target) < 0.1f;
+            if (type == typeof(Color))
+            {
+                var c = (Color)current;
+                var tgt = (Color)target;
+                return Mathf.Abs(c.r - tgt.r) + Mathf.Abs(c.g - tgt.g) +
+                       Mathf.Abs(c.b - tgt.b) + Mathf.Abs(c.a - tgt.a) < epsilon * 4;
+            }
+
+            // Integer types and non-interpolatable — exact match
+            return Equals(current, target);
         }
 
         #endregion

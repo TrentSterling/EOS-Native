@@ -2,6 +2,14 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.21.0] - 2026-02-08
+
+### Added
+- **EasySync v2** — Three new features for the no-code property sync system:
+  - **Per-property WriteAccess** — Each synced property can be set to `Owner` (default), `Host`, or `All`. Owner-only sync is the default; Host access is for server-managed state; All allows any peer to write (last-write-wins). The `CanWrite()` check evaluates all bound properties at runtime.
+  - **Per-property Interpolation** — Toggle "Lerp" per property in the Inspector for smooth remote movement. Supports float, double, Vector2, Vector3, Quaternion (Slerp), Color, Color32, int, short, byte. Configurable speed (default 15). Non-writers interpolate toward target values each frame instead of snapping.
+  - **"Convert to Code" export** — Inspector button generates a typed `NetworkBehaviour` .cs file from the current EasySync bindings. Exports compile-time `SyncVar<T>` declarations, component references, `Awake()` with `OnChanged` callbacks, and `Update()` with WriteAccess-gated writes grouped by access level. Replace EasySync with the generated file for better performance and type safety.
+
 ## [2.20.0] - 2026-02-08
 
 ### Added

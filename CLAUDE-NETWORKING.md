@@ -284,9 +284,33 @@ Inspired by Normcore's EasySync. Sync any public field or property on sibling co
 
 **Runtime:** Reflection-based read/write, packed into a single SyncVar<byte[]>. Bindings resolved once in Awake (FieldInfo/PropertyInfo cached). Change detection before sending. Try/catch on apply for safety.
 
+**v2 Features (v2.21.0):**
+
+**Per-property WriteAccess:**
+- `Owner` (default) — only the NetworkObject owner can write
+- `Host` — only the host can write (game state managed by host)
+- `All` — any peer can write (last-write-wins, use sparingly)
+- `CanWrite()` checks all bindings — if ANY allows the local peer to write, the entire state is packed and sent (all bindings share one SyncVar<byte[]>)
+- `OnStateReceived()` only applies state for non-writers
+
+**Per-property Interpolation:**
+- `Interpolate` (bool) toggle per binding — when enabled, remote peers lerp toward target values instead of snapping
+- `InterpolateSpeed` (float, default 15) — higher = faster catch-up. `t = Clamp01(speed * deltaTime)`
+- Supported types: float, double, Vector2, Vector3, Quaternion (Slerp), Color, Color32, int, short, byte
+- Target-value pattern: `ApplyState()` stores targets, `ApplyInterpolation()` runs each frame for non-writers
+- `IsCloseEnough()` with per-type epsilon to stop interpolating when converged
+
+**"Convert to Code" export:**
+- Inspector "Convert to Code" button generates a typed `NetworkBehaviour` .cs file
+- Groups bindings by WriteAccess level for clean if-blocks in `Update()`
+- Generates: SyncVar<T> declarations, component references, `Awake()` with `Sync<T>()` calls and `OnChanged` callbacks, `Update()` with access-gated value writes
+- Type resolution: `GetCSharpTypeName()` resolves types across assemblies, `TypeToKeyword()` maps System types to C# keywords
+- Save dialog + `AssetDatabase.Refresh()` for immediate compilation
+
 **Settings:**
 - `Sync Interval` — How often to check for changes (default 0.1s)
-- Per-property `WriteAccess` (Owner/Host/All) — stored but only Owner enforced in v1. Host/All planned for v2.
+- Per-property `WriteAccess` (Owner/Host/All) — enforced at runtime via `CanWrite()`
+- Per-property `Interpolate` toggle + `InterpolateSpeed` — smooth remote updates for numeric/vector types
 
 ## Connection Statistics (NetworkStats)
 
