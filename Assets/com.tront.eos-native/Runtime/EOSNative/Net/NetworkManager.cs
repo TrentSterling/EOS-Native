@@ -538,10 +538,10 @@ namespace EOSNative.Net
             // Offline mode: execute locally (no peers exist)
             if (OfflineMode)
             {
-                uint nameHash = FnvHash(methodName);
-                byte[] argData = SerializeRPCArgs(args);
-                if (argData != null)
-                    ExecuteRPCLocal(target.NetworkId, nameHash, argData, argData.Length);
+                var offHash = FnvHash(methodName);
+                var offArgs = SerializeRPCArgs(args);
+                if (offArgs != null)
+                    ExecuteRPCLocal(target.NetworkId, offHash, offArgs, offArgs.Length);
                 return;
             }
 
@@ -578,10 +578,10 @@ namespace EOSNative.Net
             // Offline mode: execute locally (no peers exist)
             if (OfflineMode)
             {
-                uint nameHash = FnvHash(methodName);
-                byte[] argData = SerializeRPCArgs(args);
-                if (argData != null)
-                    ExecuteRPCLocal(target.NetworkId, nameHash, argData, argData.Length);
+                var offHash = FnvHash(methodName);
+                var offArgs = SerializeRPCArgs(args);
+                if (offArgs != null)
+                    ExecuteRPCLocal(target.NetworkId, offHash, offArgs, offArgs.Length);
                 return;
             }
 
