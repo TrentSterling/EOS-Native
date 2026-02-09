@@ -273,9 +273,8 @@ namespace EOSNative.P2P
         {
             ushort length = ReadUInt16();
             if (length == 0) return Array.Empty<byte>();
-            if (length > MaxBytesLength)
-                throw new InvalidOperationException(
-                    $"NetReader: byte array length {length} exceeds max {MaxBytesLength}");
+            // Note: ushort max (65535) is always below MaxBytesLength (1MB), so no cap check needed here.
+            // The length prefix itself limits the payload. MaxBytesLength is enforced in ReadBytesLong().
 
             CheckBounds(length);
             var result = new byte[length];

@@ -251,17 +251,7 @@ namespace EOSNative.Net
                 }
             }
 
-            // Clean up disconnected peers
-            _exitBuffer.Clear();
-            foreach (var kvp in _peerInterests)
-            {
-                bool found = false;
-                foreach (var peer in peers)
-                {
-                    if (peer.Equals(kvp.Key)) { found = true; break; }
-                }
-                // Can't remove during iteration, but we can clear the set
-            }
+            // Disconnected peer cleanup is handled by OnPeerDisconnected()
         }
 
         #endregion
