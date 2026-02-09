@@ -137,6 +137,19 @@ namespace EOSNative.Voice
         [Tooltip("How fast ducking fades in/out (units per second)")]
         [SerializeField] private float _duckingSpeed = 5f;
 
+        [Header("Audio Occlusion")]
+        [Tooltip("Enable raycast-based wall muting (reduce volume when walls block line of sight)")]
+        [SerializeField] private bool _enableAudioOcclusion = false;
+
+        [Tooltip("Layer mask for occlusion raycasts (what counts as a wall)")]
+        [SerializeField] private LayerMask _occlusionLayerMask = ~0; // Default: everything
+
+        [Tooltip("Volume multiplier when fully occluded (0 = silent, 1 = no reduction)")]
+        [SerializeField, Range(0f, 1f)] private float _occlusionVolumeMultiplier = 0.15f;
+
+        [Tooltip("Height offset for raycast origin/target (approximate head height)")]
+        [SerializeField] private float _occlusionRayHeight = 1.5f;
+
         [Header("Update Settings")]
         [Tooltip("How often to update volumes (seconds)")]
         [SerializeField] private float _updateInterval = 0.1f;
@@ -193,6 +206,27 @@ namespace EOSNative.Voice
             set => _enableVolumeDucking = value;
         }
 
+        /// <summary>Whether audio occlusion (raycast wall muting) is enabled.</summary>
+        public bool EnableAudioOcclusion
+        {
+            get => _enableAudioOcclusion;
+            set => _enableAudioOcclusion = value;
+        }
+
+        /// <summary>Layer mask for occlusion raycasts. Only layers in this mask block voice.</summary>
+        public LayerMask OcclusionLayerMask
+        {
+            get => _occlusionLayerMask;
+            set => _occlusionLayerMask = value;
+        }
+
+        /// <summary>Volume multiplier when a wall blocks line of sight (0 = silent, 1 = no effect).</summary>
+        public float OcclusionVolumeMultiplier
+        {
+            get => _occlusionVolumeMultiplier;
+            set => _occlusionVolumeMultiplier = Mathf.Clamp01(value);
+        }
+
         #endregion
 
         #region Private Fields
@@ -210,6 +244,9 @@ namespace EOSNative.Voice
 
         // Volume ducking
         private float _currentDuckingFactor = 1f;
+
+        // Occlusion tracking
+        private readonly Dictionary<string, bool> _playerOccluded = new();
 
         #endregion
 
@@ -379,6 +416,7 @@ namespace EOSNative.Voice
             _lastVolumes.Remove(puid);
             _playersInRange.Remove(puid);
             _playerZones.Remove(puid);
+            _playerOccluded.Remove(puid);
         }
 
         /// <summary>
@@ -391,6 +429,7 @@ namespace EOSNative.Voice
             _lastVolumes.Clear();
             _playersInRange.Clear();
             _playerZones.Clear();
+            _playerOccluded.Clear();
             _localPlayerTransform = null;
         }
 
@@ -570,6 +609,15 @@ namespace EOSNative.Voice
 
             float newVolume = CalculateVolume(puid);
 
+            // Apply audio occlusion (wall muting)
+            if (_enableAudioOcclusion && newVolume > 0f)
+            {
+                bool occluded = CheckOcclusion(puid);
+                _playerOccluded[puid] = occluded;
+                if (occluded)
+                    newVolume *= _occlusionVolumeMultiplier;
+            }
+
             // Apply ducking
             if (_enableVolumeDucking)
             {
@@ -700,6 +748,33 @@ namespace EOSNative.Voice
             return 0f;
         }
 
+        /// <summary>
+        /// Check if a player is occluded by walls (raycast from local player to target).
+        /// Returns true if a wall on the occlusion layer mask blocks line of sight.
+        /// </summary>
+        private bool CheckOcclusion(string puid)
+        {
+            if (_localPlayerTransform == null) return false;
+            if (!_playerTransforms.TryGetValue(puid, out var playerTransform) || playerTransform == null)
+                return false;
+
+            Vector3 headOffset = new Vector3(0f, _occlusionRayHeight, 0f);
+            Vector3 from = _localPlayerTransform.position + headOffset;
+            Vector3 to = playerTransform.position + headOffset;
+            Vector3 direction = to - from;
+            float distance = direction.magnitude;
+
+            if (distance < 0.5f) return false; // Too close to occlude
+
+            return Physics.Raycast(from, direction, distance, _occlusionLayerMask, QueryTriggerInteraction.Ignore);
+        }
+
+        /// <summary>Check if a player is currently occluded (wall between local player and target).</summary>
+        public bool IsPlayerOccluded(string puid)
+        {
+            return _playerOccluded.TryGetValue(puid, out bool occluded) && occluded;
+        }
+
         private void ResetAllVolumes()
         {
             var voiceManager = EOSVoiceManager.Instance;
@@ -763,8 +838,10 @@ namespace EOSNative.Voice
                     {
                         float vol = manager.GetPlayerVolume(puid);
                         float dist = manager.GetDistanceToPlayer(puid);
+                        bool occluded = manager.IsPlayerOccluded(puid);
                         string shortPuid = puid.Length > 12 ? puid.Substring(0, 8) + "..." : puid;
-                        EditorGUILayout.LabelField($"{shortPuid}: Vol={vol:0}%, Dist={dist:0.0}m");
+                        string occStr = occluded ? " [WALL]" : "";
+                        EditorGUILayout.LabelField($"{shortPuid}: Vol={vol:0}%, Dist={dist:0.0}m{occStr}");
                     }
                     EditorGUI.indentLevel--;
                 }

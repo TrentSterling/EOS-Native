@@ -46,9 +46,11 @@ Singleton that controls WHO you hear and at WHAT volume. Works alongside `EOSVoi
 
 **Volume Ducking:** Opt-in feature that auto-reduces incoming voice when local player is speaking. `MoveTowards` fade with configurable multiplier and speed.
 
+**Audio Occlusion (v2.23.0):** Raycast-based wall muting. `EnableAudioOcclusion = true` casts `Physics.Raycast` from local player to each participant every update cycle. If a wall (on `OcclusionLayerMask`) blocks line of sight, volume is multiplied by `OcclusionVolumeMultiplier` (default 0.15). Ray offset at `_occlusionRayHeight` (1.5m) for head-level casting. Stacks with proximity falloff and ducking. Query: `IsPlayerOccluded(puid)`.
+
 **Auto-discover:** Scans `NetworkManager.Instance.Objects` for tagged objects, registers transforms by PUID.
 
-**Update loop:** Every `_updateInterval` (0.1s), iterate participants, calculate volume, call `EOSVoiceManager.SetParticipantVolume()` if change > threshold.
+**Update loop:** Every `_updateInterval` (0.1s), iterate participants, calculate volume, apply occlusion + ducking, call `EOSVoiceManager.SetParticipantVolume()` if change > threshold.
 
 ```csharp
 // Set mode

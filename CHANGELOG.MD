@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.23.0] - 2026-02-09
+
+### Added
+- **Audio occlusion** — Raycast-based wall muting for the spatial voice system. When enabled on `EOSVoiceZoneManager`, a Physics.Raycast is cast from local player to each voice participant on every volume update cycle. If a wall (any collider on the configurable `OcclusionLayerMask`) blocks line of sight, the participant's volume is multiplied by `OcclusionVolumeMultiplier` (default 0.15 = 85% reduction). Works with all voice zone modes (Proximity, TeamProximity, Team). Configurable ray height offset for head-level casting. Inspector shows `[WALL]` tag next to occluded players. New properties: `EnableAudioOcclusion`, `OcclusionLayerMask`, `OcclusionVolumeMultiplier`. New query: `IsPlayerOccluded(puid)`.
+
 ## [2.22.0] - 2026-02-09
 
 ### Added

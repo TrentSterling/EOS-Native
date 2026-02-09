@@ -119,6 +119,31 @@ zones.EnableVolumeDucking = true;
 
 The ducking factor fades in and out smoothly using `MoveTowards` at the configured `_duckingSpeed` (default 5 units/sec). Set in the Inspector or via code.
 
+### Audio Occlusion
+
+Raycast-based wall muting. When enabled, a `Physics.Raycast` is cast from the local player to each voice participant. If a wall blocks line of sight, the participant's volume is reduced.
+
+```csharp
+var zones = EOSVoiceZoneManager.Instance;
+
+zones.EnableAudioOcclusion = true;
+zones.OcclusionLayerMask = LayerMask.GetMask("Walls", "Obstacles");
+zones.OcclusionVolumeMultiplier = 0.15f; // 85% reduction behind walls
+```
+
+Works with all voice zone modes. The occlusion multiplier stacks with proximity falloff and ducking.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| EnableAudioOcclusion | false | Enable raycast wall muting |
+| OcclusionLayerMask | Everything | Which layers block voice |
+| OcclusionVolumeMultiplier | 0.15 | Volume when occluded (0 = silent) |
+| OcclusionRayHeight | 1.5 | Height offset for raycasts (head level) |
+
+**Query:** `zones.IsPlayerOccluded(puid)` returns whether a player is currently behind a wall.
+
+**Performance:** One raycast per participant per update cycle (~10/sec). Negligible cost for up to 16 players.
+
 ### Auto-Discover
 
 When `_autoDiscoverNetworkObjects` is enabled (default), the zone manager automatically scans `NetworkManager.Instance.Objects` for GameObjects tagged with the configured `_playerTag` (default `"Player"`). It registers their transforms by PUID for position tracking.
