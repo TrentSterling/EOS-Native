@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.20.0] - 2026-02-08
+
+### Added
+- **Spatial interest management** — `InterestManager` + `SpatialHashGrid` provide Mirror/FishNet-style spatial filtering. When `NetworkManager.InterestManagementEnabled = true`, all broadcast paths (state updates, spawn, despawn, RPCs, reliable fallback, snapshots) are filtered per-peer based on proximity. Uses a 2D spatial hash grid (XZ plane, cell size = visRange/2, 9-neighbor lookup) with configurable visibility range (default 100 units), hysteresis buffer (10% to prevent flickering), and 0.5s rebuild interval. Always-visible objects (RoomState, PlayerState, owner's objects, `AlwaysVisible = true`) bypass the filter. Interest enter/exit triggers spawn/despawn messages automatically. Authority transfers always broadcast to all peers. New files: `SpatialHashGrid.cs`, `InterestManager.cs`. New property: `NetworkObject.AlwaysVisible`.
+
 ## [2.19.0] - 2026-02-08
 
 ### Added

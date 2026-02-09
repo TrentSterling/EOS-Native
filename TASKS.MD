@@ -5,7 +5,7 @@ All open tasks for EOS-Native, organized by category and priority.
 ## Networking Features
 
 - [ ] EasySync v2 — per-property WriteAccess (Host/All), interpolation toggle, "Convert to Code" export
-- [ ] Spatial hash — interest management, only sync nearby objects
+- [x] Spatial hash — interest management, only sync nearby objects (v2.20.0)
 - [ ] Tick-based simulation — deterministic tick rate, decoupled from frame rate
 - [ ] RPC registration on NetworkObject — drop NetworkBehaviour requirement
 - [ ] NetworkBehaviour-only architecture — each NB gets its own ID, no separate NetworkObject

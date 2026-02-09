@@ -44,6 +44,13 @@ namespace EOSNative.Net
         /// <summary>True if the local peer is the current host (lowest PUID).</summary>
         public bool IsHost => NetworkManager.Instance != null && NetworkManager.Instance.IsHost;
 
+        /// <summary>
+        /// If true, this object is always replicated to all peers regardless of spatial interest.
+        /// Use for important game objects that should always be visible (objectives, world anchors, etc.).
+        /// NetworkRoomState and NetworkPlayerState are automatically always-visible.
+        /// </summary>
+        public bool AlwaysVisible { get; set; }
+
         #endregion
 
         #region SyncVar Registry

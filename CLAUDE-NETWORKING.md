@@ -495,6 +495,40 @@ NetworkBehaviour component added to each ball in the P2P demo. Demonstrates Sync
 
 **`RegisterExisting()` fix (v2.14.0):** Now calls `NotifyNetworkSpawn()` after registration, so `__RegisterNetRPCs()` and `OnNetworkSpawn()` fire correctly on objects created outside of `Spawn()`.
 
+## Interest Management (v2.20.0)
+
+Spatial interest management — each peer only receives state for nearby objects. Mirror-style 2D grid with FishNet-style hysteresis.
+
+**Files:**
+- `SpatialHashGrid.cs` — 2D uniform spatial hash grid. Cell size = `visRange / 2`. 9-neighbor lookup for visibility.
+- `InterestManager.cs` — MonoBehaviour singleton. Per-peer interest sets with enter/leave events.
+- `NetworkObject.AlwaysVisible` — opt-out flag for globally visible objects.
+
+**Opt-in:** `NetworkManager.InterestManagementEnabled = true`
+
+**Filtered broadcast paths:**
+- `SendStateUpdates()` — per-peer filtered packets (hot path; pre-serializes dirty data once, then builds per-peer packets)
+- `BroadcastSpawn()`, `Despawn()` — `SendToInterestedPeers()` helper
+- `CheckReliableFallback()` — filtered reliable snapshots
+- RPC broadcasts (All/Others/Players) — filtered through `SendToInterestedPeers()` / `SendToInterestedNonSpectators()`
+- `HandleSnapshotRequest()` — late-join snapshots filtered for the joining peer
+- `SendRPCValidated()` / `HandleRPCValidated()` — host rebroadcast filtered
+
+**NOT filtered (always broadcast to all):**
+- `TransferAuthority()` — new owner must know even if object isn't visible yet
+- `ClaimOrphanedObjects()` — host migration authority broadcast
+- Host/Owner-targeted RPCs — these go to a specific peer, not broadcast
+
+**Interest enter/exit:**
+- `OnInterestEnter(peer, networkId)` → sends SPAWN to that peer (owner sends only)
+- `OnInterestExit(peer, networkId)` → sends DESPAWN to that peer (owner sends only)
+
+**Always-visible objects:** RoomState, PlayerState, owner's own objects, `AlwaysVisible = true`
+
+**Configuration:** `VisRange` (100), `Hysteresis` (0.1 = 10%), `RebuildInterval` (0.5s), `GridAxes` (XZ/XY)
+
+**Performance:** SpatialHashGrid uses `Dictionary<long, HashSet<uint>>` for O(1) cell lookup. `PackCell()` packs 2D grid coords into a long key. Per-peer interest rebuild runs every 0.5s (configurable). State update hot path: one pre-serialize pass, then per-peer packet assembly.
+
 ## Packet Compression
 
 Opt-in Deflate compression for message payloads. Transparent to application code — enable and forget.

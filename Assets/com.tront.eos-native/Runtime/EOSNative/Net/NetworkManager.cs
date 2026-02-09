@@ -92,6 +92,15 @@ namespace EOSNative.Net
         /// </summary>
         public int MaxMessagesPerPeerPerSecond { get; set; }
 
+        /// <summary>
+        /// When true, broadcast paths (state updates, spawn, despawn, authority, RPCs) are
+        /// filtered through InterestManager so each peer only receives data about nearby objects.
+        /// Objects marked AlwaysVisible, NetworkRoomState, NetworkPlayerState, and owner's own
+        /// objects bypass the filter. Requires an InterestManager component in the scene.
+        /// Default: false (all objects broadcast to all peers).
+        /// </summary>
+        public bool InterestManagementEnabled { get; set; }
+
         /// <summary>Enable/disable Deflate compression for message payloads above threshold.</summary>
         public bool CompressionEnabled
         {
@@ -270,11 +279,15 @@ namespace EOSNative.Net
             UnregisterRPCs(obj);
             ReturnToPool(prefabId, obj.gameObject);
 
-            // Broadcast despawn
+            // Broadcast despawn — use interest filtering if enabled
             var writer = NetWriterPool.Get();
             writer.WriteUInt32(networkId);
-            Router.SendToAll(MSG_DESPAWN, writer, PacketReliability.ReliableOrdered, 1);
+            SendToInterestedPeers(MSG_DESPAWN, writer, obj, PacketReliability.ReliableOrdered, 1);
             NetWriterPool.Return(writer);
+
+            // Clean up from interest manager
+            if (InterestManagementEnabled)
+                InterestManager.Instance?.OnObjectRemoved(networkId);
 
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
                 $"Despawned object {networkId}");
@@ -385,7 +398,7 @@ namespace EOSNative.Net
                 {
                     case RPCTarget.All:
                     case RPCTarget.Others:
-                        Router.SendToAll(MSG_RPC, writer, PacketReliability.ReliableOrdered, 1);
+                        SendToInterestedPeers(MSG_RPC, writer, target, PacketReliability.ReliableOrdered, 1);
                         break;
                     case RPCTarget.Host:
                         if (!IsHost)
@@ -400,7 +413,7 @@ namespace EOSNative.Net
                             Router.SendToPeer(MSG_RPC, writer, target.OwnerId, PacketReliability.ReliableOrdered, 1);
                         break;
                     case RPCTarget.Players:
-                        SendToNonSpectators(MSG_RPC, writer);
+                        SendToInterestedNonSpectators(MSG_RPC, writer, target);
                         break;
                 }
 
@@ -609,13 +622,13 @@ namespace EOSNative.Net
                 if (executeLocal)
                     ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
 
-                // Rebroadcast to all peers using MSG_RPC_REBROADCAST
+                // Rebroadcast to interested peers using MSG_RPC_REBROADCAST
                 var writer = NetWriterPool.Get();
                 writer.WriteUInt32(target.NetworkId);
                 writer.WriteUInt32(methodHash);
                 writer.WriteByte((byte)originalTarget);
                 writer.WriteBytesRaw(argData, 0, argData.Length);
-                Router.SendToAll(MSG_RPC_REBROADCAST, writer, PacketReliability.ReliableOrdered, 1);
+                SendToInterestedPeers(MSG_RPC_REBROADCAST, writer, target, PacketReliability.ReliableOrdered, 1);
                 NetWriterPool.Return(writer);
             }
             else
@@ -696,7 +709,7 @@ namespace EOSNative.Net
                 {
                     case RPCTarget.All:
                     case RPCTarget.Others:
-                        Router.SendToAll(MSG_RPC, writer, PacketReliability.ReliableOrdered, 1);
+                        SendToInterestedPeers(MSG_RPC, writer, target, PacketReliability.ReliableOrdered, 1);
                         break;
                     case RPCTarget.Host:
                         if (!IsHost)
@@ -711,7 +724,7 @@ namespace EOSNative.Net
                             Router.SendToPeer(MSG_RPC, writer, target.OwnerId, PacketReliability.ReliableOrdered, 1);
                         break;
                     case RPCTarget.Players:
-                        SendToNonSpectators(MSG_RPC, writer);
+                        SendToInterestedNonSpectators(MSG_RPC, writer, target);
                         break;
                 }
 
@@ -815,6 +828,9 @@ namespace EOSNative.Net
         // Track which method hashes require host validation
         private readonly HashSet<uint> _validatedRpcHashes = new();
 
+        // Interest management: reusable buffer for filtered peer lists
+        private readonly List<ProductUserId> _interestedPeersBuffer = new();
+
         private MessageRouter Router => EOSP2PManager.Instance.Router;
 
         private struct RPCKey : IEquatable<RPCKey>
@@ -853,6 +869,14 @@ namespace EOSNative.Net
             var p2p = EOSP2PManager.Instance;
             p2p.OnPeerConnected += OnPeerConnected;
             p2p.OnPeerDisconnected += OnPeerDisconnected;
+
+            // Subscribe to interest enter/exit for dynamic spawn/despawn
+            var im = InterestManager.Instance;
+            if (im != null)
+            {
+                im.OnInterestEnter += OnInterestEnter;
+                im.OnInterestExit += OnInterestExit;
+            }
         }
 
         private void OnDisable()
@@ -862,6 +886,13 @@ namespace EOSNative.Net
             {
                 p2p.OnPeerConnected -= OnPeerConnected;
                 p2p.OnPeerDisconnected -= OnPeerDisconnected;
+            }
+
+            var im = InterestManager.Instance;
+            if (im != null)
+            {
+                im.OnInterestEnter -= OnInterestEnter;
+                im.OnInterestExit -= OnInterestExit;
             }
         }
 
@@ -943,6 +974,10 @@ namespace EOSNative.Net
             _dirtyObjects.Remove(obj);
             UnregisterRPCs(obj);
 
+            // Clean up from interest manager
+            if (InterestManagementEnabled)
+                InterestManager.Instance?.OnObjectRemoved(obj.NetworkId);
+
             // Clean up RoomState/PlayerState references
             if (obj.PrefabId == NetworkRoomState.PREFAB_ID && RoomState != null && RoomState.Net == obj)
                 RoomState = null;
@@ -952,6 +987,44 @@ namespace EOSNative.Net
                 if (LocalPlayerState != null && LocalPlayerState.Net == obj)
                     LocalPlayerState = null;
             }
+        }
+
+        /// <summary>
+        /// Called by InterestManager when an object enters a peer's interest zone.
+        /// Sends a spawn message so the peer knows about this object.
+        /// </summary>
+        private void OnInterestEnter(ProductUserId peer, uint networkId)
+        {
+            if (!InterestManagementEnabled) return;
+            if (!_objects.TryGetValue(networkId, out var obj)) return;
+            if (obj == null || !obj.IsRegistered) return;
+
+            // Only the owner sends interest-based spawns (prevents duplicates)
+            if (!obj.IsOwner) return;
+
+            var writer = NetWriterPool.Get();
+            WriteSpawnData(writer, obj);
+            Router.SendToPeer(MSG_SPAWN, writer, peer, PacketReliability.ReliableOrdered, 1);
+            NetWriterPool.Return(writer);
+        }
+
+        /// <summary>
+        /// Called by InterestManager when an object leaves a peer's interest zone.
+        /// Sends a despawn message so the peer cleans it up locally.
+        /// </summary>
+        private void OnInterestExit(ProductUserId peer, uint networkId)
+        {
+            if (!InterestManagementEnabled) return;
+            if (!_objects.TryGetValue(networkId, out var obj)) return;
+            if (obj == null || !obj.IsRegistered) return;
+
+            // Only the owner sends interest-based despawns
+            if (!obj.IsOwner) return;
+
+            var writer = NetWriterPool.Get();
+            writer.WriteUInt32(networkId);
+            Router.SendToPeer(MSG_DESPAWN, writer, peer, PacketReliability.ReliableOrdered, 1);
+            NetWriterPool.Return(writer);
         }
 
         #endregion
@@ -977,40 +1050,101 @@ namespace EOSNative.Net
                 return;
             }
 
-            var writer = NetWriterPool.Get();
-            writer.WritePackedUInt32((uint)validCount);
-
+            // Pre-serialize each dirty object's delta data + increment sequences
+            // (must happen once regardless of per-peer filtering)
             for (int i = 0; i < _dirtyObjects.Count; i++)
             {
                 var obj = _dirtyObjects[i];
-
-                writer.WriteUInt32(obj.NetworkId);
-
-                // Increment sequence for stale-packet detection
                 obj.SyncSequence++;
-                writer.WriteUInt16(obj.SyncSequence);
-
-                // Write data with length prefix so receivers can skip unknown objects
-                var dataWriter = NetWriterPool.Get();
-                obj.SerializeDirty(dataWriter);
-                var data = dataWriter.ToArraySegment();
-                writer.WriteUInt16((ushort)data.Count);
-                writer.WriteBytesRaw(data);
-                NetWriterPool.Return(dataWriter);
-
-                obj.ClearDirty();
-
-                // Mark for reliable fallback
                 obj.LastUnreliableSendTime = Time.time;
                 obj.ReliableFallbackPending = true;
                 if (!_reliableFallbackObjects.Contains(obj))
                     _reliableFallbackObjects.Add(obj);
             }
 
-            _dirtyObjects.Clear();
+            var im = InterestManagementEnabled ? InterestManager.Instance : null;
+            if (im == null)
+            {
+                // Fast path: no interest management — single packet to all
+                var writer = NetWriterPool.Get();
+                writer.WritePackedUInt32((uint)validCount);
 
-            Router.SendToAll(MSG_STATE_UPDATE, writer, PacketReliability.UnreliableUnordered, 0);
-            NetWriterPool.Return(writer);
+                for (int i = 0; i < _dirtyObjects.Count; i++)
+                {
+                    var obj = _dirtyObjects[i];
+                    writer.WriteUInt32(obj.NetworkId);
+                    writer.WriteUInt16(obj.SyncSequence);
+
+                    var dataWriter = NetWriterPool.Get();
+                    obj.SerializeDirty(dataWriter);
+                    var data = dataWriter.ToArraySegment();
+                    writer.WriteUInt16((ushort)data.Count);
+                    writer.WriteBytesRaw(data);
+                    NetWriterPool.Return(dataWriter);
+
+                    obj.ClearDirty();
+                }
+
+                Router.SendToAll(MSG_STATE_UPDATE, writer, PacketReliability.UnreliableUnordered, 0);
+                NetWriterPool.Return(writer);
+            }
+            else
+            {
+                // Interest-filtered path: pre-serialize dirty data, then build per-peer packets
+                // Pre-serialize each object's dirty data (shared across peers)
+                var dirtyData = new ArraySegment<byte>[_dirtyObjects.Count];
+                var dataWriters = new NetWriter[_dirtyObjects.Count];
+                for (int i = 0; i < _dirtyObjects.Count; i++)
+                {
+                    var obj = _dirtyObjects[i];
+                    var dw = NetWriterPool.Get();
+                    obj.SerializeDirty(dw);
+                    dirtyData[i] = dw.ToArraySegment();
+                    dataWriters[i] = dw;
+                    obj.ClearDirty();
+                }
+
+                // Build per-peer filtered packets
+                var peers = EOSP2PManager.Instance?.Peers;
+                if (peers != null)
+                {
+                    foreach (var peer in peers)
+                    {
+                        // Count objects this peer is interested in
+                        int peerCount = 0;
+                        for (int i = 0; i < _dirtyObjects.Count; i++)
+                        {
+                            if (im.IsInterested(peer, _dirtyObjects[i]))
+                                peerCount++;
+                        }
+                        if (peerCount == 0) continue;
+
+                        var writer = NetWriterPool.Get();
+                        writer.WritePackedUInt32((uint)peerCount);
+
+                        for (int i = 0; i < _dirtyObjects.Count; i++)
+                        {
+                            if (!im.IsInterested(peer, _dirtyObjects[i])) continue;
+
+                            var obj = _dirtyObjects[i];
+                            writer.WriteUInt32(obj.NetworkId);
+                            writer.WriteUInt16(obj.SyncSequence);
+                            writer.WriteUInt16((ushort)dirtyData[i].Count);
+                            writer.WriteBytesRaw(dirtyData[i]);
+                        }
+
+                        Router.SendToPeer(MSG_STATE_UPDATE, writer, peer,
+                            PacketReliability.UnreliableUnordered, 0);
+                        NetWriterPool.Return(writer);
+                    }
+                }
+
+                // Return pooled writers
+                for (int i = 0; i < dataWriters.Length; i++)
+                    NetWriterPool.Return(dataWriters[i]);
+            }
+
+            _dirtyObjects.Clear();
         }
 
         private void HandleStateUpdate(ProductUserId sender, NetReader reader)
@@ -1083,7 +1217,7 @@ namespace EOSNative.Net
                 writer.WritePackedUInt32(1); // 1 object
                 WriteSpawnData(writer, obj);
 
-                Router.SendToAll(MSG_SNAPSHOT, writer, PacketReliability.ReliableOrdered, 1);
+                SendToInterestedPeers(MSG_SNAPSHOT, writer, obj, PacketReliability.ReliableOrdered, 1);
                 NetWriterPool.Return(writer);
             }
         }
@@ -1096,7 +1230,7 @@ namespace EOSNative.Net
         {
             var writer = NetWriterPool.Get();
             WriteSpawnData(writer, obj);
-            Router.SendToAll(MSG_SPAWN, writer, PacketReliability.ReliableOrdered, 1);
+            SendToInterestedPeers(MSG_SPAWN, writer, obj, PacketReliability.ReliableOrdered, 1);
             NetWriterPool.Return(writer);
         }
 
@@ -1234,6 +1368,8 @@ namespace EOSNative.Net
             obj.OwnerId = newOwner;
             obj.NotifyOwnerChanged(oldOwner, newOwner);
 
+            // Authority changes always broadcast to all (not interest-filtered)
+            // because the new owner needs to know even if they can't "see" the object yet
             var writer = NetWriterPool.Get();
             writer.WriteUInt32(obj.NetworkId);
             writer.WriteProductUserId(newOwner);
@@ -1323,12 +1459,16 @@ namespace EOSNative.Net
                     ordered.Add(ps.Net);
             }
 
-            // Priority 3: Everything else
+            // Priority 3: Everything else (filtered by interest if enabled)
+            var im = InterestManagementEnabled ? InterestManager.Instance : null;
             foreach (var obj in _objects.Values)
             {
                 if (obj == null || !obj.IsRegistered) continue;
                 // Skip already-added RoomState and PlayerStates
                 if (obj.PrefabId == NetworkRoomState.PREFAB_ID || obj.PrefabId == NetworkPlayerState.PREFAB_ID)
+                    continue;
+                // Interest filter: only include objects the joining peer can see
+                if (im != null && !im.IsInterested(sender, obj))
                     continue;
                 ordered.Add(obj);
             }
@@ -1532,13 +1672,16 @@ namespace EOSNative.Net
                 return;
             }
 
-            // Approved — rebroadcast to all peers (including back to sender)
+            // Approved — rebroadcast to interested peers (including back to sender)
             var writer = NetWriterPool.Get();
             writer.WriteUInt32(networkId);
             writer.WriteUInt32(methodHash);
             writer.WriteByte(originalTarget);
             writer.WriteBytesRaw(argData, 0, argData.Length);
-            Router.SendToAll(MSG_RPC_REBROADCAST, writer, PacketReliability.ReliableOrdered, 1);
+            if (targetObj != null)
+                SendToInterestedPeers(MSG_RPC_REBROADCAST, writer, targetObj, PacketReliability.ReliableOrdered, 1);
+            else
+                Router.SendToAll(MSG_RPC_REBROADCAST, writer, PacketReliability.ReliableOrdered, 1);
             NetWriterPool.Return(writer);
 
             // Also execute on host per target rules
@@ -1785,6 +1928,10 @@ namespace EOSNative.Net
             // Clean up disconnected player's state from registry
             CleanupPlayerState(peer);
 
+            // Clean up interest management state
+            if (InterestManagementEnabled)
+                InterestManager.Instance?.OnPeerDisconnected(peer);
+
             // End migration window and flush buffered RPCs
             _migrationInProgress = false;
             FlushMigrationBuffer();
@@ -1846,7 +1993,8 @@ namespace EOSNative.Net
                     {
                         case RPCTarget.All:
                         case RPCTarget.Others:
-                            Router.SendToAll(MSG_RPC, writer, PacketReliability.ReliableOrdered, 1);
+                            SendToInterestedPeers(MSG_RPC, writer, buffered.Target,
+                                PacketReliability.ReliableOrdered, 1);
                             break;
                         case RPCTarget.Host:
                             var hostPuid = GetHostPuid();
@@ -1858,7 +2006,7 @@ namespace EOSNative.Net
                                 Router.SendToPeer(MSG_RPC, writer, buffered.Target.OwnerId, PacketReliability.ReliableOrdered, 1);
                             break;
                         case RPCTarget.Players:
-                            SendToNonSpectators(MSG_RPC, writer);
+                            SendToInterestedNonSpectators(MSG_RPC, writer, buffered.Target);
                             break;
                     }
 
@@ -2173,6 +2321,46 @@ namespace EOSNative.Net
             var peers = EOSP2PManager.Instance?.Peers;
             if (peers == null) return;
             foreach (var peer in peers)
+            {
+                if (!_spectators.Contains(peer))
+                    Router.SendToPeer(msgId, writer, peer, PacketReliability.ReliableOrdered, 1);
+            }
+        }
+
+        /// <summary>
+        /// Send a message to all peers interested in a specific object.
+        /// Falls back to Router.SendToAll when interest management is disabled.
+        /// </summary>
+        private void SendToInterestedPeers(byte msgId, NetWriter writer, NetworkObject obj,
+            PacketReliability reliability, byte channel)
+        {
+            var im = InterestManagementEnabled ? InterestManager.Instance : null;
+            if (im == null)
+            {
+                Router.SendToAll(msgId, writer, reliability, channel);
+                return;
+            }
+
+            im.GetInterestedPeers(obj, _interestedPeersBuffer);
+            foreach (var peer in _interestedPeersBuffer)
+                Router.SendToPeer(msgId, writer, peer, reliability, channel);
+        }
+
+        /// <summary>
+        /// Send a message to all peers interested in a specific object, excluding spectators.
+        /// Falls back to SendToNonSpectators when interest management is disabled.
+        /// </summary>
+        private void SendToInterestedNonSpectators(byte msgId, NetWriter writer, NetworkObject obj)
+        {
+            var im = InterestManagementEnabled ? InterestManager.Instance : null;
+            if (im == null)
+            {
+                SendToNonSpectators(msgId, writer);
+                return;
+            }
+
+            im.GetInterestedPeers(obj, _interestedPeersBuffer);
+            foreach (var peer in _interestedPeersBuffer)
             {
                 if (!_spectators.Contains(peer))
                     Router.SendToPeer(msgId, writer, peer, PacketReliability.ReliableOrdered, 1);

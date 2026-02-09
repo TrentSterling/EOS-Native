@@ -554,6 +554,72 @@ lod.ObserverPosition = Camera.main.transform.position;
 
 `SyncVarLOD` throttles **all SyncVars** on a NetworkObject at the dirty-flag level. `NetworkTransform` has its own built-in distance LOD that controls **interpolation quality** (spring vs tweened vs snap). They can be used together — SyncVarLOD controls send frequency while NetworkTransform LOD controls visual fidelity.
 
+## Interest Management
+
+Spatial interest management controls which objects each peer receives updates for, based on proximity. Instead of broadcasting every object to every peer, each peer only receives state for objects within their visibility range. This dramatically reduces bandwidth in large game worlds.
+
+### Quick Start
+
+```csharp
+// Enable interest management on NetworkManager
+NetworkManager.Instance.InterestManagementEnabled = true;
+
+// Optionally add an InterestManager component to customize settings
+// (auto-creates if not found when first needed)
+var im = InterestManager.Instance;
+im.VisRange = 100;  // 100 world units visibility
+```
+
+### How It Works
+
+1. A **SpatialHashGrid** projects all NetworkObject positions onto a 2D grid (XZ plane by default)
+2. Cell size is `visRange / 2`, so two cells span the full visibility range
+3. Every 0.5s (configurable), **InterestManager** rebuilds per-peer interest sets using 9-neighbor grid lookup
+4. Objects entering a peer's interest zone trigger a **spawn** message to that peer
+5. Objects leaving a peer's interest zone trigger a **despawn** message to that peer
+6. All broadcast paths (state updates, spawn, despawn, RPCs) are filtered through interest sets
+
+### Always-Visible Objects
+
+These objects bypass spatial filtering and are always sent to all peers:
+
+- **NetworkRoomState** and **NetworkPlayerState** (reserved prefab IDs)
+- Objects owned by the observing peer (you always see your own objects)
+- Objects with `AlwaysVisible = true`
+
+```csharp
+// Mark an object as globally visible (objectives, world anchors, etc.)
+networkObject.AlwaysVisible = true;
+```
+
+### Configuration
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `VisRange` | int | 100 | Visibility range in world units |
+| `Hysteresis` | float | 0.1 | Buffer percentage (10%) to prevent flickering at boundaries |
+| `RebuildInterval` | float | 0.5 | Seconds between full interest rebuilds |
+| `GridAxes` | GridAxes | XZ | Which 2D plane to project onto (XZ for 3D games, XY for 2D) |
+
+### Hysteresis
+
+Once an object becomes visible to a peer, it stays visible until the distance exceeds `visRange * (1 + hysteresis)`. With the default 10% hysteresis, objects at 100m become visible but don't hide until 110m. This prevents objects at the boundary from flickering in and out.
+
+### Integration with SyncVar LOD
+
+Interest management and SyncVar LOD work at different levels and complement each other:
+
+- **Interest Management** (InterestManager) — controls **which peers** receive data about an object. Binary: visible or not.
+- **SyncVar LOD** (SyncVarLOD) — controls **how often** data is sent for visible objects. Graduated: full rate, half rate, 1/10 rate, etc.
+
+For maximum bandwidth savings, use both: InterestManager culls distant objects entirely, SyncVarLOD reduces send rate for objects at medium distance.
+
+### Performance
+
+The spatial hash grid uses O(1) cell lookups. The per-peer interest rebuild iterates all objects once per peer, every `RebuildInterval` seconds. For a 64-player game with 1000 objects, that's ~64K checks every 0.5s — negligible CPU cost.
+
+State updates (`SendStateUpdates`) are the hot path. Without interest management, one packet is broadcast to all peers. With interest management, per-peer packets are built containing only the objects that peer can see. This increases CPU slightly but reduces bandwidth proportionally to the culling ratio.
+
 ## NetworkTransform
 
 All-in-one transform sync component. Combines spring physics, buffered interpolation, velocity extrapolation, and distance-based LOD in a single component.
