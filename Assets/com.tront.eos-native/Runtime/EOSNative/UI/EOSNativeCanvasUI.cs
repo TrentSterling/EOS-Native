@@ -2767,11 +2767,11 @@ namespace EOSNative.UI
 
             if (_lobbySearchContainer != null)
             {
-                // Remove old results (keep header + button = first 2 children)
+                // Remove old results (keep header + separator + button = first 3 children)
                 var children = new List<Transform>();
                 for (int i = 0; i < _lobbySearchContainer.childCount; i++)
                     children.Add(_lobbySearchContainer.GetChild(i));
-                for (int i = 2; i < children.Count; i++)
+                for (int i = 3; i < children.Count; i++)
                     Destroy(children[i].gameObject);
 
                 if (lobbies != null && lobbies.Count > 0)
