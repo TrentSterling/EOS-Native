@@ -2,6 +2,11 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.24.0] - 2026-02-09
+
+### Added
+- **Per-SyncVar LOD masks** — Each `SyncVarLOD.Tier` now has a `SyncVarMask` (uint bitmask, default 0xFFFFFFFF = all). At runtime, `NetworkObject.SerializeDirty()` ANDs the dirty mask with the current tier's SyncVarMask, so SyncVars masked out at a given distance tier are never serialized or sent. Example: at 50m, only sync position (bit 0) and health (bit 1) but skip cosmetic data (color, animation state). New property: `SyncVarLOD.CurrentSyncVarMask`. Default behavior unchanged (all bits set = all SyncVars sync at all tiers).
+
 ## [2.23.0] - 2026-02-09
 
 ### Added

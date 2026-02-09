@@ -160,10 +160,17 @@ namespace EOSNative.Net
 
         /// <summary>
         /// Write only dirty SyncVars. Format: [dirtyMask: 1-4 bytes] + [values for set bits].
+        /// When SyncVarLOD is present, the mask is ANDed with the tier's SyncVarMask to filter
+        /// which SyncVars are sent at each distance tier.
         /// </summary>
         internal void SerializeDirty(NetWriter writer)
         {
             uint mask = BuildDirtyMask();
+
+            // Apply LOD SyncVar mask — filter out SyncVars not needed at this tier
+            if (_lod != null)
+                mask &= _lod.CurrentSyncVarMask;
+
             WriteMask(writer, mask);
 
             for (int i = 0; i < _syncVars.Count; i++)

@@ -38,7 +38,7 @@ namespace EOSNative.Net
     public class SyncVarLOD : MonoBehaviour
     {
         /// <summary>
-        /// A distance tier defining sync frequency.
+        /// A distance tier defining sync frequency and which SyncVars to include.
         /// Objects within MaxDistance sync every SyncEveryNth dirty events (frames or ticks).
         /// </summary>
         [Serializable]
@@ -54,6 +54,14 @@ namespace EOSNative.Net
             /// </summary>
             [Tooltip("Sync every Nth dirty event (frame or tick). 1 = full rate.")]
             public int SyncEveryNthFrame;
+
+            /// <summary>
+            /// Bitmask of which SyncVars to include at this tier. Bit N corresponds to SyncVar index N.
+            /// Default 0xFFFFFFFF = all SyncVars sync. Set specific bits to zero to skip SyncVars
+            /// at this distance tier (e.g., skip cosmetic data at far distances).
+            /// </summary>
+            [Tooltip("Bitmask of SyncVars to sync at this tier (0xFFFFFFFF = all). Bit 0 = SyncVar 0, Bit 1 = SyncVar 1, etc.")]
+            public uint SyncVarMask;
         }
 
         /// <summary>
@@ -63,9 +71,9 @@ namespace EOSNative.Net
         [SerializeField]
         public List<Tier> Tiers = new()
         {
-            new Tier { MaxDistance = 20f, SyncEveryNthFrame = 1 },
-            new Tier { MaxDistance = 50f, SyncEveryNthFrame = 3 },
-            new Tier { MaxDistance = 100f, SyncEveryNthFrame = 10 },
+            new Tier { MaxDistance = 20f, SyncEveryNthFrame = 1, SyncVarMask = 0xFFFFFFFF },
+            new Tier { MaxDistance = 50f, SyncEveryNthFrame = 3, SyncVarMask = 0xFFFFFFFF },
+            new Tier { MaxDistance = 100f, SyncEveryNthFrame = 10, SyncVarMask = 0xFFFFFFFF },
         };
 
         /// <summary>
@@ -92,6 +100,13 @@ namespace EOSNative.Net
         /// 0 means the object is culled (beyond all tiers).
         /// </summary>
         public int CurrentSyncRate { get; private set; } = 1;
+
+        /// <summary>
+        /// Bitmask of which SyncVars are active at the current tier.
+        /// 0xFFFFFFFF = all SyncVars. Bit N = SyncVar at index N.
+        /// Used by NetworkObject.SerializeDirty() to filter which SyncVars to send.
+        /// </summary>
+        public uint CurrentSyncVarMask { get; private set; } = 0xFFFFFFFF;
 
         private NetworkObject _net;
         private int _dirtyCounter;
@@ -178,6 +193,7 @@ namespace EOSNative.Net
                 {
                     CurrentTier = i;
                     CurrentSyncRate = Math.Max(1, Tiers[i].SyncEveryNthFrame);
+                    CurrentSyncVarMask = Tiers[i].SyncVarMask == 0 ? 0xFFFFFFFF : Tiers[i].SyncVarMask;
                     return;
                 }
             }
@@ -185,6 +201,7 @@ namespace EOSNative.Net
             // Beyond all tiers — culled
             CurrentTier = -1;
             CurrentSyncRate = 0;
+            CurrentSyncVarMask = 0;
         }
     }
 }

@@ -516,12 +516,33 @@ var lod = GetComponent<SyncVarLOD>();
 
 lod.Tiers = new List<SyncVarLOD.Tier>
 {
-    new() { MaxDistance = 30f, SyncEveryNthFrame = 1 },   // full rate
-    new() { MaxDistance = 80f, SyncEveryNthFrame = 5 },   // 1/5 rate
-    new() { MaxDistance = 150f, SyncEveryNthFrame = 15 }, // 1/15 rate
+    new() { MaxDistance = 30f, SyncEveryNthFrame = 1, SyncVarMask = 0xFFFFFFFF },  // full rate, all SyncVars
+    new() { MaxDistance = 80f, SyncEveryNthFrame = 5, SyncVarMask = 0x00000003 },  // 1/5 rate, only bits 0+1
+    new() { MaxDistance = 150f, SyncEveryNthFrame = 15, SyncVarMask = 0x00000001 }, // 1/15 rate, only bit 0
 };
 // Beyond 150m: no sync at all
 ```
+
+### Per-SyncVar LOD Masks
+
+Each tier has a `SyncVarMask` bitmask that controls which SyncVars are sent at that distance. Bit N corresponds to SyncVar index N (the order you called `Sync<T>()` in `Awake()`).
+
+```csharp
+public class Player : NetworkBehaviour
+{
+    SyncVar<Vector3> Position;   // index 0 (bit 0)
+    SyncVar<float> Health;       // index 1 (bit 1)
+    SyncVar<Color> SkinColor;    // index 2 (bit 2)
+    SyncVar<string> StatusText;  // index 3 (bit 3)
+
+    // Example tiers:
+    // Close (0-30m):  sync all 4 SyncVars — mask = 0xF (bits 0-3)
+    // Medium (30-80m): sync position + health only — mask = 0x3 (bits 0-1)
+    // Far (80-150m):  sync position only — mask = 0x1 (bit 0)
+}
+```
+
+Default `SyncVarMask = 0xFFFFFFFF` syncs everything (backward compatible). Set to 0 to treat as "all" (safety fallback).
 
 ### How It Works
 
@@ -539,6 +560,7 @@ lod.Tiers = new List<SyncVarLOD.Tier>
 | `ObserverPosition` | Vector3 | Manual override for distance reference point |
 | `CurrentTier` | int | Active tier index (-1 = culled). Read-only |
 | `CurrentSyncRate` | int | Effective sync rate (0 = culled). Read-only |
+| `CurrentSyncVarMask` | uint | Bitmask of active SyncVars at current tier. Read-only |
 
 ### Manual Observer Position
 
