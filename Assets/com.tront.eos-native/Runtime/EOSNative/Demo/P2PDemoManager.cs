@@ -77,8 +77,6 @@ namespace EOSNative.Demo
         private int _colorIndex;
 
         // Weapons (reparenting demo)
-        private const ushort WEAPON_PREFAB_ID = 2;
-        private bool _weaponsSpawned;
         private NetworkObject _heldWeapon;
 
         // Mobile controls
@@ -408,7 +406,6 @@ namespace EOSNative.Demo
             }
 
             _heldWeapon = null;
-            _weaponsSpawned = false;
         }
 
         #endregion
@@ -475,13 +472,6 @@ namespace EOSNative.Demo
             // Feed joystick input to ball
             if (_localBall != null && _joystickHandler != null)
                 _localBall.MobileInput = _joystickHandler.Input;
-
-            // Host spawns weapons once local ball exists (IsHost is true even when alone)
-            if (!_weaponsSpawned && _localSpawned && NetworkManager.Instance.IsHost)
-            {
-                _weaponsSpawned = true;
-                SpawnWeapons();
-            }
 
             if (_localBall == null || _localBehaviour == null) return;
 
@@ -572,28 +562,6 @@ namespace EOSNative.Demo
         #endregion
 
         #region Weapons
-
-        private void SpawnWeapons()
-        {
-            // Skip if weapons already exist in the scene (placed as scene objects)
-            if (FindAnyObjectByType<DemoWeapon>() != null)
-            {
-                EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", "Weapons already in scene, skipping spawn");
-                return;
-            }
-
-            var positions = new[]
-            {
-                new Vector3(-3f, 0.5f, 0f),
-                new Vector3(3f, 0.5f, 0f),
-                new Vector3(0f, 0.5f, 3f),
-            };
-            foreach (var pos in positions)
-            {
-                NetworkManager.Instance.Spawn(WEAPON_PREFAB_ID, pos, Quaternion.identity);
-            }
-            EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", $"Host spawned {positions.Length} weapons");
-        }
 
         private NetworkObject FindNearestWeapon(float maxDist)
         {
