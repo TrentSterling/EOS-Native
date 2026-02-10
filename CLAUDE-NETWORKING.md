@@ -61,8 +61,8 @@ NetworkManager.Instance.SendRPC(player, "TakeDamage", RPCTarget.Owner, 25f);
 | ID | Name | Reliability | Channel | Payload |
 |----|------|-------------|---------|---------|
 | 0xA0 | STATE_UPDATE | Unreliable | 0 | Packed object count + per-object: networkId, dataLen, dirtyMask, dirty values |
-| 0xA1 | SPAWN | Reliable | 1 | prefabId, networkId, ownerId, position, rotation, syncVarCount, all values |
-| 0xA2 | DESPAWN | Reliable | 1 | networkId |
+| 0xA1 | SPAWN | Reliable | 1 | prefabId, networkId, ownerId, position, rotation, syncVarCount, all values, childCount, per-child data |
+| 0xA2 | DESPAWN | Reliable | 1 | networkId (root only — receiver cascades to children) |
 | 0xA3 | AUTHORITY | Reliable | 1 | networkId, newOwnerId |
 | 0xA4 | SNAPSHOT | Reliable | 1 | objectCount + per-object (same as SPAWN) |
 | 0xA5 | SNAPSHOT_REQUEST | Reliable | 1 | empty |
@@ -87,6 +87,95 @@ When a peer disconnects, the new host claims orphaned objects by setting OwnerId
 ### Late Join
 
 New peer sends SNAPSHOT_REQUEST to host. Host responds with full SNAPSHOT containing all active NetworkObjects. New peer instantiates from prefab registry with correct state.
+
+### Nested NetworkObjects (v2.33.0)
+
+Support for parent-child NetworkObject hierarchies. Use case: VR player with root NetworkObject + child Head/LeftHand/RightHand each needing their own NetworkObject + NetworkTransform.
+
+**Identity:**
+- `NetworkObject.ParentNetworkId` — 0 = root, non-zero = NetworkId of the root parent
+- `NetworkObject.OriginalParentNetworkId` — set once at spawn, never changes (0 = spawned as root)
+- `IsChildNetworkObject` / `IsRootNetworkObject` — convenience properties (based on `ParentNetworkId`)
+
+**Spawn flow:**
+1. `Spawn()` calls `GetComponentsInChildren<NetworkObject>(true)` — root at index 0
+2. Root gets NetworkId via `GenerateNetworkId()`, ParentNetworkId = 0
+3. Each child gets its own NetworkId, inherits PrefabId/OwnerId from root, ParentNetworkId = root's NetworkId
+4. `OriginalParentNetworkId` set on children = root's NetworkId
+5. `_originalChildren[rootNetId]` populated with (childNetId, localIndex) pairs
+6. All are registered in `_objects`, NotifyNetworkSpawn fired root-first then children
+
+**Wire format (SPAWN/SNAPSHOT) — v2.34.0:**
+```
+[PrefabId:u16] [NetworkId:u32] [OwnerId:PUID] [Pos:Vec3] [Rot:Quat]
+[DestroyWithOwner:bool] [SyncVarCount:byte] [SyncVarData...]
+[ChildCount:byte]
+  Per child: [NetworkId:u32] [LocalIndex:byte] [Flags:byte] [DataLen:u16]
+             [SyncVarCount:byte] [SyncVarData...]
+```
+- **Flags 0x00** = attached (normal child in parent's Transform hierarchy)
+- **Flags 0x01** = detached (reparented away at runtime; Transform.SetParent(null))
+- Position is NOT included — that's NetworkTransform's responsibility. Detached child unparents the Transform; NetworkTransform corrects position within one frame.
+- Single-object prefabs: ChildCount=0 (1 extra byte). ChildDataLen allows safe skipping on mismatch.
+- **Breaking wire format change from v2.33.0** (Flags byte added after LocalIndex).
+
+**Cascade behavior:**
+- **Despawn:** Block direct child despawn (log warning) unless detached (ParentNetworkId == 0). Despawning root unregisters only CURRENT children (detached children survive independently). One MSG_DESPAWN sent for root only — receiver cascades.
+- **Authority transfer:** Block direct child transfer unless detached. TransferAuthority on root cascades OwnerId + NotifyOwnerChanged to current children only.
+- **ClaimOrphanedObjects:** Only collects roots — Despawn/TransferAuthority cascades handle children.
+- **DespawnAll:** Only processes roots — Despawn cascades. Also clears `_originalChildren`.
+- **OnObjectDestroyed:** Root destruction cleans up all children from `_objects`/`_dirtyObjects`/`_originalChildren`.
+- **State updates:** Per-NetworkId (children appear independently in `_dirtyObjects`) — no change needed.
+- **Reliable fallback:** Skips children with `IsChildNetworkObject` (root's WriteSpawnData includes them). Detached children (`ParentNetworkId == 0`) are handled independently.
+- **Interest management:** Attached children inherit interest from root parent. Detached children use their own position.
+- **RegisterSceneObjects:** Two-pass (roots first, then children with ParentNetworkId + OriginalParentNetworkId set).
+
+**Public API:**
+- `RegisterExistingHierarchy(root, rootNetworkId)` — registers root + all children
+
+### Runtime Reparenting (v2.34.0)
+
+Runtime Detach (child→root) and Attach (root→child) operations for NetworkObjects. Use cases: weapon pickup/drop, VR grabbing, ragdoll detachment, inventory system.
+
+**Two operations:**
+1. **Detach** — child becomes independent root: `obj.DetachFromNetworkParent()` or `NetworkManager.Instance.ReparentObject(obj, null)`
+2. **Attach** — root becomes child of another root: `obj.SetNetworkParent(newParent)` or `NetworkManager.Instance.ReparentObject(obj, newParent)`
+
+**Key concepts:**
+- `ParentNetworkId` — changes at runtime when reparented (0 = root, >0 = current parent)
+- `OriginalParentNetworkId` — set once at spawn, NEVER changes. Tracks which root this child was originally spawned from.
+- `_originalChildren[rootNetId]` — NetworkManager tracks all spawn-time children per root. Used by `WriteSpawnData` to always serialize original children with their root, even if detached.
+- **Attach target restriction:** Only root objects can be new parents (v2.34.0). Attaching to a child is blocked.
+
+**Wire protocol (MSG_REPARENT = 0xAF):**
+```
+[ObjectNetworkId:u32] [NewParentNetworkId:u32]
+```
+Reliable ordered. NewParentNetworkId=0 = detach. Broadcast to all peers.
+
+**Detach flow:**
+1. Owner/host calls `DetachFromNetworkParent()` → `ReparentObject(obj, null)`
+2. `ApplyReparent`: sets `ParentNetworkId = 0`, calls `Transform.SetParent(null, worldPositionStays: true)`, fires `OnReparented` event
+3. Broadcast MSG_REPARENT with newParentNetId=0
+4. Object is now an independent root: can be independently despawned, gets its own interest spatial position, appears in dirty/reliable-fallback paths
+5. Original root's `WriteSpawnData` still includes the detached child (with flag 0x01 + world pos/rot)
+
+**Attach flow:**
+1. Owner/host calls `SetNetworkParent(newParent)` → `ReparentObject(obj, newParent)`
+2. `ApplyReparent`: sets `ParentNetworkId = newParent.NetworkId`, calls `Transform.SetParent(newParent.transform, worldPositionStays: true)`, inherits OwnerId from parent if different, fires `OnReparented` event
+3. Broadcast MSG_REPARENT with target NetworkId
+4. Object now inherits interest from parent
+
+**Late-join snapshot:**
+- **Original children** (`OriginalParentNetworkId != 0`): serialized inline with their original root, with detach flag + world pos/rot if detached. Skipped in the top-level snapshot iteration.
+- **Dynamically attached roots** (`OriginalParentNetworkId == 0`, `ParentNetworkId != 0`): appear as normal top-level entries in the snapshot. After all snapshot chunks, host sends MSG_REPARENT to set the parent on the late joiner.
+
+**Edge cases:**
+- Root despawn with detached children: detached children survive (they're independent). Must be despawned separately.
+- Detached child despawn: allowed (IsChildNetworkObject=false), cleaned from `_originalChildren`.
+- Attach to child object: blocked with warning (target must be a root).
+- Offline mode: reparent works locally without broadcast.
+- NetworkTransform: `SetParent(worldPositionStays: true)` preserves world pos. No sync disruption.
 
 ### Scene Object Auto-Ownership
 

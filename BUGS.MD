@@ -53,4 +53,30 @@
 
 ## Open
 
-_(none currently)_
+### Compile errors on non-Android build profiles
+- **Status:** CANNOT REPRODUCE — All Android-specific code is properly guarded
+- **Reporter:** Ducky (2026-02-10)
+- **Severity:** Critical
+- **Investigation (2026-02-10):** Full audit of all .cs files in `Runtime/EOSNative/`. Every `AndroidJavaClass`, `AndroidJavaObject`, `UnityEngine.Android.Permission`, and `AndroidInitializeOptions` usage is wrapped in `#if UNITY_ANDROID && !UNITY_EDITOR`. The `EOSNative.Editor` assembly has `includePlatforms: ["Editor"]` in its asmdef. `EOSAndroidBuildProcessor.cs` is double-guarded (asmdef + `#if UNITY_ANDROID`). No unguarded Android APIs found.
+- **Possible causes for Ducky's issue:** Unity cache corruption (try Library/ delete + reimport), version-specific Unity bug, or transient import error resolved by platform switch triggering recompile.
+- **Action:** Ask Ducky for exact error messages next time it reproduces.
+
+### P2PDemoManager auto-creates demo objects unexpectedly
+- **Status:** OPEN
+- **Reporter:** Ducky (2026-02-10)
+- **Severity:** High
+- **Description:** P2PDemoManager auto-creates level geometry (ground plane, obstacles) and player balls as soon as a lobby connects. Users installing the package for the first time see random cubes/planes spawning with no explanation. The demo content should be disabled by default or moved to a separate UPM sample package.
+- **Fix:** Disable P2PDemoManager auto-creation by default. Move demo to UPM sample or separate scene.
+
+### Inspector hides fields that need Debug mode to see
+- **Status:** OPEN
+- **Reporter:** Ducky (2026-02-10)
+- **Severity:** Medium
+- **Description:** Some important configuration fields on managers are hidden by custom Inspectors and only visible in Unity's Debug Inspector mode. All user-facing fields should be exposed in the custom Inspector.
+
+### NetworkManager IsOnline not activating after lobby join
+- **Status:** NOT A BUG — by design + fixed with PlayerSpawner
+- **Reporter:** Ducky (2026-02-10)
+- **Severity:** High
+- **Root cause:** `IsOnline` is a derived property (`EOSP2PManager.Peers.Count > 0`), not a flag. Requires at least one P2P peer. Ducky was alone in the lobby — needs a second player. The P2P layer IS automatically wired up (EOSP2PManager subscribes to OnLobbyJoined, sends handshakes, establishes connections). The REAL blocker was: even with peers, nothing auto-spawned the player prefab. P2PDemoManager had its own spawn logic (`SpawnLocalBall`) which Ducky correctly disabled.
+- **Fix (v2.32.0):** Added `PlayerSpawner` component (`Runtime/EOSNative/Net/PlayerSpawner.cs`). Assign a player prefab + optional spawn points. Auto-spawns local player on first peer connect, auto-despawns on lobby leave or all peers disconnect. Includes public `LocalPlayer` reference and spawn/despawn events.

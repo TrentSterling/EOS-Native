@@ -23,6 +23,27 @@ namespace EOSNative.Net
         /// <summary>Index into NetworkManager's prefab registry. Used for spawning on remote peers.</summary>
         public ushort PrefabId { get; internal set; }
 
+        /// <summary>
+        /// NetworkId of the root NetworkObject in a nested hierarchy. 0 = this is the root.
+        /// Child NetworkObjects share the root's PrefabId, OwnerId, and DestroyWithOwner.
+        /// Despawn/TransferAuthority must be called on the root — children cascade automatically.
+        /// Changes at runtime when reparented via <see cref="SetNetworkParent"/> / <see cref="DetachFromNetworkParent"/>.
+        /// </summary>
+        public uint ParentNetworkId { get; internal set; }
+
+        /// <summary>
+        /// NetworkId of the parent this object was originally spawned with. Set once at spawn, never changes.
+        /// Used to distinguish original prefab children from dynamically reparented objects.
+        /// 0 = this object was spawned as a root (even if later attached to another object).
+        /// </summary>
+        internal uint OriginalParentNetworkId { get; set; }
+
+        /// <summary>True if this is a child NetworkObject (has a parent root).</summary>
+        public bool IsChildNetworkObject => ParentNetworkId != 0;
+
+        /// <summary>True if this is a root NetworkObject (no parent).</summary>
+        public bool IsRootNetworkObject => ParentNetworkId == 0;
+
         #endregion
 
         #region Ownership
@@ -35,8 +56,8 @@ namespace EOSNative.Net
         /// transferred to the new host. Useful for player avatars and per-player objects.
         /// Default is false (objects persist and transfer to host on owner disconnect).
         /// </summary>
-        [SerializeField]
-        public bool DestroyWithOwner { get; set; } = false;
+        [SerializeField] private bool _destroyWithOwner;
+        public bool DestroyWithOwner { get => _destroyWithOwner; set => _destroyWithOwner = value; }
 
         /// <summary>True if the local peer owns this object.</summary>
         public bool IsOwner
@@ -59,7 +80,8 @@ namespace EOSNative.Net
         /// Use for important game objects that should always be visible (objectives, world anchors, etc.).
         /// NetworkRoomState and NetworkPlayerState are automatically always-visible.
         /// </summary>
-        public bool AlwaysVisible { get; set; }
+        [SerializeField] private bool _alwaysVisible;
+        public bool AlwaysVisible { get => _alwaysVisible; set => _alwaysVisible = value; }
 
         #endregion
 
@@ -297,6 +319,9 @@ namespace EOSNative.Net
         /// <summary>Fired when ownership changes. Args: (oldOwner, newOwner).</summary>
         public event Action<ProductUserId, ProductUserId> OnOwnerChanged;
 
+        /// <summary>Fired when this object is reparented. Args: (oldParent, newParent). Null = no parent (root).</summary>
+        public event Action<NetworkObject, NetworkObject> OnReparented;
+
         /// <summary>Fired when this object is spawned on the network.</summary>
         public event Action OnNetworkSpawn;
 
@@ -307,6 +332,31 @@ namespace EOSNative.Net
         internal void NotifyOwnerChanged(ProductUserId oldOwner, ProductUserId newOwner)
         {
             OnOwnerChanged?.Invoke(oldOwner, newOwner);
+        }
+
+        /// <summary>Invoke the OnReparented event.</summary>
+        internal void NotifyReparented(NetworkObject oldParent, NetworkObject newParent)
+        {
+            OnReparented?.Invoke(oldParent, newParent);
+        }
+
+        /// <summary>
+        /// Detach this child from its network parent, making it an independent root object.
+        /// Only callable by the owner or host. World position/rotation are preserved.
+        /// </summary>
+        public void DetachFromNetworkParent()
+        {
+            NetworkManager.Instance?.ReparentObject(this, null);
+        }
+
+        /// <summary>
+        /// Set a new network parent for this object. The target must be a root NetworkObject.
+        /// Only callable by the owner or host. World position/rotation are preserved.
+        /// Pass null to detach (equivalent to <see cref="DetachFromNetworkParent"/>).
+        /// </summary>
+        public void SetNetworkParent(NetworkObject newParent)
+        {
+            NetworkManager.Instance?.ReparentObject(this, newParent);
         }
 
         /// <summary>

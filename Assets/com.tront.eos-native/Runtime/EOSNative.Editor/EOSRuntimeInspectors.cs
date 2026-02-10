@@ -66,20 +66,52 @@ namespace EOSNative.Editor
     [CustomEditor(typeof(NetworkObject))]
     public class NetworkObjectEditor : UnityEditor.Editor
     {
+        private SerializedProperty _destroyWithOwner;
+        private SerializedProperty _alwaysVisible;
+
+        private void OnEnable()
+        {
+            _destroyWithOwner = serializedObject.FindProperty("_destroyWithOwner");
+            _alwaysVisible = serializedObject.FindProperty("_alwaysVisible");
+        }
+
         public override void OnInspectorGUI()
         {
-            DrawDefaultInspector();
+            serializedObject.Update();
 
             var obj = (NetworkObject)target;
 
-            EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("Network Identity", EditorStyles.boldLabel);
+            // --- Edit-time configuration ---
+            EditorGUILayout.LabelField("Configuration", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(_destroyWithOwner, new GUIContent("Destroy With Owner",
+                "Destroy when owner disconnects instead of transferring to host. Use for player avatars."));
+            EditorGUILayout.PropertyField(_alwaysVisible, new GUIContent("Always Visible",
+                "Always replicate to all peers regardless of spatial interest. Use for objectives, world anchors."));
 
-            if (!Application.isPlaying)
+            serializedObject.ApplyModifiedProperties();
+
+            // --- Hierarchy info (works in edit + play) ---
+            var childNetObjs = obj.GetComponentsInChildren<NetworkObject>(true);
+            var parentNetObj = obj.transform.parent != null ? obj.transform.parent.GetComponentInParent<NetworkObject>() : null;
+
+            if (childNetObjs.Length > 1 || parentNetObj != null)
             {
-                EditorGUILayout.HelpBox("Enter Play Mode to see network identity.", MessageType.Info);
-                return;
+                EditorGUILayout.Space(5);
+                EditorGUILayout.LabelField("Hierarchy", EditorStyles.boldLabel);
+                using (new EditorGUI.DisabledGroupScope(true))
+                {
+                    if (parentNetObj != null)
+                        EditorGUILayout.ObjectField("Parent NetworkObject", parentNetObj, typeof(NetworkObject), true);
+                    if (childNetObjs.Length > 1)
+                        EditorGUILayout.IntField("Child NetworkObjects", childNetObjs.Length - 1);
+                }
             }
+
+            if (!Application.isPlaying) return;
+
+            // --- Runtime status ---
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("Runtime Status", EditorStyles.boldLabel);
 
             using (new EditorGUI.DisabledGroupScope(true))
             {
@@ -89,8 +121,12 @@ namespace EOSNative.Editor
                 EditorGUILayout.Toggle("Is Owner", obj.IsOwner);
                 EditorGUILayout.Toggle("Is Host", obj.IsHost);
                 EditorGUILayout.Toggle("Is Registered", obj.IsRegistered);
-                EditorGUILayout.Toggle("Destroy With Owner", obj.DestroyWithOwner);
                 EditorGUILayout.IntField("SyncVar Count", obj.SyncVarCount);
+
+                if (obj.ParentNetworkId != 0)
+                    EditorGUILayout.TextField("Parent Net ID", $"0x{obj.ParentNetworkId:X8}");
+                if (obj.IsChildNetworkObject)
+                    EditorGUILayout.Toggle("Is Child", true);
             }
 
             EditorUtility.SetDirty(target);

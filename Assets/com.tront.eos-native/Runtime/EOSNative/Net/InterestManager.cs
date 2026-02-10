@@ -266,6 +266,16 @@ namespace EOSNative.Net
         {
             if (obj == null || peer == null) return false;
 
+            // Child NetworkObjects inherit interest from their current parent
+            // (Detached children have ParentNetworkId == 0, so they use their own position below)
+            if (obj.IsChildNetworkObject)
+            {
+                var parentNm = NetworkManager.Instance;
+                if (parentNm != null && parentNm.Objects.TryGetValue(obj.ParentNetworkId, out var parent))
+                    return IsInterested(peer, parent);
+                return true; // fail-safe: orphaned child — show it
+            }
+
             // Always-visible objects bypass spatial check
             if (IsAlwaysVisible(obj, peer)) return true;
 
@@ -313,6 +323,21 @@ namespace EOSNative.Net
             _grid.RemoveObject(networkId);
             foreach (var set in _peerInterests.Values)
                 set.Remove(networkId);
+        }
+
+        /// <summary>
+        /// Called when a NetworkObject is reparented. Forces immediate interest recalculation
+        /// for this object (detached children now use their own position for interest).
+        /// </summary>
+        public void OnObjectReparented(NetworkObject obj)
+        {
+            if (obj == null || _grid == null) return;
+
+            // Update the object's position in the grid immediately
+            _grid.UpdateObject(obj.NetworkId, obj.transform.position);
+
+            // Force the next rebuild to happen sooner
+            _nextRebuildTime = 0f;
         }
 
         /// <summary>Force an object into a peer's interest set (e.g., on spawn).</summary>

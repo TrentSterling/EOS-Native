@@ -96,7 +96,14 @@ The flag is synced in the spawn/snapshot wire format so all peers agree on the b
 netObj.OnOwnerChanged += (oldOwner, newOwner) => { };
 netObj.OnNetworkSpawn += () => { };
 netObj.OnNetworkDespawn += () => { };
+netObj.OnReparented += (oldParent, newParent) => { }; // null = no parent
 ```
+
+### Nested NetworkObjects & Reparenting
+
+Prefabs can contain multiple NetworkObjects in a parent-child hierarchy (e.g. VR player with Head/LeftHand/RightHand). Children are automatically discovered and assigned NetworkIds on spawn. At runtime, use `DetachFromNetworkParent()` and `SetNetworkParent()` to change the hierarchy dynamically (weapon pickup/drop, ragdoll detachment).
+
+See [Nested Objects & Reparenting](nested-objects.md) for full details.
 
 ### SyncVar Limit
 
@@ -1284,6 +1291,7 @@ All Layer 2 networking messages use the `0xA0`-`0xAF` range:
 | `0xAC` | SCENE_LOADED_ACK | Reliable | 1 | sceneName |
 | `0xAD` | RPC_VALIDATED | Reliable | 1 | networkId, methodHash, originalTarget, argData |
 | `0xAE` | RPC_REBROADCAST | Reliable | 1 | networkId, methodHash, originalTarget, argData |
+| `0xAF` | REPARENT | Reliable | 1 | objectNetworkId, newParentNetworkId (0 = detach) |
 
 ## Offline Mode
 

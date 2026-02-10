@@ -54,6 +54,13 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Late-join snapshots (new peers receive full state dump from host)
 - [x] P2P direct connections for fast RPCs (EOS SDK handles relay vs direct automatically, NetworkStats tracks connection type)
 
+**Player Management:**
+- [x] PlayerSpawner — auto-spawn player prefab on peer connect, despawn on lobby leave, spawn points, events (v2.32.0, community request — Ducky)
+- [x] Nested NetworkObjects — parent-child hierarchy support (v2.33.0, community request — Ducky)
+- [x] Runtime reparenting — `SetNetworkParent()`/`DetachFromNetworkParent()` for dynamic hierarchy changes (attach weapons, pick up objects, detach limbs) (v2.34.0, community request — Ducky)
+- [ ] InstanceFinder — static accessor for NetworkManager, TimeManager, etc. (community request — Ducky)
+- [ ] SimulationBehaviour — base class for singleton network behaviours not on a NetworkObject (community request — Ducky)
+
 **QOL & API Polish** (community request — CometDev):
 - [x] `NetworkManager.GetPlayerObject(puid)` — lookup a player's NetworkObject by their PUID (v2.16.1)
 - [x] `NetworkManager.ConnectedPlayers` — easy-access list of connected player PUIDs (v2.16.1)

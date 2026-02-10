@@ -223,7 +223,7 @@ Set via Inspector on the EOSManager component. The `_showConsole` bool independe
 
 Subsystem details are split into companion files to keep this file fast to load:
 
-- **[CLAUDE-NETWORKING.md](CLAUDE-NETWORKING.md)** — Layer 2 networking: NetworkObject, SyncVar, NetworkManager, NetworkTransform, SyncList, SyncDictionary, RPCs, [NetRpc] IL weaver, spectator mode, RPC validation, NetworkStats, NetworkRoomState, NetworkPlayerState, NetworkSceneManager, packet compression, automated tests
+- **[CLAUDE-NETWORKING.md](CLAUDE-NETWORKING.md)** — Layer 2 networking: NetworkObject, SyncVar, NetworkManager, NetworkTransform, SyncList, SyncDictionary, RPCs, [NetRpc] IL weaver, spectator mode, RPC validation, NetworkStats, NetworkRoomState, NetworkPlayerState, NetworkSceneManager, packet compression, nested NetworkObjects, runtime reparenting, automated tests
 - **[CLAUDE-P2P.md](CLAUDE-P2P.md)** — Layer 1 P2P transport: NetWriter/NetReader, PacketFragmenter, MessageRouter, P2P Ball Demo, P2P connection establishment (host-order fix + retry)
 - **[CLAUDE-VOICE.md](CLAUDE-VOICE.md)** — Voice/RTC: audio device selection, spatial voice system (EOSVoiceZoneManager, EOSVoiceTriggerZone, NetworkVoicePlayer)
 - **[CLAUDE-ANDROID.md](CLAUDE-ANDROID.md)** — Android build: Gradle config, desugaring, AndroidX, Java classloader fix, RTC prerequisites, AndroidInitializeOptions

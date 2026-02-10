@@ -38,6 +38,9 @@ namespace EOSNative.Net
         private const byte MSG_RPC_VALIDATED = 0xAD;   // Client→Host: validated RPC request
         private const byte MSG_RPC_REBROADCAST = 0xAE; // Host→All: approved validated RPC
 
+        // Runtime reparenting
+        private const byte MSG_REPARENT = 0xAF;
+
         // Chunked snapshot delivery
         private const int SNAPSHOT_CHUNK_SIZE = 16;
 
@@ -311,13 +314,18 @@ namespace EOSNative.Net
             uint networkId = GenerateNetworkId();
 
             var go = GetFromPool(prefabId, prefab, position, rotation);
-            var netObj = go.GetComponent<NetworkObject>();
+
+            // Discover all NetworkObjects in the hierarchy (root at index 0)
+            var allNetObjs = go.GetComponentsInChildren<NetworkObject>(true);
+            var netObj = allNetObjs.Length > 0 ? allNetObjs[0] : null;
             if (netObj == null)
                 netObj = go.AddComponent<NetworkObject>();
 
+            // Register root
             netObj.NetworkId = networkId;
             netObj.PrefabId = prefabId;
             netObj.OwnerId = localPuid; // null in offline mode
+            netObj.ParentNetworkId = 0;
             netObj.IsRegistered = true;
             _objects[networkId] = netObj;
 
@@ -326,12 +334,36 @@ namespace EOSNative.Net
 
             netObj.NotifyNetworkSpawn();
 
+            // Register child NetworkObjects (index 1+)
+            var origChildren = new List<(uint, byte)>();
+            for (int i = 1; i < allNetObjs.Length; i++)
+            {
+                var child = allNetObjs[i];
+                uint childId = GenerateNetworkId();
+                child.NetworkId = childId;
+                child.PrefabId = prefabId;
+                child.OwnerId = localPuid;
+                child.ParentNetworkId = networkId;
+                child.OriginalParentNetworkId = networkId;
+                child.IsRegistered = true;
+                _objects[childId] = child;
+                origChildren.Add((childId, (byte)i));
+
+                if (OfflineMode)
+                    _offlineOwnedNetworkIds.Add(childId);
+
+                child.NotifyNetworkSpawn();
+            }
+            if (origChildren.Count > 0)
+                _originalChildren[networkId] = origChildren;
+
             // Broadcast spawn to all peers (skip in offline mode)
             if (!OfflineMode)
                 BroadcastSpawn(netObj);
 
+            int childCount = allNetObjs.Length - 1;
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Spawned object {networkId} (prefab {prefabId}){(OfflineMode ? " [offline]" : "")}");
+                $"Spawned object {networkId} (prefab {prefabId}, {childCount} children){(OfflineMode ? " [offline]" : "")}");
 
             return netObj;
         }
@@ -345,8 +377,31 @@ namespace EOSNative.Net
             if (obj == null) return;
             if (!obj.IsRegistered) return;
 
+            // Block direct child despawn — unless it was detached (ParentNetworkId == 0)
+            // Original children that are still attached must be despawned via the root.
+            if (obj.IsChildNetworkObject)
+            {
+                Debug.LogWarning($"[NetworkManager] Cannot despawn child NetworkObject {obj.NetworkId} directly — despawn the root instead");
+                return;
+            }
+
             // Only owner or host can despawn
             if (!obj.IsOwner && !IsHost) return;
+
+            // Despawn children first (before removing root from _objects)
+            var children = GetRegisteredChildren(obj.NetworkId);
+            for (int i = 0; i < children.Count; i++)
+            {
+                var child = children[i];
+                _objects.Remove(child.NetworkId);
+                _dirtyObjects.Remove(child);
+                _offlineOwnedNetworkIds.Remove(child.NetworkId);
+                child.IsRegistered = false;
+                child.NotifyNetworkDespawn();
+                UnregisterRPCs(child);
+                if (InterestManagementEnabled)
+                    InterestManager.Instance?.OnObjectRemoved(child.NetworkId);
+            }
 
             uint networkId = obj.NetworkId;
             ushort prefabId = obj.PrefabId;
@@ -358,9 +413,16 @@ namespace EOSNative.Net
             UnregisterRPCs(obj);
             ReturnToPool(prefabId, obj.gameObject);
 
+            // Clean up _originalChildren for this root
+            _originalChildren.Remove(networkId);
+
+            // If this was a detached child, remove from its original root's list
+            if (obj.OriginalParentNetworkId != 0)
+                RemoveFromOriginalChildren(obj.OriginalParentNetworkId, networkId);
+
             if (!OfflineMode)
             {
-                // Broadcast despawn — use interest filtering if enabled
+                // Broadcast despawn for root only — receiver cascades children
                 var writer = NetWriterPool.Get();
                 writer.WriteUInt32(networkId);
                 SendToInterestedPeers(MSG_DESPAWN, writer, obj, PacketReliability.ReliableOrdered, 1);
@@ -372,7 +434,7 @@ namespace EOSNative.Net
                 InterestManager.Instance?.OnObjectRemoved(networkId);
 
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Despawned object {networkId}");
+                $"Despawned object {networkId} (+ {children.Count} children)");
         }
 
         /// <summary>
@@ -384,11 +446,13 @@ namespace EOSNative.Net
             var toRemove = new List<NetworkObject>();
             foreach (var obj in _objects.Values)
             {
-                if (obj != null && obj.IsRegistered && (obj.IsOwner || IsHost))
+                // Only collect roots — Despawn() cascades to children
+                if (obj != null && obj.IsRegistered && obj.IsRootNetworkObject && (obj.IsOwner || IsHost))
                     toRemove.Add(obj);
             }
             for (int i = 0; i < toRemove.Count; i++)
                 Despawn(toRemove[i]);
+            _originalChildren.Clear();
         }
 
         #endregion
@@ -1005,6 +1069,13 @@ namespace EOSNative.Net
         // Interest management: reusable buffer for filtered peer lists
         private readonly List<ProductUserId> _interestedPeersBuffer = new();
 
+        // Nested NetworkObject: reusable buffer for child discovery
+        private readonly List<NetworkObject> _childrenBuffer = new();
+
+        // Original spawn-time children per root: rootNetId → [(childNetId, localIndex)]
+        // Used for reparenting: tracks original prefab hierarchy regardless of runtime Transform changes.
+        private readonly Dictionary<uint, List<(uint childNetId, byte localIndex)>> _originalChildren = new();
+
         // Tick simulation subscription tracking
         private bool _tickSubscribed;
 
@@ -1166,6 +1237,7 @@ namespace EOSNative.Net
             Router.Register(MSG_RPC_VALIDATED, HandleRPCValidated);
             Router.Register(MSG_RPC_REBROADCAST, HandleRPCRebroadcast);
             Router.Register(MSG_AUTHORITY_REQUEST, HandleAuthorityRequest);
+            Router.Register(MSG_REPARENT, HandleReparent);
 
             // Scene management messages
             var sceneMgr = NetworkSceneManager.Instance;
@@ -1190,6 +1262,26 @@ namespace EOSNative.Net
         /// <summary>Called by NetworkObject.OnDestroy when a registered object is destroyed.</summary>
         internal void OnObjectDestroyed(NetworkObject obj)
         {
+            // If root is destroyed, also clean up children
+            if (obj.IsRootNetworkObject)
+            {
+                var children = GetRegisteredChildren(obj.NetworkId);
+                for (int i = 0; i < children.Count; i++)
+                {
+                    var child = children[i];
+                    _objects.Remove(child.NetworkId);
+                    _dirtyObjects.Remove(child);
+                    UnregisterRPCs(child);
+                    if (InterestManagementEnabled)
+                        InterestManager.Instance?.OnObjectRemoved(child.NetworkId);
+                }
+                _originalChildren.Remove(obj.NetworkId);
+            }
+
+            // If this was an original child, remove from its root's _originalChildren
+            if (obj.OriginalParentNetworkId != 0)
+                RemoveFromOriginalChildren(obj.OriginalParentNetworkId, obj.NetworkId);
+
             _objects.Remove(obj.NetworkId);
             _dirtyObjects.Remove(obj);
             UnregisterRPCs(obj);
@@ -1219,6 +1311,9 @@ namespace EOSNative.Net
             if (!_objects.TryGetValue(networkId, out var obj)) return;
             if (obj == null || !obj.IsRegistered) return;
 
+            // Skip children — they're included in root's WriteSpawnData
+            if (obj.IsChildNetworkObject) return;
+
             // Only the owner sends interest-based spawns (prevents duplicates)
             if (!obj.IsOwner) return;
 
@@ -1237,6 +1332,9 @@ namespace EOSNative.Net
             if (!InterestManagementEnabled) return;
             if (!_objects.TryGetValue(networkId, out var obj)) return;
             if (obj == null || !obj.IsRegistered) return;
+
+            // Skip children — they're despawned with root
+            if (obj.IsChildNetworkObject) return;
 
             // Only the owner sends interest-based despawns
             if (!obj.IsOwner) return;
@@ -1461,7 +1559,9 @@ namespace EOSNative.Net
                 var obj = _reliableFallbackObjects[i];
 
                 // Object was re-dirtied or destroyed — no fallback needed
-                if (obj == null || !obj.IsRegistered || !obj.IsOwner || obj.IsDirty || !obj.ReliableFallbackPending)
+                // Skip children — their root's reliable fallback will include them
+                if (obj == null || !obj.IsRegistered || !obj.IsOwner || obj.IsDirty || !obj.ReliableFallbackPending
+                    || obj.IsChildNetworkObject)
                 {
                     _reliableFallbackObjects.RemoveAt(i);
                     continue;
@@ -1505,6 +1605,48 @@ namespace EOSNative.Net
             writer.WriteBool(obj.DestroyWithOwner);
             writer.WriteByte((byte)obj.SyncVarCount);
             obj.SerializeAll(writer);
+
+            // Write children using _originalChildren registry (tracks original prefab hierarchy)
+            if (obj.IsRootNetworkObject && _originalChildren.TryGetValue(obj.NetworkId, out var origList))
+            {
+                // Count how many children are still alive
+                int aliveCount = 0;
+                for (int c = 0; c < origList.Count; c++)
+                {
+                    if (_objects.ContainsKey(origList[c].childNetId))
+                        aliveCount++;
+                }
+                writer.WriteByte((byte)aliveCount);
+
+                for (int c = 0; c < origList.Count; c++)
+                {
+                    var (childNetId, localIndex) = origList[c];
+                    if (!_objects.TryGetValue(childNetId, out var child))
+                        continue; // child was despawned, skip
+
+                    writer.WriteUInt32(child.NetworkId);
+                    writer.WriteByte(localIndex);
+
+                    // Flags: 0x00 = attached (in parent hierarchy), 0x01 = detached (reparented away)
+                    bool isDetached = child.ParentNetworkId != obj.NetworkId;
+                    writer.WriteByte(isDetached ? (byte)0x01 : (byte)0x00);
+
+                    // Write child data with length prefix for safe skipping
+                    // Position is NOT included — that's NetworkTransform's job
+                    var childDataWriter = NetWriterPool.Get();
+                    childDataWriter.WriteByte((byte)child.SyncVarCount);
+                    child.SerializeAll(childDataWriter);
+                    var childData = childDataWriter.ToArraySegment();
+                    writer.WriteUInt16((ushort)childData.Count);
+                    writer.WriteBytesRaw(childData);
+                    NetWriterPool.Return(childDataWriter);
+                }
+            }
+            else
+            {
+                // No children (or this is a child object in snapshot — they're flat)
+                writer.WriteByte(0);
+            }
         }
 
         private void HandleSpawn(ProductUserId sender, NetReader reader)
@@ -1526,12 +1668,19 @@ namespace EOSNative.Net
             }
 
             // Don't re-spawn if we already have it (e.g. we're the owner)
-            if (_objects.ContainsKey(networkId)) return;
+            if (_objects.ContainsKey(networkId))
+            {
+                // Still need to consume child data from the reader
+                ReadAndDiscardChildren(reader);
+                return;
+            }
 
             // Handle reserved PrefabIds (RoomState / PlayerState)
             if (prefabId == NetworkRoomState.PREFAB_ID || prefabId == NetworkPlayerState.PREFAB_ID)
             {
                 SpawnReservedObject(prefabId, networkId, ownerId, destroyWithOwner, syncVarCount, reader);
+                // Reserved objects have no children — but still read the child count byte
+                reader.ReadByte(); // childCount = 0
                 return;
             }
 
@@ -1551,6 +1700,7 @@ namespace EOSNative.Net
             netObj.PrefabId = prefabId;
             netObj.OwnerId = ownerId;
             netObj.DestroyWithOwner = destroyWithOwner;
+            netObj.ParentNetworkId = 0;
             netObj.IsRegistered = true;
             _objects[networkId] = netObj;
 
@@ -1560,8 +1710,76 @@ namespace EOSNative.Net
 
             netObj.NotifyNetworkSpawn();
 
+            // Read and register children
+            byte childCount = reader.ReadByte();
+            var origChildren = new List<(uint, byte)>();
+            if (childCount > 0)
+            {
+                var allNetObjs = go.GetComponentsInChildren<NetworkObject>(true);
+
+                for (int c = 0; c < childCount; c++)
+                {
+                    uint childNetId = reader.ReadUInt32();
+                    byte localIndex = reader.ReadByte();
+                    byte flags = reader.ReadByte();
+                    ushort childDataLen = reader.ReadUInt16();
+
+                    // Match child by localIndex in the hierarchy
+                    if (localIndex > 0 && localIndex < allNetObjs.Length)
+                    {
+                        var child = allNetObjs[localIndex];
+                        byte childSyncVarCount = reader.ReadByte();
+
+                        bool isDetached = (flags & 0x01) != 0;
+
+                        child.NetworkId = childNetId;
+                        child.PrefabId = prefabId;
+                        child.OwnerId = ownerId;
+                        child.OriginalParentNetworkId = networkId;
+                        child.ParentNetworkId = isDetached ? 0u : networkId;
+                        child.DestroyWithOwner = destroyWithOwner;
+                        child.IsRegistered = true;
+                        _objects[childNetId] = child;
+                        origChildren.Add((childNetId, localIndex));
+
+                        if (childSyncVarCount > 0 && child.SyncVarCount > 0 && childSyncVarCount == child.SyncVarCount)
+                            child.DeserializeAll(reader);
+                        else if (childDataLen > 1)
+                            reader.Skip(childDataLen - 1); // skip SyncVar data (1 byte already read)
+
+                        // If detached: unparent Transform. Position comes from NetworkTransform.
+                        if (isDetached)
+                            child.transform.SetParent(null, worldPositionStays: true);
+
+                        child.NotifyNetworkSpawn();
+                    }
+                    else
+                    {
+                        // Prefab mismatch — skip this child's data
+                        reader.Skip(childDataLen);
+                        Debug.LogWarning($"[NetworkManager] Child localIndex {localIndex} out of range for prefab {prefabId}");
+                    }
+                }
+            }
+            if (origChildren.Count > 0)
+                _originalChildren[networkId] = origChildren;
+
             EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Remote spawn: object {networkId} (prefab {prefabId}, owner {ownerId})");
+                $"Remote spawn: object {networkId} (prefab {prefabId}, owner {ownerId}, {childCount} children)");
+        }
+
+        /// <summary>Read and discard child data from the reader (when root already exists).</summary>
+        private static void ReadAndDiscardChildren(NetReader reader)
+        {
+            byte childCount = reader.ReadByte();
+            for (int c = 0; c < childCount; c++)
+            {
+                reader.ReadUInt32();  // childNetId
+                reader.ReadByte();    // localIndex
+                reader.ReadByte();    // flags
+                ushort dataLen = reader.ReadUInt16();
+                reader.Skip(dataLen); // child SyncVar data (+ world pos/rot if detached)
+            }
         }
 
         private void HandleDespawn(ProductUserId sender, NetReader reader)
@@ -1578,6 +1796,18 @@ namespace EOSNative.Net
                     return;
                 }
 
+                // Cascade: unregister all children first
+                var children = GetRegisteredChildren(networkId);
+                for (int i = 0; i < children.Count; i++)
+                {
+                    var child = children[i];
+                    _objects.Remove(child.NetworkId);
+                    _dirtyObjects.Remove(child);
+                    child.IsRegistered = false;
+                    child.NotifyNetworkDespawn();
+                    UnregisterRPCs(child);
+                }
+
                 ushort prefabId = obj.PrefabId;
                 _objects.Remove(networkId);
                 _dirtyObjects.Remove(obj);
@@ -1586,8 +1816,15 @@ namespace EOSNative.Net
                 UnregisterRPCs(obj);
                 ReturnToPool(prefabId, obj.gameObject);
 
+                // Clean up _originalChildren for this root
+                _originalChildren.Remove(networkId);
+
+                // If this was a detached child, remove from its original root's list
+                if (obj.OriginalParentNetworkId != 0)
+                    RemoveFromOriginalChildren(obj.OriginalParentNetworkId, networkId);
+
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                    $"Remote despawn: object {networkId}");
+                    $"Remote despawn: object {networkId} (+ {children.Count} children)");
             }
         }
 
@@ -1614,8 +1851,17 @@ namespace EOSNative.Net
                 obj.OwnerId = newOwnerId;
                 obj.NotifyOwnerChanged(oldOwner, newOwnerId);
 
+                // Cascade authority to children
+                var children = GetRegisteredChildren(networkId);
+                for (int i = 0; i < children.Count; i++)
+                {
+                    var childOld = children[i].OwnerId;
+                    children[i].OwnerId = newOwnerId;
+                    children[i].NotifyOwnerChanged(childOld, newOwnerId);
+                }
+
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                    $"Authority transfer: object {networkId} -> {newOwnerId}");
+                    $"Authority transfer: object {networkId} -> {newOwnerId} (+ {children.Count} children)");
             }
         }
 
@@ -1623,11 +1869,28 @@ namespace EOSNative.Net
         public void TransferAuthority(NetworkObject obj, ProductUserId newOwner)
         {
             if (obj == null || !obj.IsRegistered) return;
+
+            // Block direct child transfer — must transfer the root
+            if (obj.IsChildNetworkObject)
+            {
+                Debug.LogWarning($"[NetworkManager] Cannot transfer authority on child NetworkObject {obj.NetworkId} — transfer the root instead");
+                return;
+            }
+
             if (!obj.IsOwner && !IsHost) return;
 
             var oldOwner = obj.OwnerId;
             obj.OwnerId = newOwner;
             obj.NotifyOwnerChanged(oldOwner, newOwner);
+
+            // Cascade authority to children
+            var children = GetRegisteredChildren(obj.NetworkId);
+            for (int i = 0; i < children.Count; i++)
+            {
+                var childOld = children[i].OwnerId;
+                children[i].OwnerId = newOwner;
+                children[i].NotifyOwnerChanged(childOld, newOwner);
+            }
 
             // Authority changes always broadcast to all (not interest-filtered)
             // because the new owner needs to know even if they can't "see" the object yet
@@ -1697,6 +1960,125 @@ namespace EOSNative.Net
 
         #endregion
 
+        #region Reparenting
+
+        /// <summary>
+        /// Reparent a NetworkObject at runtime. Pass null to detach (make independent root).
+        /// Only callable by the owner or host. World position/rotation are preserved.
+        /// </summary>
+        public void ReparentObject(NetworkObject obj, NetworkObject newParent)
+        {
+            if (obj == null || !obj.IsRegistered) return;
+
+            // Only owner or host can reparent
+            if (!obj.IsOwner && !IsHost) return;
+
+            // Validate: cannot attach to a child — only root objects can be parents
+            if (newParent != null && newParent.IsChildNetworkObject)
+            {
+                Debug.LogWarning($"[NetworkManager] Cannot reparent {obj.NetworkId} under child {newParent.NetworkId} — target must be a root");
+                return;
+            }
+
+            // No-op if already in the desired state
+            if (newParent == null && obj.ParentNetworkId == 0) return;
+            if (newParent != null && obj.ParentNetworkId == newParent.NetworkId) return;
+
+            ApplyReparent(obj, newParent);
+
+            if (!OfflineMode)
+            {
+                var writer = NetWriterPool.Get();
+                writer.WriteUInt32(obj.NetworkId);
+                writer.WriteUInt32(newParent?.NetworkId ?? 0);
+                Router.SendToAll(MSG_REPARENT, writer, PacketReliability.ReliableOrdered, 1);
+                NetWriterPool.Return(writer);
+            }
+
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                $"Reparented object {obj.NetworkId} -> {(newParent != null ? newParent.NetworkId.ToString() : "detached")}");
+        }
+
+        private void ApplyReparent(NetworkObject obj, NetworkObject newParent)
+        {
+            // Resolve old parent for event
+            NetworkObject oldParent = null;
+            if (obj.ParentNetworkId != 0)
+                _objects.TryGetValue(obj.ParentNetworkId, out oldParent);
+
+            // Update ParentNetworkId
+            obj.ParentNetworkId = newParent?.NetworkId ?? 0;
+
+            // Update Transform hierarchy (preserve world position)
+            obj.transform.SetParent(newParent?.transform, worldPositionStays: true);
+
+            // If attaching to a new parent, inherit OwnerId if different
+            if (newParent != null && newParent.OwnerId != null)
+            {
+                var oldOwner = obj.OwnerId;
+                if (oldOwner == null || !oldOwner.Equals(newParent.OwnerId))
+                {
+                    obj.OwnerId = newParent.OwnerId;
+                    obj.NotifyOwnerChanged(oldOwner, newParent.OwnerId);
+                }
+            }
+
+            obj.NotifyReparented(oldParent, newParent);
+
+            // Update interest management
+            if (InterestManagementEnabled)
+                InterestManager.Instance?.OnObjectReparented(obj);
+        }
+
+        private void HandleReparent(ProductUserId sender, NetReader reader)
+        {
+            uint objectNetId = reader.ReadUInt32();
+            uint newParentNetId = reader.ReadUInt32();
+
+            if (!_objects.TryGetValue(objectNetId, out var obj)) return;
+
+            // Sender validation: only owner or host can reparent
+            if (obj.OwnerId != null && !sender.Equals(obj.OwnerId) && !sender.Equals(GetHostPuid()))
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "NetworkManager",
+                    $"Rejected reparent: sender {sender} is not owner/host for object {objectNetId}");
+                return;
+            }
+
+            NetworkObject newParent = null;
+            if (newParentNetId != 0 && !_objects.TryGetValue(newParentNetId, out newParent))
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "NetworkManager",
+                    $"Reparent target {newParentNetId} not found for object {objectNetId}");
+                return;
+            }
+
+            ApplyReparent(obj, newParent);
+
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                $"Remote reparent: object {objectNetId} -> {(newParent != null ? newParentNetId.ToString() : "detached")}");
+        }
+
+        /// <summary>Remove a child entry from an original root's _originalChildren list.</summary>
+        private void RemoveFromOriginalChildren(uint originalRootNetId, uint childNetId)
+        {
+            if (_originalChildren.TryGetValue(originalRootNetId, out var list))
+            {
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    if (list[i].childNetId == childNetId)
+                    {
+                        list.RemoveAt(i);
+                        break;
+                    }
+                }
+                if (list.Count == 0)
+                    _originalChildren.Remove(originalRootNetId);
+            }
+        }
+
+        #endregion
+
         #region Snapshot (Late Join)
 
         private void HandleSnapshotRequest(ProductUserId sender, NetReader reader)
@@ -1721,6 +2103,9 @@ namespace EOSNative.Net
             }
 
             // Priority 3: Everything else (filtered by interest if enabled)
+            // Skip original children (OriginalParentNetworkId != 0) — they're inline in their root's data.
+            // Dynamically attached roots (OriginalParentNetworkId == 0, ParentNetworkId != 0) are NOT skipped —
+            // they appear as top-level entries, then MSG_REPARENT sets the parent after snapshot.
             var im = InterestManagementEnabled ? InterestManager.Instance : null;
             foreach (var obj in _objects.Values)
             {
@@ -1728,6 +2113,8 @@ namespace EOSNative.Net
                 // Skip already-added RoomState and PlayerStates
                 if (obj.PrefabId == NetworkRoomState.PREFAB_ID || obj.PrefabId == NetworkPlayerState.PREFAB_ID)
                     continue;
+                // Skip original children — they're serialized as part of their root
+                if (obj.OriginalParentNetworkId != 0) continue;
                 // Interest filter: only include objects the joining peer can see
                 if (im != null && !im.IsInterested(sender, obj))
                     continue;
@@ -1762,6 +2149,20 @@ namespace EOSNative.Net
                 writer.WritePackedUInt32(0);
                 Router.SendToPeer(MSG_SNAPSHOT, writer, sender, PacketReliability.ReliableOrdered, 1);
                 NetWriterPool.Return(writer);
+            }
+
+            // Send MSG_REPARENT for dynamically attached roots (OriginalParentNetworkId == 0 but ParentNetworkId != 0)
+            foreach (var obj in _objects.Values)
+            {
+                if (obj == null || !obj.IsRegistered) continue;
+                if (obj.OriginalParentNetworkId == 0 && obj.ParentNetworkId != 0)
+                {
+                    var rw = NetWriterPool.Get();
+                    rw.WriteUInt32(obj.NetworkId);
+                    rw.WriteUInt32(obj.ParentNetworkId);
+                    Router.SendToPeer(MSG_REPARENT, rw, sender, PacketReliability.ReliableOrdered, 1);
+                    NetWriterPool.Return(rw);
+                }
             }
         }
 
@@ -1799,6 +2200,8 @@ namespace EOSNative.Net
                     var existing = _objects[networkId];
                     if (syncVarCount > 0 && existing.SyncVarCount > 0)
                         existing.DeserializeAll(reader);
+                    // Read and update children state
+                    ReadSnapshotChildren(reader, existing, prefabId, ownerId, networkId, destroyWithOwner, true);
                     continue;
                 }
 
@@ -1806,6 +2209,7 @@ namespace EOSNative.Net
                 if (prefabId == NetworkRoomState.PREFAB_ID || prefabId == NetworkPlayerState.PREFAB_ID)
                 {
                     SpawnReservedObject(prefabId, networkId, ownerId, destroyWithOwner, syncVarCount, reader);
+                    reader.ReadByte(); // childCount = 0 for reserved objects
                     continue;
                 }
 
@@ -1825,6 +2229,7 @@ namespace EOSNative.Net
                 netObj.PrefabId = prefabId;
                 netObj.OwnerId = ownerId;
                 netObj.DestroyWithOwner = destroyWithOwner;
+                netObj.ParentNetworkId = 0;
                 netObj.IsRegistered = true;
                 _objects[networkId] = netObj;
 
@@ -1832,6 +2237,9 @@ namespace EOSNative.Net
                     netObj.DeserializeAll(reader);
 
                 netObj.NotifyNetworkSpawn();
+
+                // Read and register children
+                ReadSnapshotChildren(reader, netObj, prefabId, ownerId, networkId, destroyWithOwner, false);
             }
 
             // After snapshot chunks contain our RoomState, ensure our PlayerState exists
@@ -1840,6 +2248,86 @@ namespace EOSNative.Net
                 EnsureLocalPlayerState();
                 NetworkSceneManager.Instance?.SyncScenesFromRoomState();
             }
+        }
+
+        /// <summary>
+        /// Read child data from a snapshot/spawn message. If existingOnly is true, just updates
+        /// SyncVars on existing children. Otherwise, registers new children.
+        /// </summary>
+        private void ReadSnapshotChildren(NetReader reader, NetworkObject root, ushort prefabId,
+            ProductUserId ownerId, uint rootNetworkId, bool destroyWithOwner, bool existingOnly)
+        {
+            byte childCount = reader.ReadByte();
+            if (childCount == 0) return;
+
+            NetworkObject[] allNetObjs = null;
+            if (childCount > 0)
+                allNetObjs = root.GetComponentsInChildren<NetworkObject>(true);
+
+            var origChildren = new List<(uint, byte)>();
+
+            for (int c = 0; c < childCount; c++)
+            {
+                uint childNetId = reader.ReadUInt32();
+                byte localIndex = reader.ReadByte();
+                byte flags = reader.ReadByte();
+                ushort childDataLen = reader.ReadUInt16();
+                bool isDetached = (flags & 0x01) != 0;
+
+                if (existingOnly && _objects.ContainsKey(childNetId))
+                {
+                    // Update existing child's SyncVars
+                    var existing = _objects[childNetId];
+                    byte childSyncVarCount = reader.ReadByte();
+                    if (childSyncVarCount > 0 && existing.SyncVarCount > 0 && childSyncVarCount == existing.SyncVarCount)
+                        existing.DeserializeAll(reader);
+                    else if (childDataLen > 1)
+                        reader.Skip(childDataLen - 1);
+
+                    // Handle detach state change. Position comes from NetworkTransform.
+                    if (isDetached && existing.ParentNetworkId != 0)
+                    {
+                        existing.ParentNetworkId = 0;
+                        existing.transform.SetParent(null, worldPositionStays: true);
+                    }
+                }
+                else if (!existingOnly && localIndex > 0 && allNetObjs != null && localIndex < allNetObjs.Length)
+                {
+                    // Register new child
+                    var child = allNetObjs[localIndex];
+                    byte childSyncVarCount = reader.ReadByte();
+
+                    child.NetworkId = childNetId;
+                    child.PrefabId = prefabId;
+                    child.OwnerId = ownerId;
+                    child.OriginalParentNetworkId = rootNetworkId;
+                    child.ParentNetworkId = isDetached ? 0u : rootNetworkId;
+                    child.DestroyWithOwner = destroyWithOwner;
+                    child.IsRegistered = true;
+                    _objects[childNetId] = child;
+                    origChildren.Add((childNetId, localIndex));
+
+                    if (childSyncVarCount > 0 && child.SyncVarCount > 0 && childSyncVarCount == child.SyncVarCount)
+                        child.DeserializeAll(reader);
+                    else if (childDataLen > 1)
+                        reader.Skip(childDataLen - 1);
+
+                    // If detached: unparent Transform. Position comes from NetworkTransform.
+                    if (isDetached)
+                        child.transform.SetParent(null, worldPositionStays: true);
+
+                    child.NotifyNetworkSpawn();
+                }
+                else
+                {
+                    // Can't match — skip data
+                    reader.Skip(childDataLen);
+                }
+            }
+
+            // Populate _originalChildren if registering new children
+            if (!existingOnly && origChildren.Count > 0)
+                _originalChildren[rootNetworkId] = origChildren;
         }
 
         private void RequestSnapshot()
@@ -2285,11 +2773,11 @@ namespace EOSNative.Net
             var localPuid = EOSManager.Instance?.LocalProductUserId;
             if (localPuid == null) return;
 
-            // Collect orphaned objects first (can't modify _objects during iteration)
+            // Collect orphaned root objects only — Despawn/TransferAuthority cascades handle children
             var orphans = new List<NetworkObject>();
             foreach (var obj in _objects.Values)
             {
-                if (obj.OwnerId == disconnectedPeer)
+                if (obj.OwnerId == disconnectedPeer && obj.IsRootNetworkObject)
                     orphans.Add(obj);
             }
 
@@ -2304,10 +2792,19 @@ namespace EOSNative.Net
                     continue;
                 }
 
-                // Transfer ownership to new host
+                // Transfer ownership to new host (cascades to children)
                 var oldOwner = obj.OwnerId;
                 obj.OwnerId = localPuid;
                 obj.NotifyOwnerChanged(oldOwner, localPuid);
+
+                // Cascade to children
+                var children = GetRegisteredChildren(obj.NetworkId);
+                for (int c = 0; c < children.Count; c++)
+                {
+                    var childOld = children[c].OwnerId;
+                    children[c].OwnerId = localPuid;
+                    children[c].NotifyOwnerChanged(childOld, localPuid);
+                }
 
                 // Broadcast authority change
                 var writer = NetWriterPool.Get();
@@ -2317,7 +2814,7 @@ namespace EOSNative.Net
                 NetWriterPool.Return(writer);
 
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                    $"Claimed orphaned object {obj.NetworkId} from {disconnectedPeer}");
+                    $"Claimed orphaned object {obj.NetworkId} (+ {children.Count} children) from {disconnectedPeer}");
             }
         }
 
@@ -2642,6 +3139,21 @@ namespace EOSNative.Net
             }
         }
 
+        /// <summary>
+        /// Get all registered child NetworkObjects belonging to a root parent.
+        /// Populates _childrenBuffer (cleared first). Returns the buffer for convenience.
+        /// </summary>
+        private List<NetworkObject> GetRegisteredChildren(uint parentNetworkId)
+        {
+            _childrenBuffer.Clear();
+            foreach (var obj in _objects.Values)
+            {
+                if (obj != null && obj.ParentNetworkId == parentNetworkId)
+                    _childrenBuffer.Add(obj);
+            }
+            return _childrenBuffer;
+        }
+
         /// <summary>FNV-1a hash of a string. Used for method name hashing in RPCs.</summary>
         public static uint FnvHash(string str)
         {
@@ -2666,6 +3178,38 @@ namespace EOSNative.Net
         }
 
         /// <summary>
+        /// Register a NetworkObject hierarchy (root + children) created outside of Spawn().
+        /// Discovers all child NetworkObjects via GetComponentsInChildren and assigns NetworkIds.
+        /// </summary>
+        public void RegisterExistingHierarchy(NetworkObject root, uint rootNetworkId)
+        {
+            root.NetworkId = rootNetworkId;
+            root.ParentNetworkId = 0;
+            root.IsRegistered = true;
+            _objects[rootNetworkId] = root;
+            root.NotifyNetworkSpawn();
+
+            var allNetObjs = root.GetComponentsInChildren<NetworkObject>(true);
+            var origChildren = new List<(uint, byte)>();
+            for (int i = 1; i < allNetObjs.Length; i++)
+            {
+                var child = allNetObjs[i];
+                uint childId = GenerateNetworkId();
+                child.NetworkId = childId;
+                child.PrefabId = root.PrefabId;
+                child.OwnerId = root.OwnerId;
+                child.ParentNetworkId = rootNetworkId;
+                child.OriginalParentNetworkId = rootNetworkId;
+                child.IsRegistered = true;
+                _objects[childId] = child;
+                origChildren.Add((childId, (byte)i));
+                child.NotifyNetworkSpawn();
+            }
+            if (origChildren.Count > 0)
+                _originalChildren[rootNetworkId] = origChildren;
+        }
+
+        /// <summary>
         /// Find all NetworkObjects already in the scene and register them.
         /// Ownerless objects are automatically assigned to the current host.
         /// Called automatically when host status changes. Can also be called manually after scene load.
@@ -2676,27 +3220,34 @@ namespace EOSNative.Net
             if (localPuid == null) return;
 
             var sceneObjects = FindObjectsByType<NetworkObject>(FindObjectsSortMode.None);
+
+            // Two-pass: register roots first, then children
+            // Pass 1: Roots (objects whose parent transform has no NetworkObject above them)
             foreach (var obj in sceneObjects)
             {
                 if (obj.IsRegistered) continue;
 
-                // Generate a deterministic NetworkId from scene hierarchy path
-                uint sceneNetId = 0xFFFF0000u | (FnvHash(GetHierarchyPath(obj.transform)) & 0xFFFFu);
+                // Check if any ancestor has a NetworkObject (would make this a child)
+                bool isChild = false;
+                var parentTransform = obj.transform.parent;
+                while (parentTransform != null)
+                {
+                    if (parentTransform.GetComponent<NetworkObject>() != null) { isChild = true; break; }
+                    parentTransform = parentTransform.parent;
+                }
+                if (isChild) continue; // handled in pass 2
 
-                // Avoid collisions with existing objects
-                while (_objects.ContainsKey(sceneNetId))
-                    sceneNetId++;
+                uint sceneNetId = 0xFFFF0000u | (FnvHash(GetHierarchyPath(obj.transform)) & 0xFFFFu);
+                while (_objects.ContainsKey(sceneNetId)) sceneNetId++;
 
                 obj.NetworkId = sceneNetId;
+                obj.ParentNetworkId = 0;
                 obj.IsRegistered = true;
                 _objects[sceneNetId] = obj;
 
-                // Auto-assign ownerless scene objects to host
                 if (obj.OwnerId == null && IsHost)
                 {
                     obj.OwnerId = localPuid;
-
-                    // Broadcast ownership to peers
                     var peers = EOSP2PManager.Instance?.Peers;
                     if (peers != null && peers.Count > 0)
                     {
@@ -2706,12 +3257,57 @@ namespace EOSNative.Net
                         Router.SendToAll(MSG_AUTHORITY, writer, PacketReliability.ReliableOrdered, 1);
                         NetWriterPool.Return(writer);
                     }
-
-                    EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                        $"Scene object '{obj.name}' ({sceneNetId}) auto-assigned to host");
                 }
 
                 obj.NotifyNetworkSpawn();
+            }
+
+            // Pass 2: Children (objects with a NetworkObject ancestor)
+            foreach (var obj in sceneObjects)
+            {
+                if (obj.IsRegistered) continue;
+
+                // Find the nearest ancestor NetworkObject (the root)
+                NetworkObject rootObj = null;
+                var parentTransform = obj.transform.parent;
+                while (parentTransform != null)
+                {
+                    var parentNetObj = parentTransform.GetComponent<NetworkObject>();
+                    if (parentNetObj != null && parentNetObj.IsRegistered) { rootObj = parentNetObj; break; }
+                    parentTransform = parentTransform.parent;
+                }
+
+                // Walk up to the actual root (in case of multi-level nesting)
+                while (rootObj != null && rootObj.ParentNetworkId != 0 && _objects.TryGetValue(rootObj.ParentNetworkId, out var grandparent))
+                    rootObj = grandparent;
+
+                uint sceneNetId = 0xFFFF0000u | (FnvHash(GetHierarchyPath(obj.transform)) & 0xFFFFu);
+                while (_objects.ContainsKey(sceneNetId)) sceneNetId++;
+
+                uint rootNetId = rootObj?.NetworkId ?? 0;
+                obj.NetworkId = sceneNetId;
+                obj.ParentNetworkId = rootNetId;
+                obj.OriginalParentNetworkId = rootNetId;
+                obj.OwnerId = rootObj?.OwnerId;
+                obj.IsRegistered = true;
+                _objects[sceneNetId] = obj;
+
+                // Track in _originalChildren for the root
+                if (rootNetId != 0)
+                {
+                    if (!_originalChildren.TryGetValue(rootNetId, out var origList))
+                    {
+                        origList = new List<(uint, byte)>();
+                        _originalChildren[rootNetId] = origList;
+                    }
+                    // For scene objects, localIndex is approximate (scene hierarchy order)
+                    origList.Add((sceneNetId, (byte)origList.Count));
+                }
+
+                obj.NotifyNetworkSpawn();
+
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                    $"Scene child '{obj.name}' ({sceneNetId}) registered under root {obj.ParentNetworkId}");
             }
         }
 

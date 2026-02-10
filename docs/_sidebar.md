@@ -13,6 +13,7 @@
 
 * **Networking**
   * [Networking Overview](networking.md)
+  * [Nested Objects & Reparenting](nested-objects.md)
   * [P2P Transport](p2p-transport.md)
   * [Typed RPCs ([NetRpc])](rpc-system.md)
   * [Connection Statistics](connection-stats.md)
