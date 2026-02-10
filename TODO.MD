@@ -184,7 +184,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Layer 2 RPCs work (E=color, Q=shockwave, T=chat, R=effect)
 
 **Automated Unit Tests:**
-- [ ] All ~140 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
+- [x] All 295 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
 
 **UI — F1 OnGUI Overlay (EOSNativeStatusUI):**
 - [ ] F1 toggle opens/closes overlay
@@ -293,7 +293,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] [NetRpc] IL post-processor with Mono.Cecil (typed RPCs, auto-serialize params, compile-time hash)
 - [x] DemoBallBehaviour — Layer 2 demo with SyncVars (Score, DisplayName, BallColor) and [NetRpc] methods on runtime-created balls
 - [x] Fix RegisterExisting() to call NotifyNetworkSpawn() (RPCs and OnNetworkSpawn now fire for objects registered outside Spawn())
-- [x] Automated unit tests — 9 test files (157 tests) for NetWriter/Reader, FnvHash, NetSerializers, SyncVar, SyncList, SyncDictionary, PacketFragmenter, NetworkId, Compression
+- [x] Automated unit tests — 17 test files (295 tests) for NetWriter/Reader, FnvHash, NetSerializers, SyncVar, SyncList, SyncDictionary, PacketFragmenter, NetworkId, Compression, LobbyOptions, MessageRouter, NetworkObjectHierarchy, NetworkPrefabTable, RegisterExisting, NetworkManagerCore, SpawnDespawn
 - [x] Fix INetSerializable struct boxing bug in NetSerializers.Read (Deserialize mutated boxed copy, not original)
 - [x] Fix Input System compatibility in P2PDemoManager (EOS_HAS_INPUT_SYSTEM guard for E/Q/T/R keys)
 - [x] Add InternalsVisibleTo for test assembly (AssemblyInfo.cs)
