@@ -260,6 +260,14 @@ namespace EOSNative.Net
 
         #region Prefab Registry
 
+        [SerializeField] private NetworkPrefabTable _prefabTable;
+
+        /// <summary>
+        /// Optional ScriptableObject prefab table. Assign in Inspector to auto-register prefabs on startup.
+        /// Index in the table = PrefabId. Table entries merge with runtime RegisterPrefab() calls.
+        /// </summary>
+        public NetworkPrefabTable PrefabTable { get => _prefabTable; set => _prefabTable = value; }
+
         [SerializeField] private List<GameObject> _prefabs = new();
 
         /// <summary>Register a prefab at runtime. The prefab must have a NetworkObject component.</summary>
@@ -1112,6 +1120,17 @@ namespace EOSNative.Net
 
         private void OnEnable()
         {
+            // Auto-register prefabs from table (if assigned)
+            if (_prefabTable != null)
+            {
+                for (int i = 0; i < _prefabTable.Count; i++)
+                {
+                    var prefab = _prefabTable.GetPrefab(i);
+                    if (prefab != null)
+                        RegisterPrefab(prefab, (ushort)i);
+                }
+            }
+
             if (!OfflineMode)
             {
                 SubscribeRouter();

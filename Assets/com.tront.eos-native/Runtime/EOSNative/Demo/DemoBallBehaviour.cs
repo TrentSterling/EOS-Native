@@ -6,8 +6,8 @@ namespace EOSNative.Demo
 {
     /// <summary>
     /// Layer 2 networking component for the ball demo.
-    /// Demonstrates SyncVars and [NetRpc] typed RPCs on a runtime-created object
-    /// registered via RegisterExisting() (no prefabs).
+    /// Demonstrates SyncVars and [NetRpc] typed RPCs on a prefab-based object
+    /// registered via RegisterExisting() with deterministic IDs.
     ///
     /// SyncVars: Score, DisplayName, BallColor
     /// RPCs: ApplyImpulse, ChangeColor, ChatBubble, PlayEffect, RequestScorePoint
@@ -171,6 +171,20 @@ namespace EOSNative.Demo
                 };
                 float chatWidth = Mathf.Max(100f, _chatMessage.Length * 8f);
                 GUI.Label(new Rect(x - chatWidth / 2f, y - 50f, chatWidth, 24f), _chatMessage, chatStyle);
+            }
+
+            // Armed indicator (weapon held)
+            var weapon = GetComponentInChildren<DemoWeapon>();
+            if (weapon != null)
+            {
+                var armedStyle = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 12,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = new Color(1f, 0.6f, 0f) }
+                };
+                GUI.Label(new Rect(x - 30f, y + 18f, 60f, 20f), "[ARMED]", armedStyle);
             }
 
             // Effect indicator

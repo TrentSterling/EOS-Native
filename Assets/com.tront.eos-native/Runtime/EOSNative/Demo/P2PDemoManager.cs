@@ -15,9 +15,10 @@ using UnityEngine.InputSystem;
 namespace EOSNative.Demo
 {
     /// <summary>
-    /// P2P Ball Demo scene manager.
-    /// Generates ground + crates at runtime, spawns local/remote balls,
+    /// P2P Ball Demo manager.
+    /// Spawns local/remote balls from prefabs, manages weapons via NetworkManager.Spawn(),
     /// broadcasts positions via EOSP2PManager, routes incoming packets.
+    /// Place in scene with _ballPrefab and _prefabTable assigned in Inspector.
     /// </summary>
     public class P2PDemoManager : MonoBehaviour
     {
@@ -60,6 +61,9 @@ namespace EOSNative.Demo
 
         #region Fields
 
+        [SerializeField] private GameObject _ballPrefab;
+        [SerializeField] private NetworkPrefabTable _prefabTable;
+
         private P2PPlayerBall _localBall;
         private P2PSpringSync _localSync;
         private DemoBallBehaviour _localBehaviour;
@@ -68,9 +72,13 @@ namespace EOSNative.Demo
         private readonly Dictionary<string, P2PSpringSync> _remoteSyncs = new();
         private readonly Dictionary<string, DemoBallBehaviour> _remoteBehaviours = new();
         private readonly NetWriter _writer = new();
-        private bool _sceneGenerated;
         private bool _localSpawned;
         private int _colorIndex;
+
+        // Weapons (reparenting demo)
+        private const ushort WEAPON_PREFAB_ID = 2;
+        private bool _weaponsSpawned;
+        private NetworkObject _heldWeapon;
 
         // Mobile controls
         private Canvas _mobileCanvas;
@@ -92,7 +100,7 @@ namespace EOSNative.Demo
 
         private void Start()
         {
-            GenerateScene();
+            InitializePrefabs();
             CreateMobileControls();
 
             // If already in a lobby when demo starts, spawn immediately
@@ -154,124 +162,22 @@ namespace EOSNative.Demo
                 MSG_POSITION, _writer, PacketReliability.UnreliableUnordered, CHANNEL_POSITION);
         }
 
-        #region Scene Generation
+        #region Initialization
 
-        private void GenerateScene()
+        private void InitializePrefabs()
         {
-            if (_sceneGenerated) return;
-            _sceneGenerated = true;
-
-            // Ground plane
-            var ground = CreatePrimitiveSafe(PrimitiveType.Cube);
-            ground.name = "Ground";
-            ground.transform.position = new Vector3(0f, -0.5f, 0f);
-            ground.transform.localScale = new Vector3(30f, 1f, 30f);
-            ground.GetComponent<Renderer>().material.color = new Color(0.3f, 0.4f, 0.3f);
-            TryAddCollider(ground, PrimitiveType.Cube);
-
-            // Crate obstacles
-            var cratePositions = new Vector3[]
+            // Register all prefabs from the table with NetworkManager
+            if (_prefabTable != null)
             {
-                new(3f, 0.5f, 3f),
-                new(-4f, 0.5f, 2f),
-                new(5f, 0.5f, -4f),
-                new(-3f, 0.5f, -5f),
-                new(0f, 0.5f, 6f),
-                new(-6f, 0.5f, -1f),
-                new(7f, 0.5f, 1f),
-                new(1f, 0.5f, -7f),
-            };
-
-            foreach (var pos in cratePositions)
-            {
-                var crate = CreatePrimitiveSafe(PrimitiveType.Cube);
-                crate.name = "Crate";
-                crate.transform.position = pos;
-                crate.transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
-                crate.GetComponent<Renderer>().material.color = new Color(0.6f, 0.45f, 0.25f);
-
-                TryAddCollider(crate, PrimitiveType.Cube);
-                TryAddRigidbody(crate, 3f);
-            }
-
-            // Wall borders
-            CreateWall("WallN", new Vector3(0f, 1f, 15f), new Vector3(32f, 2f, 1f));
-            CreateWall("WallS", new Vector3(0f, 1f, -15f), new Vector3(32f, 2f, 1f));
-            CreateWall("WallE", new Vector3(15f, 1f, 0f), new Vector3(1f, 2f, 32f));
-            CreateWall("WallW", new Vector3(-15f, 1f, 0f), new Vector3(1f, 2f, 32f));
-
-            // Camera
-            var camGo = Camera.main != null ? Camera.main.gameObject : new GameObject("DemoCamera");
-            if (camGo.GetComponent<Camera>() == null) camGo.AddComponent<Camera>();
-            camGo.transform.position = new Vector3(0f, 10f, -5f);
-            if (camGo.GetComponent<P2PDemoCamera>() == null) camGo.AddComponent<P2PDemoCamera>();
-
-            // Light
-            if (FindAnyObjectByType<Light>() == null)
-            {
-                var lightGo = new GameObject("DirectionalLight");
-                var light = lightGo.AddComponent<Light>();
-                light.type = LightType.Directional;
-                light.intensity = 1f;
-                lightGo.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
-            }
-        }
-
-        private void CreateWall(string name, Vector3 pos, Vector3 scale)
-        {
-            var wall = CreatePrimitiveSafe(PrimitiveType.Cube);
-            wall.name = name;
-            wall.transform.position = pos;
-            wall.transform.localScale = scale;
-            wall.GetComponent<Renderer>().material.color = new Color(0.5f, 0.5f, 0.5f);
-            TryAddCollider(wall, PrimitiveType.Cube);
-        }
-
-        /// <summary>
-        /// Creates a primitive with only MeshFilter + MeshRenderer (no auto-collider).
-        /// On Android without 3D Physics, CreatePrimitive fails because BoxCollider/SphereCollider
-        /// classes get stripped. This avoids that by removing the auto-added collider immediately.
-        /// </summary>
-        private static GameObject CreatePrimitiveSafe(PrimitiveType type)
-        {
-            var go = GameObject.CreatePrimitive(type);
-            // Immediately destroy the auto-added collider — it may cause errors on stripped builds
-            var col = go.GetComponent<Collider>();
-            if (col != null) DestroyImmediate(col);
-            return go;
-        }
-
-        /// <summary>Try to add a collider. Silently fails on platforms where 3D Physics is stripped.</summary>
-        private static void TryAddCollider(GameObject go, PrimitiveType type)
-        {
-            try
-            {
-                switch (type)
+                var nm = NetworkManager.Instance;
+                nm.PrefabTable = _prefabTable;
+                for (int i = 0; i < _prefabTable.Count; i++)
                 {
-                    case PrimitiveType.Sphere:
-                        go.AddComponent<SphereCollider>();
-                        break;
-                    case PrimitiveType.Capsule:
-                        go.AddComponent<CapsuleCollider>();
-                        break;
-                    default:
-                        go.AddComponent<BoxCollider>();
-                        break;
+                    var prefab = _prefabTable.GetPrefab(i);
+                    if (prefab != null)
+                        nm.RegisterPrefab(prefab, (ushort)i);
                 }
             }
-            catch { /* 3D Physics stripped — colliders unavailable */ }
-        }
-
-        /// <summary>Try to add a Rigidbody. Silently fails on platforms where 3D Physics is stripped.</summary>
-        private static Rigidbody TryAddRigidbody(GameObject go, float mass = 1f)
-        {
-            try
-            {
-                var rb = go.AddComponent<Rigidbody>();
-                rb.mass = mass;
-                return rb;
-            }
-            catch { return null; }
         }
 
         private void CreateMobileControls()
@@ -425,28 +331,16 @@ namespace EOSNative.Demo
 
         private GameObject CreateBall(string name, bool isLocal, ProductUserId ownerPuid = null)
         {
-            var go = CreatePrimitiveSafe(PrimitiveType.Sphere);
+            var go = Instantiate(_ballPrefab);
             go.name = name;
             go.transform.position = new Vector3(0f, 1f, 0f);
 
-            TryAddCollider(go, PrimitiveType.Sphere);
-            var rb = go.GetComponent<Rigidbody>();
-            if (rb == null) rb = TryAddRigidbody(go, 1f);
-            if (rb != null) rb.angularDamping = 0.5f;
+            go.GetComponent<P2PPlayerBall>().IsLocal = isLocal;
+            go.GetComponent<P2PSpringSync>().IsLocal = isLocal;
 
-            var playerBall = go.AddComponent<P2PPlayerBall>();
-            playerBall.IsLocal = isLocal;
-
-            var sync = go.AddComponent<P2PSpringSync>();
-            sync.IsLocal = isLocal;
-
-            // Layer 2: Add NetworkObject + DemoBallBehaviour for SyncVar/RPC demo
-            var netObj = go.AddComponent<NetworkObject>();
+            var netObj = go.GetComponent<NetworkObject>();
             if (ownerPuid != null)
                 netObj.OwnerId = ownerPuid;
-            netObj.DestroyWithOwner = true;
-
-            go.AddComponent<DemoBallBehaviour>();
 
             // Generate deterministic NetworkId from PUID
             if (ownerPuid != null)
@@ -487,6 +381,9 @@ namespace EOSNative.Demo
                 _localBehaviour = null;
                 _localSpawned = false;
             }
+
+            _heldWeapon = null;
+            _weaponsSpawned = false;
         }
 
         #endregion
@@ -508,6 +405,7 @@ namespace EOSNative.Demo
         private void OnPeerDisconnected(ProductUserId peer)
         {
             DestroyRemoteBall(peer.ToString());
+            _heldWeapon = null;
         }
 
         #endregion
@@ -553,6 +451,13 @@ namespace EOSNative.Demo
             if (_localBall != null && _joystickHandler != null)
                 _localBall.MobileInput = _joystickHandler.Input;
 
+            // Host spawns weapons once local ball exists (IsHost is true even when alone)
+            if (!_weaponsSpawned && _localSpawned && NetworkManager.Instance.IsHost)
+            {
+                _weaponsSpawned = true;
+                SpawnWeapons();
+            }
+
             if (_localBall == null || _localBehaviour == null) return;
 
 #if EOS_HAS_INPUT_SYSTEM
@@ -563,11 +468,15 @@ namespace EOSNative.Demo
             bool qDown = keyboard.qKey.wasPressedThisFrame;
             bool tDown = keyboard.tKey.wasPressedThisFrame;
             bool rDown = keyboard.rKey.wasPressedThisFrame;
+            bool fDown = keyboard.fKey.wasPressedThisFrame;
+            bool gDown = keyboard.gKey.wasPressedThisFrame;
 #else
             bool eDown = Input.GetKeyDown(KeyCode.E);
             bool qDown = Input.GetKeyDown(KeyCode.Q);
             bool tDown = Input.GetKeyDown(KeyCode.T);
             bool rDown = Input.GetKeyDown(KeyCode.R);
+            bool fDown = Input.GetKeyDown(KeyCode.F);
+            bool gDown = Input.GetKeyDown(KeyCode.G);
 #endif
 
             // E: Cycle color
@@ -603,6 +512,77 @@ namespace EOSNative.Demo
             {
                 _localBehaviour.PlayEffect((byte)UnityEngine.Random.Range(0, 3));
             }
+
+            // F: Pickup / Drop weapon
+            if (fDown)
+            {
+                if (_heldWeapon != null)
+                {
+                    _heldWeapon.GetComponent<DemoWeapon>().Drop();
+                    _heldWeapon = null;
+                }
+                else
+                {
+                    var nearest = FindNearestWeapon(2f);
+                    if (nearest != null)
+                    {
+                        var localNetObj = _localBall.GetComponent<NetworkObject>();
+                        nearest.GetComponent<DemoWeapon>().Pickup(localNetObj, _localBehaviour.DisplayName.Value);
+                        _heldWeapon = nearest;
+                    }
+                }
+            }
+
+            // G: Throw weapon
+            if (gDown && _heldWeapon != null)
+            {
+                var rb = _localBall.GetComponent<Rigidbody>();
+                var direction = rb != null ? rb.linearVelocity.normalized : Vector3.forward;
+                if (direction.sqrMagnitude < 0.01f) direction = Vector3.forward;
+                _heldWeapon.GetComponent<DemoWeapon>().Throw(direction, 8f);
+                _heldWeapon = null;
+            }
+        }
+
+        #endregion
+
+        #region Weapons
+
+        private void SpawnWeapons()
+        {
+            var positions = new[]
+            {
+                new Vector3(-3f, 0.5f, 0f),
+                new Vector3(3f, 0.5f, 0f),
+                new Vector3(0f, 0.5f, 3f),
+            };
+            foreach (var pos in positions)
+            {
+                NetworkManager.Instance.Spawn(WEAPON_PREFAB_ID, pos, Quaternion.identity);
+            }
+            EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", $"Host spawned {positions.Length} weapons");
+        }
+
+        private NetworkObject FindNearestWeapon(float maxDist)
+        {
+            NetworkObject best = null;
+            float bestDist = maxDist;
+            var ballPos = _localBall.transform.position;
+
+            foreach (var kvp in NetworkManager.Instance.Objects)
+            {
+                var weapon = kvp.Value.GetComponent<DemoWeapon>();
+                if (weapon == null || weapon.IsHeld) continue;
+
+                float dist = Vector3.Distance(ballPos, kvp.Value.transform.position);
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    best = kvp.Value;
+                }
+            }
+
+            return best;
         }
 
         #endregion
@@ -620,7 +600,7 @@ namespace EOSNative.Demo
             float y = 10f;
             GUI.Label(new Rect(10, y, 500, 25), "P2P Ball Demo (Layer 1 + Layer 2)", style);
             y += 20f;
-            GUI.Label(new Rect(10, y, 500, 25), "WASD: Move | Space: Jump | E: Color | Q: Shockwave | T: Chat | R: Effect", style);
+            GUI.Label(new Rect(10, y, 600, 25), "WASD: Move | Space: Jump | E: Color | Q: Shockwave | T: Chat | R: Effect | F: Pickup/Drop | G: Throw", style);
             y += 20f;
             GUI.Label(new Rect(10, y, 500, 25), "F1: EOS Overlay", style);
             y += 20f;

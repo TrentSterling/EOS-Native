@@ -58,6 +58,9 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] PlayerSpawner — auto-spawn player prefab on peer connect, despawn on lobby leave, spawn points, events (v2.32.0, community request — Ducky)
 - [x] Nested NetworkObjects — parent-child hierarchy support (v2.33.0, community request — Ducky)
 - [x] Runtime reparenting — `SetNetworkParent()`/`DetachFromNetworkParent()` for dynamic hierarchy changes (attach weapons, pick up objects, detach limbs) (v2.34.0, community request — Ducky)
+- [x] Weapon pickup/drop demo — DemoWeapon with F/G keys, tests reparenting, ownership transfer, late-join snapshots (v2.35.0, community request — Ducky)
+- [x] Network Prefab Table — `NetworkPrefabTable` ScriptableObject (drag & drop prefab registry, index = PrefabId), auto-register in NetworkManager.OnEnable. Demo weapons now use proper `Spawn()` flow instead of `RegisterExisting()` (v2.36.0, community request — Ducky)
+- [x] Concrete P2P demo scene — Pre-built scene with ground, walls, crates, camera, light. PlayerBall + Weapon + Crate prefabs with materials. P2PDemoManager uses `Instantiate(_ballPrefab)` instead of `CreatePrimitiveSafe`. Removed all runtime scene generation (v2.36.0)
 - [ ] InstanceFinder — static accessor for NetworkManager, TimeManager, etc. (community request — Ducky)
 - [ ] SimulationBehaviour — base class for singleton network behaviours not on a NetworkObject (community request — Ducky)
 

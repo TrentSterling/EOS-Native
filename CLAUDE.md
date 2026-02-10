@@ -177,6 +177,18 @@ The Awake method also guards against duplicate DontDestroyOnLoad: `if (transform
 
 **Find-only singletons (no auto-create):** EOSTournamentManager, EOSClanManager, EOSGlobalChatManager, EOSReplayHighlights, EOSReplayVoicePlayer, EOSReplayVoiceRecorder.
 
+## Network Prefab Table
+
+`NetworkPrefabTable` is a ScriptableObject for registering spawnable prefabs. Index in the list = PrefabId used by `NetworkManager.Spawn()`.
+
+**Setup:** Right-click → Create → EOS Native → Network Prefab Table. Drag prefabs into the list. Assign to `NetworkManager.PrefabTable` in Inspector.
+
+**Auto-registration:** When `NetworkManager.OnEnable()` fires, all prefabs in the table are registered via `RegisterPrefab(prefab, index)` before router subscription. Table entries merge with runtime `RegisterPrefab()` calls — table takes priority for overlapping IDs.
+
+**Runtime API:** `NetworkPrefabTable.AddPrefab(go)` appends, `RemovePrefabAt(index)` removes. `OnValidate()` warns if entries lack `NetworkObject` components.
+
+**Backward compat:** `RegisterPrefab()`, `RegisterExisting()`, and the serialized `_prefabs` list on NetworkManager all still work. The table is optional.
+
 ## Documentation Site
 
 Full docsify documentation at `docs/` folder (39 files). Live at **https://tront.xyz/EOS-Native/** (GitHub Pages, `/docs` on `main` branch).
