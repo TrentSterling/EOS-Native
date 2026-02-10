@@ -10,6 +10,7 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 #if EOS_HAS_INPUT_SYSTEM
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.UI;
 #endif
 
 namespace EOSNative.Demo
@@ -187,7 +188,11 @@ namespace EOSNative.Demo
             {
                 var esGo = new GameObject("EventSystem");
                 esGo.AddComponent<EventSystem>();
+#if EOS_HAS_INPUT_SYSTEM
+                esGo.AddComponent<InputSystemUIInputModule>();
+#else
                 esGo.AddComponent<StandaloneInputModule>();
+#endif
             }
 
             // Canvas
