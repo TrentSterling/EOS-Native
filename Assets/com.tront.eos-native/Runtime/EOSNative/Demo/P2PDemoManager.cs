@@ -102,6 +102,7 @@ namespace EOSNative.Demo
         private void Start()
         {
             InitializePrefabs();
+            RegisterSceneWeapons();
             CreateMobileControls();
 
             // If already in a lobby when demo starts, spawn immediately
@@ -179,6 +180,25 @@ namespace EOSNative.Demo
                         nm.RegisterPrefab(prefab, (ushort)i);
                 }
             }
+        }
+
+        private void RegisterSceneWeapons()
+        {
+            // Scene-placed weapons need to be registered with NetworkManager
+            // so FindNearestWeapon (which searches Objects) can find them,
+            // and so SetNetworkParent/DetachFromNetworkParent work.
+            var weapons = FindObjectsByType<DemoWeapon>(FindObjectsSortMode.None);
+            for (int i = 0; i < weapons.Length; i++)
+            {
+                var netObj = weapons[i].GetComponent<NetworkObject>();
+                if (netObj != null && netObj.NetworkId == 0)
+                {
+                    uint id = 0xCC000000u | (uint)i;
+                    NetworkManager.Instance.RegisterExisting(netObj, id);
+                }
+            }
+            if (weapons.Length > 0)
+                EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", $"Registered {weapons.Length} scene weapons");
         }
 
         private void CreateMobileControls()
@@ -661,6 +681,72 @@ namespace EOSNative.Demo
             else
             {
                 GUI.Label(new Rect(10, y, 400, 25), "Join/create a lobby via F1 overlay to start", style);
+            }
+
+            // Weapon debug info (always shown)
+            if (_localBall != null)
+            {
+                y += 10f;
+                var debugStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 13,
+                    normal = { textColor = new Color(1f, 0.8f, 0.3f) }
+                };
+
+                int registeredWeapons = 0;
+                float nearestDist = float.MaxValue;
+                string nearestName = "none";
+                bool nearestHeld = false;
+                var ballPos = _localBall.transform.position;
+
+                foreach (var kvp in NetworkManager.Instance.Objects)
+                {
+                    var w = kvp.Value.GetComponent<DemoWeapon>();
+                    if (w == null) continue;
+                    registeredWeapons++;
+                    float d = Vector3.Distance(ballPos, kvp.Value.transform.position);
+                    if (d < nearestDist)
+                    {
+                        nearestDist = d;
+                        nearestName = kvp.Value.name;
+                        nearestHeld = w.IsHeld;
+                    }
+                }
+
+                string heldStr = _heldWeapon != null ? _heldWeapon.name : "none";
+                GUI.Label(new Rect(10, y, 600, 25),
+                    $"[Weapons] Registered: {registeredWeapons} | Held: {heldStr} | Nearest: {nearestName} ({nearestDist:F1}m, held={nearestHeld}) | Pickup range: 2m",
+                    debugStyle);
+                y += 18f;
+
+                // Draw pickup range indicator on nearest weapon
+                if (nearestDist < 5f && nearestDist < float.MaxValue && Camera.main != null)
+                {
+                    var rangeStyle = new GUIStyle(GUI.skin.label)
+                    {
+                        fontSize = 14,
+                        fontStyle = FontStyle.Bold,
+                        alignment = TextAnchor.MiddleCenter,
+                        normal = { textColor = nearestDist <= 2f ? Color.green : Color.red }
+                    };
+                    // Find nearest weapon transform for screen position
+                    foreach (var kvp in NetworkManager.Instance.Objects)
+                    {
+                        var w = kvp.Value.GetComponent<DemoWeapon>();
+                        if (w == null) continue;
+                        float d = Vector3.Distance(ballPos, kvp.Value.transform.position);
+                        if (Mathf.Abs(d - nearestDist) < 0.01f)
+                        {
+                            var sp = Camera.main.WorldToScreenPoint(kvp.Value.transform.position + Vector3.up * 1.2f);
+                            if (sp.z > 0)
+                            {
+                                string label = nearestDist <= 2f ? $"[F] PICKUP ({d:F1}m)" : $"({d:F1}m)";
+                                GUI.Label(new Rect(sp.x - 60, Screen.height - sp.y, 120, 25), label, rangeStyle);
+                            }
+                            break;
+                        }
+                    }
+                }
             }
         }
 
