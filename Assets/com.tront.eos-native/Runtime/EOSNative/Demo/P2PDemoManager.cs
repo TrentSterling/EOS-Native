@@ -555,6 +555,13 @@ namespace EOSNative.Demo
 
         private void SpawnWeapons()
         {
+            // Skip if weapons already exist in the scene (placed as scene objects)
+            if (FindAnyObjectByType<DemoWeapon>() != null)
+            {
+                EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", "Weapons already in scene, skipping spawn");
+                return;
+            }
+
             var positions = new[]
             {
                 new Vector3(-3f, 0.5f, 0f),
