@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Epic.OnlineServices;
 using Epic.OnlineServices.P2P;
+using EOSNative.Lobbies;
 using EOSNative.Logging;
 using EOSNative.P2P;
 using UnityEngine;
@@ -1139,6 +1140,12 @@ namespace EOSNative.Net
                 p2p.OnPeerConnected += OnPeerConnected;
                 p2p.OnPeerDisconnected += OnPeerDisconnected;
 
+                // Recompute host when lobby is joined (covers solo-in-lobby case where
+                // no peers connect and OnPeerConnected never fires)
+                var lobby = EOSLobbyManager.Instance;
+                if (lobby != null)
+                    lobby.OnLobbyJoined += OnLobbyJoinedRecomputeHost;
+
                 // Subscribe to interest enter/exit for dynamic spawn/despawn
                 var im = InterestManager.Instance;
                 if (im != null)
@@ -1160,6 +1167,10 @@ namespace EOSNative.Net
                 p2p.OnPeerConnected -= OnPeerConnected;
                 p2p.OnPeerDisconnected -= OnPeerDisconnected;
             }
+
+            var lobby = EOSLobbyManager.Instance;
+            if (lobby != null)
+                lobby.OnLobbyJoined -= OnLobbyJoinedRecomputeHost;
 
             var im = InterestManager.Instance;
             if (im != null)
@@ -1989,8 +2000,8 @@ namespace EOSNative.Net
         {
             if (obj == null || !obj.IsRegistered) return;
 
-            // Only owner or host can reparent
-            if (!obj.IsOwner && !IsHost) return;
+            // Only owner or host can reparent; unowned scene objects can be reparented by anyone
+            if (obj.OwnerId != null && !obj.IsOwner && !IsHost) return;
 
             // Validate: cannot attach to a child — only root objects can be parents
             if (newParent != null && newParent.IsChildNetworkObject)
@@ -2534,6 +2545,8 @@ namespace EOSNative.Net
         #endregion
 
         #region Host Election
+
+        private void OnLobbyJoinedRecomputeHost(LobbyData _) => RecomputeHost();
 
         private void RecomputeHost()
         {

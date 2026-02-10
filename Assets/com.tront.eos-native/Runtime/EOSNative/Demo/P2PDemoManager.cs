@@ -629,7 +629,7 @@ namespace EOSNative.Demo
                 }
 
                 // Scores
-                if (_localBehaviour != null)
+                if (_localBehaviour != null && _localBehaviour.Score != null)
                 {
                     GUI.Label(new Rect(10, y, 400, 25), $"Your Score: {_localBehaviour.Score.Value}", style);
                     y += 20f;

@@ -110,7 +110,7 @@ namespace EOSNative.Demo
 
         private void OnGUI()
         {
-            if (Camera.main == null) return;
+            if (Camera.main == null || DisplayName == null) return;
 
             Vector3 worldPos = transform.position + Vector3.up * 1.8f;
             Vector3 screenPos = Camera.main.WorldToScreenPoint(worldPos);
