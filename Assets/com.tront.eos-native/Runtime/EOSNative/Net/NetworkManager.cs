@@ -853,6 +853,22 @@ namespace EOSNative.Net
         }
 
         /// <summary>
+        /// Register guard flags for an RPC. Called by weaver-generated __RegisterNetRPCs() when
+        /// [HostOnly] or [OwnerOnly] attributes are present. Guards are checked at reception time.
+        /// </summary>
+        public void RegisterRPCGuard(NetworkObject target, byte componentIndex, uint methodHash, RPCGuard guard)
+        {
+            var key = new RPCKey { NetworkId = target.NetworkId, ComponentIndex = componentIndex, MethodHash = methodHash };
+            _rpcGuards[key] = guard;
+        }
+
+        /// <summary>Legacy overload without component index. Uses SELF_COMPONENT_INDEX.</summary>
+        public void RegisterRPCGuard(NetworkObject target, uint methodHash, RPCGuard guard)
+        {
+            RegisterRPCGuard(target, NetworkObject.SELF_COMPONENT_INDEX, methodHash, guard);
+        }
+
+        /// <summary>
         /// Send a validated RPC through the host with component scoping.
         /// Called by weaver for [NetRpc(Validated = true)].
         /// Client sends to host only. Host validates, then rebroadcasts to all.
@@ -934,6 +950,13 @@ namespace EOSNative.Net
         {
             if (target == null || !target.IsRegistered) return;
 
+            // Peer must always use the dedicated overload
+            if (targets == RPCTarget.Peer)
+            {
+                Debug.LogError("[NetworkManager] RPCTarget.Peer requires SendRPCWeavedToPeer — use the peer-targeted overload");
+                return;
+            }
+
             // Offline mode: always execute locally, never send remote
             if (OfflineMode)
             {
@@ -980,6 +1003,8 @@ namespace EOSNative.Net
                     executeLocal = !IsSpectator;
                     sendRemote = true;
                     break;
+                case RPCTarget.Peer:
+                    return; // unreachable — guarded above
             }
 
             if (executeLocal)
@@ -1029,16 +1054,17 @@ namespace EOSNative.Net
         }
 
         /// <summary>
-        /// Send a pre-serialized RPC to a specific peer. Called by weaver-generated code.
+        /// Send a pre-serialized RPC to a specific peer with component scoping.
+        /// Called by weaver-generated code for [NetRpc(RPCTarget.Peer)] methods.
         /// </summary>
-        public void SendRPCWeavedToPeer(NetworkObject target, uint methodHash, ProductUserId peer, byte[] argData)
+        public void SendRPCWeavedToPeer(NetworkObject target, byte componentIndex, uint methodHash, ProductUserId peer, byte[] argData)
         {
             if (target == null || !target.IsRegistered) return;
 
             // Offline mode: execute locally (no peers exist)
             if (OfflineMode)
             {
-                ExecuteRPCLocal(target.NetworkId, NetworkObject.SELF_COMPONENT_INDEX, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(target.NetworkId, componentIndex, methodHash, argData, argData.Length);
                 return;
             }
 
@@ -1047,17 +1073,23 @@ namespace EOSNative.Net
             var localPuid = EOSManager.Instance?.LocalProductUserId;
             if (localPuid != null && peer == localPuid)
             {
-                ExecuteRPCLocal(target.NetworkId, NetworkObject.SELF_COMPONENT_INDEX, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(target.NetworkId, componentIndex, methodHash, argData, argData.Length);
                 return;
             }
 
             var writer = NetWriterPool.Get();
             writer.WriteUInt32(target.NetworkId);
-            writer.WriteByte(NetworkObject.SELF_COMPONENT_INDEX);
+            writer.WriteByte(componentIndex);
             writer.WriteUInt32(methodHash);
             writer.WriteBytesRaw(argData, 0, argData.Length);
             Router.SendToPeer(MSG_RPC, writer, peer, PacketReliability.ReliableOrdered, 1);
             NetWriterPool.Return(writer);
+        }
+
+        /// <summary>Legacy overload without component index. Uses SELF_COMPONENT_INDEX.</summary>
+        public void SendRPCWeavedToPeer(NetworkObject target, uint methodHash, ProductUserId peer, byte[] argData)
+        {
+            SendRPCWeavedToPeer(target, NetworkObject.SELF_COMPONENT_INDEX, methodHash, peer, argData);
         }
 
         /// <summary>Unregister all RPCs for a NetworkObject.</summary>
@@ -1073,6 +1105,7 @@ namespace EOSNative.Net
             {
                 _rpcHandlers.Remove(key);
                 _rpcMethodNames.Remove(key);
+                _rpcGuards.Remove(key);
             }
         }
 
@@ -1117,6 +1150,7 @@ namespace EOSNative.Net
         private readonly List<NetworkObject> _dirtyObjects = new();
         private readonly Dictionary<RPCKey, Action<NetReader>> _rpcHandlers = new();
         private readonly Dictionary<RPCKey, string> _rpcMethodNames = new();
+        private readonly Dictionary<RPCKey, RPCGuard> _rpcGuards = new();
         private readonly List<RPCKey> _rpcKeysToRemove = new();
         private readonly Dictionary<ProductUserId, NetworkPlayerState> _playerStates = new();
         private readonly HashSet<ProductUserId> _spectators = new();
@@ -2543,6 +2577,23 @@ namespace EOSNative.Net
 
             if (handler != null)
             {
+                // Check per-RPC guard attributes ([HostOnly], [OwnerOnly])
+                if (_rpcGuards.TryGetValue(key, out var guard) && guard != RPCGuard.None)
+                {
+                    if ((guard & RPCGuard.HostOnly) != 0)
+                    {
+                        var hostPuid = GetHostPuid();
+                        if (hostPuid == null || !sender.Equals(hostPuid))
+                            return; // silently reject non-host sender
+                    }
+                    if ((guard & RPCGuard.OwnerOnly) != 0)
+                    {
+                        _objects.TryGetValue(networkId, out var guardTarget);
+                        if (guardTarget == null || guardTarget.OwnerId == null || !sender.Equals(guardTarget.OwnerId))
+                            return; // silently reject non-owner sender
+                    }
+                }
+
                 try
                 {
                     handler(reader);
@@ -3661,5 +3712,27 @@ namespace EOSNative.Net
 
         /// <summary>Send to all non-spectator peers (including self if not spectator).</summary>
         Players = 4,
+
+        /// <summary>
+        /// Send to a specific peer. The first parameter of the RPC method must be
+        /// <see cref="Epic.OnlineServices.ProductUserId"/> specifying the target peer.
+        /// That parameter is consumed by the dispatch stub and not serialized on the wire.
+        /// </summary>
+        Peer = 5,
+    }
+
+    /// <summary>
+    /// Flags that guard RPC execution at reception time.
+    /// Applied via <see cref="HostOnlyAttribute"/> or <see cref="OwnerOnlyAttribute"/> on [NetRpc] methods.
+    /// Multiple flags can be combined.
+    /// </summary>
+    [Flags]
+    public enum RPCGuard : byte
+    {
+        None = 0,
+        /// <summary>Only execute if the sender is the current host.</summary>
+        HostOnly = 1,
+        /// <summary>Only execute if the sender is the object's owner.</summary>
+        OwnerOnly = 2,
     }
 }

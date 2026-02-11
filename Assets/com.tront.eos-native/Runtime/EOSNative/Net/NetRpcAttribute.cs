@@ -39,4 +39,28 @@ namespace EOSNative.Net
             Target = target;
         }
     }
+
+    /// <summary>
+    /// Guard attribute: only execute this RPC if the sender is the current host.
+    /// Non-host RPCs are silently rejected at reception time.
+    /// Can be combined with any <see cref="RPCTarget"/>.
+    /// <example><code>
+    /// [NetRpc(RPCTarget.All), HostOnly]
+    /// public void StartRound(int roundNumber) { ... }
+    /// </code></example>
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Method)]
+    public class HostOnlyAttribute : Attribute { }
+
+    /// <summary>
+    /// Guard attribute: only execute this RPC if the sender is the object's owner.
+    /// Non-owner RPCs are silently rejected at reception time.
+    /// Can be combined with any <see cref="RPCTarget"/>.
+    /// <example><code>
+    /// [NetRpc(RPCTarget.All), OwnerOnly]
+    /// public void TakeDamage(float damage) { ... }
+    /// </code></example>
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Method)]
+    public class OwnerOnlyAttribute : Attribute { }
 }

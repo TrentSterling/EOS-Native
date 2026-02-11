@@ -185,7 +185,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Layer 2 RPCs work (E=color, Q=shockwave, T=chat, R=effect)
 
 **Automated Unit Tests:**
-- [x] All 578 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
+- [x] All 600 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
 
 **UI — F1 OnGUI Overlay (EOSNativeStatusUI):**
 - [ ] F1 toggle opens/closes overlay
@@ -343,3 +343,5 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Lifecycle hook tests — 22 tests for convenience props, spawn/despawn hooks, host/ownership changed callbacks, GiveOwnership/RemoveOwnership, multiple behaviour notification (v2.42.0)
 - [x] Spawn payload hooks — WriteSpawnData/ReadSpawnData on NetworkBehaviour, length-prefixed per-NB sections in spawn wire format, wired into spawn, snapshot, reserved objects, and child data paths. 19 new tests (v2.44.0)
 - [x] Tick/Peer lifecycle hooks — OnTick(uint), OnPeerConnected(ProductUserId), OnPeerDisconnected(ProductUserId) on NetworkBehaviour. NetworkManager subscribes TickSimulation.OnTick and dispatches to all spawned objects. Peer events dispatched in OnPeerConnected/OnPeerDisconnected (v2.44.0)
+- [x] TargetRpc (RPCTarget.Peer) — send RPC to a specific peer via `SendRPCWeavedToPeer(target, componentIndex, hash, peer, data)`. Early guard in SendRPCWeaved logs error if RPCTarget.Peer used without dedicated overload (v2.45.0)
+- [x] [HostOnly]/[OwnerOnly] guard attributes — `RPCGuard` flags enum, `RegisterRPCGuard()` per-RPC registration, receiver-side guard checking in HandleRPC, guard cleanup in UnregisterRPCs. 22 new tests (v2.45.0)
