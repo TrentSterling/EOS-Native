@@ -1,4 +1,6 @@
 using System;
+using Epic.OnlineServices;
+using Epic.OnlineServices.P2P;
 
 namespace EOSNative.Net
 {
@@ -33,6 +35,45 @@ namespace EOSNative.Net
         /// The IL weaver auto-discovers validation methods by convention — no nameof needed.
         /// </summary>
         public bool Validated { get; set; }
+
+        /// <summary>
+        /// If true, the RPC method body always executes locally on the caller in addition
+        /// to being sent to remote peers. Useful for RPCTarget.Others when you want the
+        /// caller to also run the logic without waiting for a round-trip.
+        /// <example><code>
+        /// [NetRpc(RPCTarget.Others, RunLocally = true)]
+        /// public void ApplyDamage(float amount) { Health.Value -= amount; }
+        /// // Caller runs ApplyDamage immediately, others receive it over the network
+        /// </code></example>
+        /// </summary>
+        public bool RunLocally { get; set; }
+
+        /// <summary>
+        /// If true, the object's owner is excluded from remote delivery.
+        /// Useful for effects the owner handles locally but wants to broadcast to observers.
+        /// <example><code>
+        /// [NetRpc(RPCTarget.All, ExcludeOwner = true)]
+        /// public void PlayHitReaction() { ... }
+        /// // All peers except the owner see the hit reaction
+        /// </code></example>
+        /// </summary>
+        public bool ExcludeOwner { get; set; }
+
+        /// <summary>
+        /// EOS P2P channel to send this RPC on. Default is 1 (reliable RPC channel).
+        /// Use channel 0 for unreliable position-like updates. Channels batch independently.
+        /// </summary>
+        public byte Channel { get; set; } = 1;
+
+        /// <summary>
+        /// Packet reliability for this RPC. Default is ReliableOrdered (2).
+        /// Use UnreliableUnordered (0) for position/rotation updates that can tolerate loss.
+        /// <example><code>
+        /// [NetRpc(RPCTarget.All, Channel = 0, Reliability = PacketReliability.UnreliableUnordered)]
+        /// public void SyncPosition(Vector3 pos) { ... }
+        /// </code></example>
+        /// </summary>
+        public PacketReliability Reliability { get; set; } = PacketReliability.ReliableOrdered;
 
         public NetRpcAttribute(RPCTarget target = RPCTarget.All)
         {

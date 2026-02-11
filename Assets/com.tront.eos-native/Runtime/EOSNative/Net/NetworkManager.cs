@@ -948,6 +948,18 @@ namespace EOSNative.Net
         /// </summary>
         public void SendRPCWeaved(NetworkObject target, byte componentIndex, uint methodHash, RPCTarget targets, byte[] argData)
         {
+            SendRPCWeaved(target, componentIndex, methodHash, targets, argData,
+                false, false, 1, PacketReliability.ReliableOrdered);
+        }
+
+        /// <summary>
+        /// Extended RPC dispatch with RunLocally, ExcludeOwner, Channel, and Reliability options.
+        /// Called by IL weaver when NetRpcAttribute has extended properties set.
+        /// </summary>
+        public void SendRPCWeaved(NetworkObject target, byte componentIndex, uint methodHash,
+            RPCTarget targets, byte[] argData,
+            bool runLocally, bool excludeOwner, byte channel, PacketReliability reliability)
+        {
             if (target == null || !target.IsRegistered) return;
 
             // Peer must always use the dedicated overload
@@ -1007,6 +1019,14 @@ namespace EOSNative.Net
                     return; // unreachable — guarded above
             }
 
+            // RunLocally: force local execution regardless of RPCTarget
+            if (runLocally)
+                executeLocal = true;
+
+            // ExcludeOwner: skip local execution if we're the owner
+            if (excludeOwner && target.IsOwner)
+                executeLocal = false;
+
             if (executeLocal)
                 ExecuteRPCLocal(target.NetworkId, componentIndex, methodHash, argData, argData.Length);
 
@@ -1022,22 +1042,28 @@ namespace EOSNative.Net
                 {
                     case RPCTarget.All:
                     case RPCTarget.Others:
-                        SendToInterestedPeers(MSG_RPC, writer, target, PacketReliability.ReliableOrdered, 1);
+                        if (excludeOwner && target.OwnerId != null)
+                            SendToInterestedPeersExcluding(MSG_RPC, writer, target, target.OwnerId, reliability, channel);
+                        else
+                            SendToInterestedPeers(MSG_RPC, writer, target, reliability, channel);
                         break;
                     case RPCTarget.Host:
                         if (!IsHost)
                         {
                             var hostPuid = GetHostPuid();
                             if (hostPuid != null)
-                                Router.SendToPeer(MSG_RPC, writer, hostPuid, PacketReliability.ReliableOrdered, 1);
+                                Router.SendToPeer(MSG_RPC, writer, hostPuid, reliability, channel);
                         }
                         break;
                     case RPCTarget.Owner:
                         if (!target.IsOwner && target.OwnerId != null)
-                            Router.SendToPeer(MSG_RPC, writer, target.OwnerId, PacketReliability.ReliableOrdered, 1);
+                            Router.SendToPeer(MSG_RPC, writer, target.OwnerId, reliability, channel);
                         break;
                     case RPCTarget.Players:
-                        SendToInterestedNonSpectators(MSG_RPC, writer, target);
+                        if (excludeOwner && target.OwnerId != null)
+                            SendToInterestedNonSpectatorsExcluding(MSG_RPC, writer, target, target.OwnerId, reliability, channel);
+                        else
+                            SendToInterestedNonSpectators(MSG_RPC, writer, target, reliability, channel);
                         break;
                 }
 
@@ -3458,12 +3484,18 @@ namespace EOSNative.Net
         /// <summary>Send a message to all non-spectator peers via Router.</summary>
         private void SendToNonSpectators(byte msgId, NetWriter writer)
         {
+            SendToNonSpectators(msgId, writer, PacketReliability.ReliableOrdered, 1);
+        }
+
+        private void SendToNonSpectators(byte msgId, NetWriter writer,
+            PacketReliability reliability, byte channel)
+        {
             var peers = EOSP2PManager.Instance?.Peers;
             if (peers == null) return;
             foreach (var peer in peers)
             {
                 if (!_spectators.Contains(peer))
-                    Router.SendToPeer(msgId, writer, peer, PacketReliability.ReliableOrdered, 1);
+                    Router.SendToPeer(msgId, writer, peer, reliability, channel);
             }
         }
 
@@ -3492,10 +3524,16 @@ namespace EOSNative.Net
         /// </summary>
         private void SendToInterestedNonSpectators(byte msgId, NetWriter writer, NetworkObject obj)
         {
+            SendToInterestedNonSpectators(msgId, writer, obj, PacketReliability.ReliableOrdered, 1);
+        }
+
+        private void SendToInterestedNonSpectators(byte msgId, NetWriter writer, NetworkObject obj,
+            PacketReliability reliability, byte channel)
+        {
             var im = InterestManagementEnabled ? InterestManager.Instance : null;
             if (im == null)
             {
-                SendToNonSpectators(msgId, writer);
+                SendToNonSpectators(msgId, writer, reliability, channel);
                 return;
             }
 
@@ -3503,7 +3541,61 @@ namespace EOSNative.Net
             foreach (var peer in _interestedPeersBuffer)
             {
                 if (!_spectators.Contains(peer))
-                    Router.SendToPeer(msgId, writer, peer, PacketReliability.ReliableOrdered, 1);
+                    Router.SendToPeer(msgId, writer, peer, reliability, channel);
+            }
+        }
+
+        /// <summary>
+        /// Send to interested peers, excluding a specific peer (for ExcludeOwner).
+        /// </summary>
+        private void SendToInterestedPeersExcluding(byte msgId, NetWriter writer, NetworkObject obj,
+            ProductUserId excludePuid, PacketReliability reliability, byte channel)
+        {
+            var im = InterestManagementEnabled ? InterestManager.Instance : null;
+            if (im == null)
+            {
+                var peers = EOSP2PManager.Instance?.Peers;
+                if (peers == null) return;
+                foreach (var peer in peers)
+                {
+                    if (peer != excludePuid)
+                        Router.SendToPeer(msgId, writer, peer, reliability, channel);
+                }
+                return;
+            }
+
+            im.GetInterestedPeers(obj, _interestedPeersBuffer);
+            foreach (var peer in _interestedPeersBuffer)
+            {
+                if (peer != excludePuid)
+                    Router.SendToPeer(msgId, writer, peer, reliability, channel);
+            }
+        }
+
+        /// <summary>
+        /// Send to interested non-spectator peers, excluding a specific peer.
+        /// </summary>
+        private void SendToInterestedNonSpectatorsExcluding(byte msgId, NetWriter writer, NetworkObject obj,
+            ProductUserId excludePuid, PacketReliability reliability, byte channel)
+        {
+            var im = InterestManagementEnabled ? InterestManager.Instance : null;
+            if (im == null)
+            {
+                var peers = EOSP2PManager.Instance?.Peers;
+                if (peers == null) return;
+                foreach (var peer in peers)
+                {
+                    if (!_spectators.Contains(peer) && peer != excludePuid)
+                        Router.SendToPeer(msgId, writer, peer, reliability, channel);
+                }
+                return;
+            }
+
+            im.GetInterestedPeers(obj, _interestedPeersBuffer);
+            foreach (var peer in _interestedPeersBuffer)
+            {
+                if (!_spectators.Contains(peer) && peer != excludePuid)
+                    Router.SendToPeer(msgId, writer, peer, reliability, channel);
             }
         }
 
