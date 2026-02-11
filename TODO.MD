@@ -185,7 +185,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Layer 2 RPCs work (E=color, Q=shockwave, T=chat, R=effect)
 
 **Automated Unit Tests:**
-- [x] All 649 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
+- [x] All 694 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
 
 **UI — F1 OnGUI Overlay (EOSNativeStatusUI):**
 - [ ] F1 toggle opens/closes overlay
@@ -347,3 +347,4 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] [HostOnly]/[OwnerOnly] guard attributes — `RPCGuard` flags enum, `RegisterRPCGuard()` per-RPC registration, receiver-side guard checking in HandleRPC, guard cleanup in UnregisterRPCs. 22 new tests (v2.45.0)
 - [x] RPC improvements — RunLocally, ExcludeOwner, Channel selection, Reliability on NetRpcAttribute. Extended SendRPCWeaved overload with all options. SendToInterestedPeersExcluding/SendToInterestedNonSpectatorsExcluding helpers. 22 new tests (v2.46.0)
 - [x] Packet compression and security tests — Deflate round-trip, decompression bomb defense, compressed single/batch dispatch, batch count limits, malformed batch handling, rate limiting, 27 new tests (v2.46.0)
+- [x] SyncTimer/SyncStopwatch utility sync types — SyncTimer (countdown with Start/Pause/Resume/Reset/Tick, OnExpired event) and SyncStopwatch (elapsed time with Start/Stop/Reset/Restart/Tick). Both implement ISyncVar, 5-byte wire format (float + running byte). Factory methods on both NetworkObject and NetworkBehaviour. 45 new tests (v2.47.0)

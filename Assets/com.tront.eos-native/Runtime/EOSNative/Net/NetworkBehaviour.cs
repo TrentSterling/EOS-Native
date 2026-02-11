@@ -138,6 +138,38 @@ namespace EOSNative.Net
             return syncSet;
         }
 
+        /// <summary>
+        /// Create and register a SyncTimer (countdown) scoped to this NetworkBehaviour.
+        /// Call in Awake() after base.Awake().
+        /// </summary>
+        protected SyncTimer SyncTimer(float initialDuration = 0f, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+        {
+            if (_syncVars.Count >= 32)
+                throw new InvalidOperationException(
+                    $"NetworkBehaviour '{GetType().Name}' on '{name}' has 32 SyncVars — max per behaviour.");
+
+            byte index = (byte)_syncVars.Count;
+            var timer = new SyncTimer(Net, initialDuration, index, writeAccess, MarkDirtyNB);
+            _syncVars.Add(timer);
+            return timer;
+        }
+
+        /// <summary>
+        /// Create and register a SyncStopwatch (elapsed time) scoped to this NetworkBehaviour.
+        /// Call in Awake() after base.Awake().
+        /// </summary>
+        protected SyncStopwatch SyncStopwatch(SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+        {
+            if (_syncVars.Count >= 32)
+                throw new InvalidOperationException(
+                    $"NetworkBehaviour '{GetType().Name}' on '{name}' has 32 SyncVars — max per behaviour.");
+
+            byte index = (byte)_syncVars.Count;
+            var stopwatch = new SyncStopwatch(Net, index, writeAccess, MarkDirtyNB);
+            _syncVars.Add(stopwatch);
+            return stopwatch;
+        }
+
         /// <summary>Called by SyncVar setters when a value changes on this behaviour.</summary>
         private void MarkDirtyNB()
         {

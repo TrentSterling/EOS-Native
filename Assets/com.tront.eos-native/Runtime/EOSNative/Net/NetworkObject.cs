@@ -205,6 +205,38 @@ namespace EOSNative.Net
         }
 
         /// <summary>
+        /// Create and register a SyncTimer (countdown) on this NetworkObject directly.
+        /// For SyncTimers scoped to a NetworkBehaviour, use <see cref="NetworkBehaviour.SyncTimer"/> instead.
+        /// </summary>
+        public SyncTimer SyncTimer(float initialDuration = 0f, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+        {
+            if (_syncVars.Count >= 32)
+                throw new InvalidOperationException(
+                    $"NetworkObject on '{name}' has 32 SyncVars — max supported.");
+
+            byte index = (byte)_syncVars.Count;
+            var timer = new SyncTimer(this, initialDuration, index, writeAccess);
+            _syncVars.Add(timer);
+            return timer;
+        }
+
+        /// <summary>
+        /// Create and register a SyncStopwatch (elapsed time) on this NetworkObject directly.
+        /// For SyncStopwatches scoped to a NetworkBehaviour, use <see cref="NetworkBehaviour.SyncStopwatch"/> instead.
+        /// </summary>
+        public SyncStopwatch SyncStopwatch(SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+        {
+            if (_syncVars.Count >= 32)
+                throw new InvalidOperationException(
+                    $"NetworkObject on '{name}' has 32 SyncVars — max supported.");
+
+            byte index = (byte)_syncVars.Count;
+            var stopwatch = new SyncStopwatch(this, index, writeAccess);
+            _syncVars.Add(stopwatch);
+            return stopwatch;
+        }
+
+        /// <summary>
         /// Returns the most permissive WriteAccess among all SyncVars on this object and its behaviours.
         /// Used by HandleStateUpdate to determine if a non-owner sender is valid.
         /// </summary>
