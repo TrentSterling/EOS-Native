@@ -207,6 +207,14 @@ namespace EOSNative.P2P
             };
             _connectionClosedNotifyId = P2P.AddNotifyPeerConnectionClosed(ref closedOptions, null, OnConnectionClosed);
 
+            // Increase packet queue to handle high-throughput streaming (4 MB in/out)
+            var queueOptions = new SetPacketQueueSizeOptions
+            {
+                IncomingPacketQueueMaxSizeBytes = 4 * 1024 * 1024,
+                OutgoingPacketQueueMaxSizeBytes = 4 * 1024 * 1024
+            };
+            P2P.SetPacketQueueSize(ref queueOptions);
+
             EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSP2PManager",
                 $"P2P mesh initialized (LocalUserId={LocalUserId})");
         }
@@ -277,6 +285,16 @@ namespace EOSNative.P2P
             if (result != Result.Success)
                 EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "EOSP2PManager", $"SendPacket to {peer} ch={channel} failed: {result}");
             NetworkStats._instance?.RecordBytesSent(peer, data.Length);
+        }
+
+        /// <summary>Returns the fraction of outgoing packet queue used (0.0 to 1.0).</summary>
+        public float GetOutgoingQueueFillRatio()
+        {
+            if (P2P == null) return 0f;
+            var options = new GetPacketQueueInfoOptions();
+            P2P.GetPacketQueueInfo(ref options, out var info);
+            if (info.OutgoingPacketQueueMaxSizeBytes == 0) return 0f;
+            return (float)info.OutgoingPacketQueueCurrentSizeBytes / info.OutgoingPacketQueueMaxSizeBytes;
         }
 
         /// <summary>Accept a connection from a specific peer and add them.</summary>

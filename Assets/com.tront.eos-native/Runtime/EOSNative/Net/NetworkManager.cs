@@ -109,6 +109,12 @@ namespace EOSNative.Net
         public Func<ProductUserId, NetworkObject, bool> OnSyncVarWrite;
 
         /// <summary>
+        /// Fired when this peer's host status changes (true = became host, false = lost host).
+        /// Used by SimulationBehaviour for OnBecameHost/OnLostHost callbacks.
+        /// </summary>
+        public event Action<bool> OnHostChanged;
+
+        /// <summary>
         /// Maximum messages accepted per peer per second. 0 = unlimited (default).
         /// Excess messages from a peer are silently dropped for that second.
         /// </summary>
@@ -286,6 +292,18 @@ namespace EOSNative.Net
             return null;
         }
 
+        /// <summary>
+        /// Look up the PrefabId for a registered prefab. Returns -1 if not found.
+        /// </summary>
+        public int GetPrefabId(GameObject prefab)
+        {
+            for (int i = 0; i < _prefabs.Count; i++)
+            {
+                if (_prefabs[i] == prefab) return i;
+            }
+            return -1;
+        }
+
         #endregion
 
         #region Spawning
@@ -375,6 +393,34 @@ namespace EOSNative.Net
                 $"Spawned object {networkId} (prefab {prefabId}, {childCount} children){(OfflineMode ? " [offline]" : "")}");
 
             return netObj;
+        }
+
+        /// <summary>
+        /// Spawn a networked object by prefab reference. Auto-registers the prefab if not already registered.
+        /// </summary>
+        public NetworkObject Spawn(GameObject prefab, Vector3 position, Quaternion rotation)
+        {
+            int id = GetPrefabId(prefab);
+            if (id < 0)
+            {
+                id = _prefabs.Count;
+                RegisterPrefab(prefab, (ushort)id);
+            }
+            return Spawn((ushort)id, position, rotation);
+        }
+
+        /// <summary>
+        /// Spawn a networked object by prefab name. The prefab must already be registered.
+        /// </summary>
+        public NetworkObject Spawn(string prefabName, Vector3 position, Quaternion rotation)
+        {
+            for (int i = 0; i < _prefabs.Count; i++)
+            {
+                if (_prefabs[i] != null && _prefabs[i].name == prefabName)
+                    return Spawn((ushort)i, position, rotation);
+            }
+            Debug.LogError($"[NetworkManager] No prefab registered with name '{prefabName}'");
+            return null;
         }
 
         /// <summary>
@@ -1056,6 +1102,20 @@ namespace EOSNative.Net
         private bool _migrationInProgress;
         private readonly List<BufferedRPC> _migrationBuffer = new();
 
+        // Reconnect hibernation: objects whose owner disconnected survive for a grace period
+        [Tooltip("Seconds to keep PersistOnDisconnect objects alive after owner disconnect. 0 = disabled.")]
+        [SerializeField] private float _reconnectGracePeriod = 30f;
+        public float ReconnectGracePeriod { get => _reconnectGracePeriod; set => _reconnectGracePeriod = value; }
+
+        internal readonly Dictionary<string, HibernatedPeer> _hibernatedPeers = new();
+
+        internal struct HibernatedPeer
+        {
+            public string Puid;
+            public float ExpireTime;
+            public List<uint> OwnedObjectIds;
+        }
+
         private struct BufferedRPC
         {
             public NetworkObject Target;
@@ -1222,6 +1282,10 @@ namespace EOSNative.Net
                 _peerMessageCounts.Clear();
                 _rateLimitResetTime = Time.unscaledTime + 1f;
             }
+
+            // Check if any hibernated peers' grace periods have expired
+            if (IsHost)
+                CheckHibernationExpiry();
         }
 
         /// <summary>Called by TickSimulation.OnPostTick — sends state updates on tick boundary.</summary>
@@ -2602,6 +2666,8 @@ namespace EOSNative.Net
                     // Ensure RoomState exists (may have been created by previous host)
                     EnsureRoomState();
                 }
+
+                OnHostChanged?.Invoke(IsHost);
             }
         }
 
@@ -2673,6 +2739,9 @@ namespace EOSNative.Net
                     var peerList = EOSP2PManager.Instance?.Peers;
                     RoomState.PlayerCount.Value = (peerList?.Count ?? 0) + 1; // +1 for self
                 }
+
+                // Restore hibernated objects if this peer is reconnecting
+                RestoreHibernatedObjects(peer);
             }
 
             // If we're not the host but just connected, request a snapshot
@@ -2813,6 +2882,52 @@ namespace EOSNative.Net
                     orphans.Add(obj);
             }
 
+            // Hibernation: collect PersistOnDisconnect objects for grace period
+            if (_reconnectGracePeriod > 0f)
+            {
+                var persistIds = new List<uint>();
+                for (int i = orphans.Count - 1; i >= 0; i--)
+                {
+                    if (orphans[i].PersistOnDisconnect)
+                    {
+                        persistIds.Add(orphans[i].NetworkId);
+                        // Transfer authority to host temporarily (so objects still sync)
+                        var obj = orphans[i];
+                        var oldOwner = obj.OwnerId;
+                        obj.OwnerId = localPuid;
+                        obj.NotifyOwnerChanged(oldOwner, localPuid);
+
+                        var children = GetRegisteredChildren(obj.NetworkId);
+                        for (int c = 0; c < children.Count; c++)
+                        {
+                            var childOld = children[c].OwnerId;
+                            children[c].OwnerId = localPuid;
+                            children[c].NotifyOwnerChanged(childOld, localPuid);
+                        }
+
+                        var writer = NetWriterPool.Get();
+                        writer.WriteUInt32(obj.NetworkId);
+                        writer.WriteProductUserId(localPuid);
+                        Router.SendToAll(MSG_AUTHORITY, writer, PacketReliability.ReliableOrdered, 1);
+                        NetWriterPool.Return(writer);
+
+                        EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                            $"Hibernating object {obj.NetworkId} (PersistOnDisconnect) — owner {disconnectedPeer} left, grace {_reconnectGracePeriod}s");
+
+                        orphans.RemoveAt(i);
+                    }
+                }
+                if (persistIds.Count > 0)
+                {
+                    _hibernatedPeers[disconnectedPeer.ToString()] = new HibernatedPeer
+                    {
+                        Puid = disconnectedPeer.ToString(),
+                        ExpireTime = Time.time + _reconnectGracePeriod,
+                        OwnedObjectIds = persistIds
+                    };
+                }
+            }
+
             foreach (var obj in orphans)
             {
                 // DestroyWithOwner: despawn instead of claiming (e.g. player avatars)
@@ -2847,6 +2962,59 @@ namespace EOSNative.Net
 
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
                     $"Claimed orphaned object {obj.NetworkId} (+ {children.Count} children) from {disconnectedPeer}");
+            }
+        }
+
+        private void RestoreHibernatedObjects(ProductUserId peer)
+        {
+            string puidStr = peer.ToString();
+            if (!_hibernatedPeers.TryGetValue(puidStr, out var hibernated)) return;
+
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                $"Peer {puidStr} reconnected — restoring {hibernated.OwnedObjectIds.Count} hibernated objects");
+
+            foreach (var netId in hibernated.OwnedObjectIds)
+            {
+                if (_objects.TryGetValue(netId, out var obj))
+                    TransferAuthority(obj, peer);
+            }
+
+            _hibernatedPeers.Remove(puidStr);
+        }
+
+        private void CheckHibernationExpiry()
+        {
+            if (_hibernatedPeers.Count == 0) return;
+
+            List<string> expired = null;
+            foreach (var kvp in _hibernatedPeers)
+            {
+                if (Time.time >= kvp.Value.ExpireTime)
+                {
+                    expired ??= new List<string>();
+                    expired.Add(kvp.Key);
+                }
+            }
+
+            if (expired == null) return;
+
+            var localPuid = EOSManager.Instance?.LocalProductUserId;
+            foreach (var puid in expired)
+            {
+                var peer = _hibernatedPeers[puid];
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                    $"Hibernation grace expired for {puid} — processing {peer.OwnedObjectIds.Count} objects");
+
+                foreach (var netId in peer.OwnedObjectIds)
+                {
+                    if (_objects.TryGetValue(netId, out var obj))
+                    {
+                        if (obj.DestroyWithOwner)
+                            Despawn(obj);
+                        // else: host keeps authority permanently (already transferred in ClaimOrphanedObjects)
+                    }
+                }
+                _hibernatedPeers.Remove(puid);
             }
         }
 

@@ -380,6 +380,21 @@ namespace EOSNative.Tests
             Assert.AreEqual(64, router.CompressionThreshold);
         }
 
+        [Test]
+        public void FragmentStaleTimeout_Default5()
+        {
+            var router = new MessageRouter(null);
+            Assert.AreEqual(5f, router.FragmentStaleTimeout);
+        }
+
+        [Test]
+        public void FragmentStaleTimeout_IsConfigurable()
+        {
+            var router = new MessageRouter(null);
+            router.FragmentStaleTimeout = 0.5f;
+            Assert.AreEqual(0.5f, router.FragmentStaleTimeout);
+        }
+
         #endregion
     }
 }

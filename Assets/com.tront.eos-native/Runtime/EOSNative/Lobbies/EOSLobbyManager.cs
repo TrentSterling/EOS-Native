@@ -308,6 +308,7 @@ namespace EOSNative.Lobbies
                 MaxLobbyMembers = options.MaxPlayers,
                 PermissionLevel = options.IsPublic ? LobbyPermissionLevel.Publicadvertised : LobbyPermissionLevel.Joinviapresence,
                 BucketId = options.BucketId,
+                LobbyId = options.CustomLobbyId, // Custom lobby ID override (null = EOS generates one)
                 EnableJoinById = true,
                 AllowInvites = false,
                 RejoinAfterKickRequiresInvite = false,

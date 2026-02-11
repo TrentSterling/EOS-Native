@@ -59,6 +59,15 @@ namespace EOSNative.Net
         [SerializeField] private bool _destroyWithOwner;
         public bool DestroyWithOwner { get => _destroyWithOwner; set => _destroyWithOwner = value; }
 
+        /// <summary>
+        /// If true, this object survives owner disconnection during the reconnect grace period.
+        /// Host temporarily claims authority. If owner reconnects within the grace period,
+        /// ownership is restored. If the grace period expires, DestroyWithOwner takes effect
+        /// (or host keeps permanently if DestroyWithOwner is false).
+        /// </summary>
+        [SerializeField] private bool _persistOnDisconnect;
+        public bool PersistOnDisconnect { get => _persistOnDisconnect; set => _persistOnDisconnect = value; }
+
         /// <summary>True if the local peer owns this object.</summary>
         public bool IsOwner
         {

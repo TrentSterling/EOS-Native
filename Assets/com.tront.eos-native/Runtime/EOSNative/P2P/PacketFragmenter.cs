@@ -20,8 +20,8 @@ namespace EOSNative.P2P
         /// <summary>EOS P2P max packet size.</summary>
         public const int MaxPacketSize = 1170;
 
-        /// <summary>Seconds before incomplete fragment sets are discarded.</summary>
-        public const float StaleTimeout = 5f;
+        /// <summary>Seconds before incomplete fragment sets are discarded. Default 5s.</summary>
+        public float StaleTimeout { get; set; } = 5f;
 
         /// <summary>Maximum pending fragment assemblies per sender. Prevents memory exhaustion.</summary>
         public const int MaxPendingPerSender = 8;

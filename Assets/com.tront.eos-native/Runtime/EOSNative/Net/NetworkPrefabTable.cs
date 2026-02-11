@@ -37,6 +37,12 @@ namespace EOSNative.Net
                 _prefabs.RemoveAt(index);
         }
 
+        /// <summary>Look up the index (PrefabId) of a prefab. Returns -1 if not found.</summary>
+        public int IndexOf(GameObject prefab)
+        {
+            return _prefabs.IndexOf(prefab);
+        }
+
 #if UNITY_EDITOR
         private void OnValidate()
         {

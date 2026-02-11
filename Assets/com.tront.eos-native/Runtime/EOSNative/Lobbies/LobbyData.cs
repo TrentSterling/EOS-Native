@@ -242,6 +242,13 @@ namespace EOSNative.Lobbies
         public bool UseEosLobbyId = false;
 
         /// <summary>
+        /// Custom lobby ID override (4-60 chars). If set, EOS will use this instead of generating one.
+        /// Must be globally unique. If creation fails with AlreadyPending/DuplicateNotAllowed,
+        /// the ID is already in use.
+        /// </summary>
+        public string CustomLobbyId = null;
+
+        /// <summary>
         /// Whether to allow host migration (default: true).
         /// When enabled, EOS automatically promotes a new host if the owner leaves.
         /// </summary>

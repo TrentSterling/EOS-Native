@@ -265,13 +265,13 @@ namespace EOSNative.Editor
             // like com.epicgames.mobile.eossdk.EOSLogger, causing UnsatisfiedLinkError.
             string proguardPath = Path.Combine(unityLibPath, "proguard-eos.pro");
 
-            const string proguardRules = @"# EOS Native SDK - Keep rules for JNI native method registration
-# These classes are called from native code via RegisterNatives in JNI_OnLoad.
-# R8/ProGuard cannot detect these references and may strip them.
--keep class com.epicgames.mobile.eossdk.** { *; }
--keep class com.tront.eosnative.** { *; }
--dontwarn com.epicgames.mobile.eossdk.**
-";
+            const string proguardRules =
+                "# EOS Native SDK - Keep rules for JNI native method registration\n" +
+                "# These classes are called from native code via RegisterNatives in JNI_OnLoad.\n" +
+                "# R8/ProGuard cannot detect these references and may strip them.\n" +
+                "-keep class com.epicgames.mobile.eossdk.** { *; }\n" +
+                "-keep class com.tront.eosnative.** { *; }\n" +
+                "-dontwarn com.epicgames.mobile.eossdk.**\n";
 
             File.WriteAllText(proguardPath, proguardRules);
 

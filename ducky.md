@@ -155,9 +155,10 @@ First external tester feedback — Discord DMs, 2026-02-10.
 - **Priority:** Medium
 - **Description:** A base class for singleton-like network behaviours that exist at the same level as NetworkManager (not attached to a NetworkObject). Like Fusion's SimulationBehaviour.
 
-### FEATURE: Spawn overloads (string name, GameObject reference)
+### FEATURE: Spawn overloads (string name, GameObject reference) — IMPLEMENTED (v2.38.0)
 - **Priority:** High (Ducky 12:37 PM)
 - **Description:** `Spawn()` currently takes a `ushort prefabId`. Ducky wants `Spawn("PrefabName")` or `Spawn(prefabGameObject)` like FishNet — simpler API, no need to know numeric IDs.
+- **Implementation:** `Spawn(GameObject, pos, rot)` auto-registers if not found. `Spawn(string, pos, rot)` looks up by name. `GetPrefabId(GameObject)` helper. `NetworkPrefabTable.IndexOf(GameObject)`. 6 new tests.
 
 ### FEATURE: Auto-collecting prefab pool (DefaultPrefabPool ScriptableObject)
 - **Priority:** Medium (Ducky 12:37 PM)
@@ -266,10 +267,10 @@ Even when peers connect and IsOnline becomes true, **nothing auto-spawns a playe
 ## Action Items
 1. ~~Fix lobby→P2P→NetworkManager bridge~~ → **DONE: PlayerSpawner**
 2. ~~Fix compile errors on non-Android~~ → **CANNOT REPRODUCE (need exact errors)**
-3. Disable P2PDemoManager by default / move to UPM sample
+3. ~~Disable P2PDemoManager by default / move to UPM sample~~ → **DONE: v2.38.0 (disabled in scene)**
 4. Write "Getting Started" / "Connecting" docs page
 5. ~~Expose hidden Inspector fields~~ → **DONE: v2.34.0 (DestroyWithOwner, AlwaysVisible, Hierarchy section)**
 6. ~~Implement nested NetworkObject support~~ → **DONE: v2.33.0**
-7. Consider SimulationBehaviour, InstanceFinder, PrefabId patterns
+7. ~~Consider SimulationBehaviour, InstanceFinder, PrefabId patterns~~ → **DONE: v2.37.0 (InstanceFinder, SimulationBehaviour, Reconnect Without Despawning)**
 8. ~~Implement runtime reparenting~~ → **DONE: v2.34.0**
 9. Investigate voice offline on Create Lobby (need more details from Ducky)

@@ -43,6 +43,13 @@ namespace EOSNative.P2P
         /// <summary>Minimum payload size in bytes before compression is applied. Default 64.</summary>
         public int CompressionThreshold { get; set; } = 64;
 
+        /// <summary>Stale timeout for incomplete fragment reassembly. Default 5s. Lower for real-time streams.</summary>
+        public float FragmentStaleTimeout
+        {
+            get => _fragmenter.StaleTimeout;
+            set => _fragmenter.StaleTimeout = value;
+        }
+
         public MessageRouter(EOSP2PManager p2p)
         {
             _p2p = p2p;

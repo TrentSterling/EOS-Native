@@ -164,6 +164,21 @@ namespace EOSNative.Tests
         }
 
         [Test]
+        public void StaleTimeout_DefaultIs5()
+        {
+            var fragmenter = new PacketFragmenter();
+            Assert.AreEqual(5f, fragmenter.StaleTimeout);
+        }
+
+        [Test]
+        public void StaleTimeout_IsConfigurable()
+        {
+            var fragmenter = new PacketFragmenter();
+            fragmenter.StaleTimeout = 0.5f;
+            Assert.AreEqual(0.5f, fragmenter.StaleTimeout);
+        }
+
+        [Test]
         public void MaxPayloadSize_SingleFragment()
         {
             var fragmenter = new PacketFragmenter();

@@ -61,8 +61,9 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Weapon pickup/drop demo — DemoWeapon with F/G keys, tests reparenting, ownership transfer, late-join snapshots (v2.35.0, community request — Ducky)
 - [x] Network Prefab Table — `NetworkPrefabTable` ScriptableObject (drag & drop prefab registry, index = PrefabId), auto-register in NetworkManager.OnEnable. Demo weapons now use proper `Spawn()` flow instead of `RegisterExisting()` (v2.36.0, community request — Ducky)
 - [x] Concrete P2P demo scene — Pre-built scene with ground, walls, crates, camera, light. PlayerBall + Weapon + Crate prefabs with materials. P2PDemoManager uses `Instantiate(_ballPrefab)` instead of `CreatePrimitiveSafe`. Removed all runtime scene generation (v2.36.0)
-- [ ] InstanceFinder — static accessor for NetworkManager, TimeManager, etc. (community request — Ducky)
-- [ ] SimulationBehaviour — base class for singleton network behaviours not on a NetworkObject (community request — Ducky)
+- [x] InstanceFinder — static accessor for NetworkManager, P2PManager, LobbyManager, TickSimulation, etc. (v2.37.0, community request — Ducky)
+- [x] SimulationBehaviour — base class for singleton network behaviours not on a NetworkObject, auto-subscribes tick/peer/host events (v2.37.0, community request — Ducky)
+- [x] Reconnect without despawning — PersistOnDisconnect flag on NetworkObject, grace period (default 30s), hibernation dictionary, auto-restore ownership on reconnect (v2.37.0, community request — Ducky)
 
 **QOL & API Polish** (community request — CometDev):
 - [x] `NetworkManager.GetPlayerObject(puid)` — lookup a player's NetworkObject by their PUID (v2.16.1)
@@ -184,7 +185,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Layer 2 RPCs work (E=color, Q=shockwave, T=chat, R=effect)
 
 **Automated Unit Tests:**
-- [x] All 295 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
+- [x] All ~331 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
 
 **UI — F1 OnGUI Overlay (EOSNativeStatusUI):**
 - [ ] F1 toggle opens/closes overlay
@@ -293,7 +294,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] [NetRpc] IL post-processor with Mono.Cecil (typed RPCs, auto-serialize params, compile-time hash)
 - [x] DemoBallBehaviour — Layer 2 demo with SyncVars (Score, DisplayName, BallColor) and [NetRpc] methods on runtime-created balls
 - [x] Fix RegisterExisting() to call NotifyNetworkSpawn() (RPCs and OnNetworkSpawn now fire for objects registered outside Spawn())
-- [x] Automated unit tests — 17 test files (295 tests) for NetWriter/Reader, FnvHash, NetSerializers, SyncVar, SyncList, SyncDictionary, PacketFragmenter, NetworkId, Compression, LobbyOptions, MessageRouter, NetworkObjectHierarchy, NetworkPrefabTable, RegisterExisting, NetworkManagerCore, SpawnDespawn
+- [x] Automated unit tests — 21 test files (~331 tests) for NetWriter/Reader, FnvHash, NetSerializers, SyncVar, SyncList, SyncDictionary, PacketFragmenter, NetworkId, Compression, LobbyOptions, MessageRouter, NetworkObjectHierarchy, NetworkPrefabTable, RegisterExisting, NetworkManagerCore, SpawnDespawn, InstanceFinder, SimulationBehaviour, ReconnectHibernation, SpawnOverloads
 - [x] Fix INetSerializable struct boxing bug in NetSerializers.Read (Deserialize mutated boxed copy, not original)
 - [x] Fix Input System compatibility in P2PDemoManager (EOS_HAS_INPUT_SYSTEM guard for E/Q/T/R keys)
 - [x] Add InternalsVisibleTo for test assembly (AssemblyInfo.cs)
@@ -320,3 +321,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Host-validated RPCs — `[NetRpc(Validated = true)]` routes RPCs through host, auto-discovers `Validate_X` methods by naming convention, host rebroadcasts if approved. Adds ~20-40ms latency (one hop). New msg types 0xA8/0xA9. IL weaver updated (v2.18.0)
 - [x] SyncVar LOD — `SyncVarLOD` component with distance-based sync tiers, owner-side throttle, auto nearest-peer distance, customizable tiers via Inspector (v2.18.0)
 - [x] Configurable join code length — `JoinCodeLength` on EOSLobbyManager (default 6, range 4-8), per-lobby override via LobbyOptions (v2.18.0)
+- [x] InstanceFinder — static accessor class for all key managers (NetworkManager, P2PManager, LobbyManager, TickSimulation, InterestManager, SceneManager) + convenience shortcuts (IsHost, IsOnline, IsOffline, CurrentTick, FixedTickTime) (v2.37.0)
+- [x] SimulationBehaviour — abstract MonoBehaviour base for game managers (match manager, wave spawner, score tracker) with auto-subscribing tick/peer/host callbacks (v2.37.0)
+- [x] Reconnect without despawning — PersistOnDisconnect on NetworkObject, ReconnectGracePeriod on NetworkManager (default 30s), hibernation dictionary, auto-restore ownership on reconnect. OnHostChanged event on NetworkManager (v2.37.0)
+- [x] Spawn overloads — `Spawn(GameObject, ...)` with auto-register, `Spawn(string, ...)` by prefab name, `GetPrefabId(GameObject)` helper. `NetworkPrefabTable.IndexOf(GameObject)`. P2PDemoManager disabled by default in scene (v2.38.0, community request — Ducky)
