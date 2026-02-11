@@ -387,7 +387,7 @@ namespace EOSNative.CodeGen
             il.Emit(OpCodes.Ldloc, writerVar);
             il.Emit(OpCodes.Call, _types.NetWriterPool_Return);
 
-            // NetworkManager.Instance.SendRPCWeaved/SendRPCValidated(netObj, hash, target, data);
+            // NetworkManager.Instance.SendRPCWeaved/SendRPCValidated(netObj, componentIndex, hash, target, data);
             il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);  // NetworkManager.Instance
 
             if (isNetworkObject)
@@ -400,6 +400,17 @@ namespace EOSNative.CodeGen
                 // NetworkBehaviour subclass: need 'this.Net' to get the NetworkObject
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_Net);
+            }
+
+            // componentIndex: NB uses this.ComponentIndex, NO uses 0xFF sentinel
+            if (isNetworkObject)
+            {
+                il.Emit(OpCodes.Ldc_I4, 0xFF);                          // SELF_COMPONENT_INDEX
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_ComponentIndex);
             }
 
             il.Emit(OpCodes.Ldc_I4, unchecked((int)methodHash));        // hash (uint as int literal)
@@ -455,7 +466,7 @@ namespace EOSNative.CodeGen
         /// internal override void __RegisterNetRPCs()
         /// {
         ///     base.__RegisterNetRPCs();
-        ///     NetworkManager.Instance.RegisterRPC(this/Net, hash, "name", __InvokeNetRpc_Name);
+        ///     NetworkManager.Instance.RegisterRPC(this/Net, componentIndex, hash, "name", __InvokeNetRpc_Name);
         ///     ...
         /// }
         /// </summary>
@@ -516,6 +527,17 @@ namespace EOSNative.CodeGen
                     il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_Net);
                 }
 
+                // componentIndex: NB uses this.ComponentIndex, NO uses 0xFF sentinel
+                if (isNetworkObject)
+                {
+                    il.Emit(OpCodes.Ldc_I4, 0xFF);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldarg_0);
+                    il.Emit(OpCodes.Call, _types.NetworkBehaviour_get_ComponentIndex);
+                }
+
                 // hash
                 il.Emit(OpCodes.Ldc_I4, unchecked((int)hash));
                 // "name"
@@ -524,7 +546,7 @@ namespace EOSNative.CodeGen
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldftn, invoker);
                 il.Emit(OpCodes.Newobj, _types.ActionOfNetReader_Ctor);
-                // RegisterRPC(NetworkObject, uint, string, Action<NetReader>)
+                // RegisterRPC(NetworkObject, byte, uint, string, Action<NetReader>)
                 il.Emit(OpCodes.Callvirt, _types.NetworkManager_RegisterRPC_Hash);
 
                 // If validated, mark as requiring host validation + register validator if found

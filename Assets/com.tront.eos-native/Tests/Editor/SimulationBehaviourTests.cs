@@ -1,6 +1,7 @@
 using System.Reflection;
 using NUnit.Framework;
 using EOSNative.Net;
+using EOSNative.P2P;
 using UnityEngine;
 
 namespace EOSNative.Tests
@@ -8,14 +9,23 @@ namespace EOSNative.Tests
     /// <summary>
     /// Tests for SimulationBehaviour abstract base class.
     /// Uses a concrete TestSimBehaviour to verify callbacks and accessors.
+    /// Pre-creates singletons on inactive GOs to avoid DontDestroyOnLoad in EditMode.
     /// </summary>
     public class SimulationBehaviourTests
     {
         private NetworkManager _nm;
+        private EOSP2PManager _p2p;
+        private TickSimulation _tick;
         private GameObject _simGo;
 
-        private static readonly FieldInfo InstanceField =
+        private static readonly FieldInfo NmInstanceField =
             typeof(NetworkManager).GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static);
+
+        private static readonly FieldInfo P2PInstanceField =
+            typeof(EOSP2PManager).GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static);
+
+        private static readonly FieldInfo TickInstanceField =
+            typeof(TickSimulation).GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static);
 
         /// <summary>Concrete test subclass to track callback invocations.</summary>
         private class TestSimBehaviour : SimulationBehaviour
@@ -41,7 +51,17 @@ namespace EOSNative.Tests
             var go = new GameObject("NetworkManager");
             go.SetActive(false);
             _nm = go.AddComponent<NetworkManager>();
-            InstanceField.SetValue(null, _nm);
+            NmInstanceField.SetValue(null, _nm);
+
+            var p2pGo = new GameObject("EOSP2PManager");
+            p2pGo.SetActive(false);
+            _p2p = p2pGo.AddComponent<EOSP2PManager>();
+            P2PInstanceField.SetValue(null, _p2p);
+
+            var tickGo = new GameObject("TickSimulation");
+            tickGo.SetActive(false);
+            _tick = tickGo.AddComponent<TickSimulation>();
+            TickInstanceField.SetValue(null, _tick);
 
             _simGo = new GameObject("TestSim");
             _simGo.SetActive(false);
@@ -50,12 +70,16 @@ namespace EOSNative.Tests
         [TearDown]
         public void TearDown()
         {
-            InstanceField.SetValue(null, null);
-            if (_nm != null)
-                Object.DestroyImmediate(_nm.gameObject);
-            if (_simGo != null)
-                Object.DestroyImmediate(_simGo);
-            foreach (var name in new[] { "NetworkManager", "EOSP2PManager", "EOSLobbyManager", "NetworkSceneManager" })
+            NmInstanceField.SetValue(null, null);
+            P2PInstanceField.SetValue(null, null);
+            TickInstanceField.SetValue(null, null);
+
+            if (_nm != null) Object.DestroyImmediate(_nm.gameObject);
+            if (_p2p != null) Object.DestroyImmediate(_p2p.gameObject);
+            if (_tick != null) Object.DestroyImmediate(_tick.gameObject);
+            if (_simGo != null) Object.DestroyImmediate(_simGo);
+
+            foreach (var name in new[] { "NetworkManager", "EOSP2PManager", "TickSimulation", "EOSLobbyManager", "NetworkSceneManager" })
             {
                 var obj = GameObject.Find(name);
                 if (obj != null) Object.DestroyImmediate(obj);
@@ -119,8 +143,21 @@ namespace EOSNative.Tests
         public void Manager_ReturnsNull_WhenNoInstance()
         {
             var sim = _simGo.AddComponent<TestSimBehaviour>();
-            InstanceField.SetValue(null, null);
-            Assert.IsNull(sim.TestManager);
+
+            // Clear singletons and use _shuttingDown to prevent auto-create
+            NmInstanceField.SetValue(null, null);
+            P2PInstanceField.SetValue(null, null);
+            var shuttingDown = typeof(NetworkManager).GetField("_shuttingDown", BindingFlags.NonPublic | BindingFlags.Static);
+            shuttingDown?.SetValue(null, true);
+
+            try
+            {
+                Assert.IsNull(sim.TestManager);
+            }
+            finally
+            {
+                shuttingDown?.SetValue(null, false);
+            }
         }
 
         [Test]

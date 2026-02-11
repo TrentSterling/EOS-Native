@@ -249,14 +249,11 @@ Even when peers connect and IsOnline becomes true, **nothing auto-spawns a playe
 - **Root Cause:** `DestroyWithOwner` had `[SerializeField]` on the property (not the backing field) — Unity ignores this. `AlwaysVisible` had no serialization at all. `DrawDefaultInspector()` had nothing to draw.
 - **Fix:** Converted both to proper `[SerializeField] private bool` backing fields. Inspector now shows **Configuration** section at edit time with "Destroy With Owner" and "Always Visible" toggles + tooltips. **Hierarchy** section shows parent/child NetworkObject relationships. **Runtime Status** section in play mode shows Network ID, Owner, SyncVar count, parent net ID, etc.
 
-### Voice Offline on Create Lobby vs Quick Match — INVESTIGATION
+### Voice Offline on Create Lobby vs Quick Match — FIXED (v2.39.0)
 - **Reported:** Ducky said voice shows "offline" when using "Create Lobby" button but "online" when using "Quick Match" button.
-- **Investigation:** Both code paths use identical voice handling. `CreateLobbyAsync` and `QuickMatchOrHostAsync` both read `EnableVoice` from the same `_lobbyVoice` toggle (default `true`). Both call `CreateLobbyInternal` with the same parameters. No code asymmetry found.
-- **Possible causes:**
-  1. Voice toggle was off when testing Create Lobby, on when testing Quick Match
-  2. EOS SDK RTC initialization timing — Quick Match searches first (gives SDK more init time), Create Lobby fires immediately
-  3. Voice auto-retry fallback silently disabled voice on first attempt
-- **Status:** Need more details from Ducky (exact steps, toggle state, platform)
+- **Root Cause:** UI/UX asymmetry in F1 overlay (OnGUI). Both code paths read from the same `_lobbyVoice` field (default `true`), but the voice toggle was ONLY visible in the "Create Lobby" foldout section. The "Join / Quick Match" section had NO voice toggle — it silently reused whatever value was last set in Create Lobby. If user toggled voice off in Create Lobby, then used Quick Match, voice would be disabled with no visual indication.
+- **Fix:** Added Voice and Migrate toggles to the "Join / Quick Match" section in EOSNativeStatusUI.cs. Both sections now show the same shared toggles, so the user can see and control the voice setting regardless of which path they use.
+- **Canvas UI:** NOT affected — both Create and Quick Match call `BuildLobbyOptionsFromUI()` which reads from the same visible `_voiceToggle` toggle.
 
 ### Runtime Reparenting — IMPLEMENTED (v2.34.0)
 - `SetNetworkParent()`/`DetachFromNetworkParent()` on NetworkObject
@@ -268,9 +265,9 @@ Even when peers connect and IsOnline becomes true, **nothing auto-spawns a playe
 1. ~~Fix lobby→P2P→NetworkManager bridge~~ → **DONE: PlayerSpawner**
 2. ~~Fix compile errors on non-Android~~ → **CANNOT REPRODUCE (need exact errors)**
 3. ~~Disable P2PDemoManager by default / move to UPM sample~~ → **DONE: v2.38.0 (disabled in scene)**
-4. Write "Getting Started" / "Connecting" docs page
+4. ~~Write "Getting Started" / "Connecting" docs page~~ → **DONE: v2.39.0 (docs/connecting.md — lobby to networking flow)**
 5. ~~Expose hidden Inspector fields~~ → **DONE: v2.34.0 (DestroyWithOwner, AlwaysVisible, Hierarchy section)**
 6. ~~Implement nested NetworkObject support~~ → **DONE: v2.33.0**
 7. ~~Consider SimulationBehaviour, InstanceFinder, PrefabId patterns~~ → **DONE: v2.37.0 (InstanceFinder, SimulationBehaviour, Reconnect Without Despawning)**
 8. ~~Implement runtime reparenting~~ → **DONE: v2.34.0**
-9. Investigate voice offline on Create Lobby (need more details from Ducky)
+9. ~~Investigate voice offline on Create Lobby~~ → **DONE: v2.39.0 (UI asymmetry fix — voice toggle added to Quick Match section)**

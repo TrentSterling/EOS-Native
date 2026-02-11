@@ -85,6 +85,12 @@ namespace EOSNative.P2P
 
         public const string SOCKET_NAME = "EOSP2P";
 
+        /// <summary>Number of SendPacket calls that returned non-Success.</summary>
+        public int SendFailures { get; private set; }
+
+        /// <summary>Total SendPacket calls attempted.</summary>
+        public int SendAttempts { get; private set; }
+
         #endregion
 
         #region Private Fields
@@ -281,9 +287,14 @@ namespace EOSNative.P2P
                 Reliability = reliability,
                 AllowDelayedDelivery = true
             };
+            SendAttempts++;
             var result = P2P.SendPacket(ref options);
             if (result != Result.Success)
-                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "EOSP2PManager", $"SendPacket to {peer} ch={channel} failed: {result}");
+            {
+                SendFailures++;
+                if (SendFailures <= 10 || SendFailures % 100 == 0)
+                    EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "EOSP2PManager", $"SendPacket to {peer} ch={channel} failed: {result} (failures: {SendFailures}/{SendAttempts})");
+            }
             NetworkStats._instance?.RecordBytesSent(peer, data.Length);
         }
 

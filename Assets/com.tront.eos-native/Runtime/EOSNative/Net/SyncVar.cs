@@ -61,6 +61,7 @@ namespace EOSNative.Net
         private T _value;
         private bool _dirty;
         private readonly NetworkObject _owner;
+        private readonly Action _notifyDirty;
         private byte _index;
         private readonly SyncVarWriteAccess _writeAccess;
 
@@ -91,7 +92,7 @@ namespace EOSNative.Net
                 T old = _value;
                 _value = value;
                 _dirty = true;
-                _owner?.MarkDirty();
+                if (_notifyDirty != null) _notifyDirty(); else _owner?.MarkDirty();
                 OnChanged?.Invoke(old, _value);
             }
         }
@@ -117,11 +118,15 @@ namespace EOSNative.Net
         /// Internal constructor — called by <see cref="NetworkObject.Sync{T}"/>.
         /// </summary>
         internal SyncVar(NetworkObject owner, T defaultValue, byte index, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+            : this(owner, defaultValue, index, writeAccess, null) { }
+
+        internal SyncVar(NetworkObject owner, T defaultValue, byte index, SyncVarWriteAccess writeAccess, Action notifyDirty)
         {
             _owner = owner;
             _value = defaultValue;
             _index = index;
             _writeAccess = writeAccess;
+            _notifyDirty = notifyDirty;
             _dirty = false;
         }
 

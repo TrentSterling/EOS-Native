@@ -52,6 +52,52 @@ namespace EOSNative.Net
                     Debug.LogWarning($"[NetworkPrefabTable] Prefab at index {i} ({_prefabs[i].name}) is missing a NetworkObject component.", this);
             }
         }
+
+        /// <summary>
+        /// Scans the entire project for prefabs with a NetworkObject component
+        /// and adds any that are missing from the table. Existing entries are preserved
+        /// to maintain stable PrefabIds. Optionally filters by a folder path.
+        /// </summary>
+        /// <param name="folderFilter">Optional folder to limit scanning (e.g. "Assets/Prefabs"). Null = scan all.</param>
+        /// <returns>Number of newly added prefabs.</returns>
+        public int CollectAll(string folderFilter = null)
+        {
+            var guids = folderFilter != null
+                ? UnityEditor.AssetDatabase.FindAssets("t:Prefab", new[] { folderFilter })
+                : UnityEditor.AssetDatabase.FindAssets("t:Prefab");
+
+            int added = 0;
+            foreach (var guid in guids)
+            {
+                var path = UnityEditor.AssetDatabase.GUIDToAssetPath(guid);
+                var prefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                if (prefab == null) continue;
+                if (prefab.GetComponent<NetworkObject>() == null) continue;
+                if (_prefabs.Contains(prefab)) continue;
+
+                _prefabs.Add(prefab);
+                added++;
+            }
+
+            if (added > 0)
+            {
+                UnityEditor.EditorUtility.SetDirty(this);
+                Debug.Log($"[NetworkPrefabTable] Auto-collected {added} prefab(s). Total: {_prefabs.Count}.", this);
+            }
+
+            return added;
+        }
+
+        /// <summary>Remove all null/missing entries from the table. Compacts PrefabIds.</summary>
+        public void RemoveNulls()
+        {
+            int removed = _prefabs.RemoveAll(p => p == null);
+            if (removed > 0)
+            {
+                UnityEditor.EditorUtility.SetDirty(this);
+                Debug.Log($"[NetworkPrefabTable] Removed {removed} null entries. Remaining: {_prefabs.Count}.", this);
+            }
+        }
 #endif
     }
 }

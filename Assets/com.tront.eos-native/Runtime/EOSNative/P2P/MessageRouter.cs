@@ -50,6 +50,21 @@ namespace EOSNative.P2P
             set => _fragmenter.StaleTimeout = value;
         }
 
+        /// <summary>Access fragment-level diagnostics.</summary>
+        public PacketFragmenter Fragmenter => _fragmenter;
+
+        /// <summary>Number of registered message handlers.</summary>
+        public int RegisteredHandlerCount => _handlers.Count;
+
+        /// <summary>Check if a specific message ID has a handler.</summary>
+        public bool HasHandler(byte msgId) => _handlers.ContainsKey(msgId);
+
+        /// <summary>Total messages dispatched to handlers.</summary>
+        public int MessagesDispatched { get; private set; }
+
+        /// <summary>Total messages with no registered handler (silently dropped).</summary>
+        public int MessagesUnhandled { get; private set; }
+
         public MessageRouter(EOSP2PManager p2p)
         {
             _p2p = p2p;
@@ -169,8 +184,13 @@ namespace EOSNative.P2P
 
         private void DispatchMessage(ProductUserId sender, byte msgId, byte[] data, int offset, int count)
         {
-            if (!_handlers.TryGetValue(msgId, out var handler)) return;
+            if (!_handlers.TryGetValue(msgId, out var handler))
+            {
+                MessagesUnhandled++;
+                return;
+            }
 
+            MessagesDispatched++;
             _readerCache.SetBuffer(data, offset, count);
             try
             {

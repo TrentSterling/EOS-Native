@@ -2,6 +2,7 @@
   * [Overview](/)
   * [Quick Start](quickstart.md)
   * [Setup Guide](setup.md)
+  * [Connecting: Lobby to Networking](connecting.md)
   * [EOS Service Limits](eos-limits.md)
 
 * **Core Features**

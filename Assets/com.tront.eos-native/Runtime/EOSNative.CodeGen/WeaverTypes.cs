@@ -31,12 +31,13 @@ namespace EOSNative.CodeGen
 
         // Methods
         public MethodReference NetworkManager_get_Instance;
-        public MethodReference NetworkManager_RegisterRPC_Hash;
-        public MethodReference NetworkManager_SendRPCWeaved;
-        public MethodReference NetworkManager_SendRPCValidated;
+        public MethodReference NetworkManager_RegisterRPC_Hash;  // (NetworkObject, byte, uint, string, Action<NetReader>)
+        public MethodReference NetworkManager_SendRPCWeaved;     // (NetworkObject, byte, uint, RPCTarget, byte[])
+        public MethodReference NetworkManager_SendRPCValidated;  // (NetworkObject, byte, uint, RPCTarget, byte[])
         public MethodReference NetworkManager_MarkRPCValidated;
         public MethodReference NetworkManager_RegisterRPCValidator;
         public MethodReference NetworkBehaviour_get_Net;
+        public MethodReference NetworkBehaviour_get_ComponentIndex;
         public MethodReference NetWriterPool_Get;
         public MethodReference NetWriterPool_Return;
         public MethodReference NetWriter_ToArray;
@@ -109,26 +110,29 @@ namespace EOSNative.CodeGen
             NetworkManager_get_Instance = _module.ImportReference(
                 FindProperty(nmDef, "Instance").GetMethod);
 
-            // NetworkManager.RegisterRPC(NetworkObject, uint, string, Action<NetReader>)
+            // NetworkManager.RegisterRPC(NetworkObject, byte, uint, string, Action<NetReader>)
             NetworkManager_RegisterRPC_Hash = _module.ImportReference(
-                FindMethod(nmDef, "RegisterRPC", 4,
+                FindMethod(nmDef, "RegisterRPC", 5,
                     "EOSNative.Net.NetworkObject",
+                    "System.Byte",
                     "System.UInt32",
                     "System.String",
                     "System.Action`1<EOSNative.P2P.NetReader>"));
 
-            // NetworkManager.SendRPCWeaved(NetworkObject, uint, RPCTarget, byte[])
+            // NetworkManager.SendRPCWeaved(NetworkObject, byte, uint, RPCTarget, byte[])
             NetworkManager_SendRPCWeaved = _module.ImportReference(
-                FindMethod(nmDef, "SendRPCWeaved", 4,
+                FindMethod(nmDef, "SendRPCWeaved", 5,
                     "EOSNative.Net.NetworkObject",
+                    "System.Byte",
                     "System.UInt32",
                     "EOSNative.Net.RPCTarget",
                     "System.Byte[]"));
 
-            // NetworkManager.SendRPCValidated(NetworkObject, uint, RPCTarget, byte[])
+            // NetworkManager.SendRPCValidated(NetworkObject, byte, uint, RPCTarget, byte[])
             NetworkManager_SendRPCValidated = _module.ImportReference(
-                FindMethod(nmDef, "SendRPCValidated", 4,
+                FindMethod(nmDef, "SendRPCValidated", 5,
                     "EOSNative.Net.NetworkObject",
+                    "System.Byte",
                     "System.UInt32",
                     "EOSNative.Net.RPCTarget",
                     "System.Byte[]"));
@@ -141,10 +145,12 @@ namespace EOSNative.CodeGen
             NetworkManager_RegisterRPCValidator = _module.ImportReference(
                 FindMethod(nmDef, "RegisterRPCValidator", 2));
 
-            // NetworkBehaviour.Net getter
+            // NetworkBehaviour.Net getter + ComponentIndex getter
             var nbDef = ResolveTypeDef(eosNativeAsm, "EOSNative.Net.NetworkBehaviour");
             NetworkBehaviour_get_Net = _module.ImportReference(
                 FindProperty(nbDef, "Net").GetMethod);
+            NetworkBehaviour_get_ComponentIndex = _module.ImportReference(
+                FindProperty(nbDef, "ComponentIndex").GetMethod);
 
             // NetWriterPool.Get/Return
             var poolDef = ResolveTypeDef(p2pAsm, "EOSNative.P2P.NetWriterPool");

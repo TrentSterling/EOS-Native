@@ -45,6 +45,7 @@ namespace EOSNative.Net
         private readonly List<T> _items;
         private readonly List<SyncListChange<T>> _pendingOps = new();
         private NetworkObject _owner;
+        private readonly Action _notifyDirty;
         private byte _index;
         private bool _dirty;
         private readonly SyncVarWriteAccess _writeAccess;
@@ -61,11 +62,15 @@ namespace EOSNative.Net
         #region Constructor
 
         internal SyncList(NetworkObject owner, List<T> initial, byte index, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+            : this(owner, initial, index, writeAccess, null) { }
+
+        internal SyncList(NetworkObject owner, List<T> initial, byte index, SyncVarWriteAccess writeAccess, Action notifyDirty)
         {
             _owner = owner;
             _items = initial ?? new List<T>();
             _index = index;
             _writeAccess = writeAccess;
+            _notifyDirty = notifyDirty;
         }
 
         #endregion
@@ -284,7 +289,7 @@ namespace EOSNative.Net
                 NewItem = newItem
             });
             _dirty = true;
-            _owner?.MarkDirty();
+            if (_notifyDirty != null) _notifyDirty(); else _owner?.MarkDirty();
             OnChanged?.Invoke(op, index, oldItem, newItem);
         }
 

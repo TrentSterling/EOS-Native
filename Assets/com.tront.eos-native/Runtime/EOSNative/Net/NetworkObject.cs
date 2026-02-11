@@ -99,6 +99,9 @@ namespace EOSNative.Net
         private readonly List<ISyncVar> _syncVars = new();
         private bool _isDirty;
 
+        /// <summary>Cached behaviours array. Set in NotifyNetworkSpawn.</summary>
+        internal NetworkBehaviour[] _behaviours;
+
         /// <summary>
         /// Sequence number for state updates. Incremented by owner on each dirty write.
         /// Remote peers track last received sequence and discard stale/out-of-order updates.
@@ -118,17 +121,29 @@ namespace EOSNative.Net
         /// <summary>Whether this object has been registered with the NetworkManager.</summary>
         public bool IsRegistered { get; internal set; }
 
-        /// <summary>Number of registered SyncVars.</summary>
+        /// <summary>Number of SyncVars on this NetworkObject (direct, not including NB SyncVars).</summary>
         public int SyncVarCount => _syncVars.Count;
 
         /// <summary>
-        /// Create and register a SyncVar. Call in Awake() to define synchronized state.
-        /// SyncVars are ordered — the order of Sync() calls determines their index.
+        /// Total number of SyncVars across this NetworkObject and all its NetworkBehaviours.
         /// </summary>
-        /// <typeparam name="T">Type to sync. Must be registered in <see cref="NetSerializers"/>.</typeparam>
-        /// <param name="defaultValue">Initial value before any sync.</param>
-        /// <param name="writeAccess">Who can write: Owner (default), Host, or All.</param>
-        /// <returns>The SyncVar instance. Store as a field to get/set the value.</returns>
+        public int TotalSyncVarCount
+        {
+            get
+            {
+                int total = _syncVars.Count;
+                if (_behaviours != null)
+                    for (int i = 0; i < _behaviours.Length; i++)
+                        total += _behaviours[i]._syncVars.Count;
+                return total;
+            }
+        }
+
+        /// <summary>
+        /// Create and register a SyncVar on this NetworkObject directly.
+        /// For SyncVars scoped to a NetworkBehaviour, use <see cref="NetworkBehaviour.Sync{T}"/> instead.
+        /// Call in Awake() to define synchronized state.
+        /// </summary>
         public SyncVar<T> Sync<T>(T defaultValue = default, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
         {
             if (_syncVars.Count >= 32)
@@ -142,10 +157,9 @@ namespace EOSNative.Net
         }
 
         /// <summary>
-        /// Create and register a SyncList. Call in Awake() to define synchronized collections.
-        /// SyncLists share the SyncVar index space — order of Sync()/SyncList() calls matters.
+        /// Create and register a SyncList on this NetworkObject directly.
+        /// For SyncLists scoped to a NetworkBehaviour, use <see cref="NetworkBehaviour.SyncList{T}"/> instead.
         /// </summary>
-        /// <param name="writeAccess">Who can write: Owner (default), Host, or All.</param>
         public SyncList<T> SyncList<T>(List<T> initial = null, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
         {
             if (_syncVars.Count >= 32)
@@ -159,10 +173,9 @@ namespace EOSNative.Net
         }
 
         /// <summary>
-        /// Create and register a SyncDictionary. Call in Awake() to define synchronized key-value state.
-        /// SyncDictionaries share the SyncVar index space — order of Sync()/SyncList()/SyncDictionary() calls matters.
+        /// Create and register a SyncDictionary on this NetworkObject directly.
+        /// For SyncDictionaries scoped to a NetworkBehaviour, use <see cref="NetworkBehaviour.SyncDictionary{TKey,TValue}"/> instead.
         /// </summary>
-        /// <param name="writeAccess">Who can write: Owner (default), Host, or All.</param>
         public SyncDictionary<TKey, TValue> SyncDictionary<TKey, TValue>(Dictionary<TKey, TValue> initial = null, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
         {
             if (_syncVars.Count >= 32)
@@ -176,7 +189,7 @@ namespace EOSNative.Net
         }
 
         /// <summary>
-        /// Returns the most permissive WriteAccess among all SyncVars on this object.
+        /// Returns the most permissive WriteAccess among all SyncVars on this object and its behaviours.
         /// Used by HandleStateUpdate to determine if a non-owner sender is valid.
         /// </summary>
         internal SyncVarWriteAccess MaxWriteAccess
@@ -184,12 +197,23 @@ namespace EOSNative.Net
             get
             {
                 var max = SyncVarWriteAccess.Owner;
+                // Check self SyncVars
                 for (int i = 0; i < _syncVars.Count; i++)
                 {
                     if (_syncVars[i].WriteAccess > max)
                         max = _syncVars[i].WriteAccess;
                     if (max == SyncVarWriteAccess.All)
-                        return max; // early out — can't be more permissive
+                        return max;
+                }
+                // Check NB SyncVars
+                if (_behaviours != null)
+                {
+                    for (int b = 0; b < _behaviours.Length; b++)
+                    {
+                        var nbMax = _behaviours[b].MaxWriteAccessNB;
+                        if (nbMax > max) max = nbMax;
+                        if (max == SyncVarWriteAccess.All) return max;
+                    }
                 }
                 return max;
             }
@@ -199,7 +223,7 @@ namespace EOSNative.Net
         private SyncVarLOD _lod;
         private bool _lodChecked;
 
-        /// <summary>Called by SyncVar setters when a value changes.</summary>
+        /// <summary>Called by SyncVar setters when a value changes (from self or NB bubbling up).</summary>
         internal void MarkDirty()
         {
             if (_isDirty) return;
@@ -223,72 +247,154 @@ namespace EOSNative.Net
         #region Serialization
 
         /// <summary>
-        /// Write only dirty SyncVars. Format: [dirtyMask: 1-4 bytes] + [values for set bits].
-        /// When SyncVarLOD is present, the mask is ANDed with the tier's SyncVarMask to filter
-        /// which SyncVars are sent at each distance tier.
+        /// Write only dirty SyncVars using the sectioned format.
+        /// Format: [sectionCount: byte] [foreach: componentIndex + mask + values]
+        /// componentIndex 0xFF = self (NetworkObject), 0+ = NetworkBehaviour by GetComponents order.
         /// </summary>
         internal void SerializeDirty(NetWriter writer)
         {
-            uint mask = BuildDirtyMask();
+            // Count dirty sections
+            byte sectionCount = 0;
+            bool selfDirty = HasDirtySelfSyncVars();
+            if (selfDirty) sectionCount++;
+            if (_behaviours != null)
+                for (int b = 0; b < _behaviours.Length; b++)
+                    if (_behaviours[b]._isDirty && _behaviours[b]._syncVars.Count > 0) sectionCount++;
 
-            // Apply LOD SyncVar mask — filter out SyncVars not needed at this tier
-            if (_lod != null)
-                mask &= _lod.CurrentSyncVarMask;
+            writer.WriteByte(sectionCount);
 
-            WriteMask(writer, mask);
-
-            for (int i = 0; i < _syncVars.Count; i++)
+            // Self section
+            if (selfDirty)
             {
-                if ((mask & (1u << i)) != 0)
-                    _syncVars[i].WriteTo(writer);
+                writer.WriteByte(SELF_COMPONENT_INDEX); // 0xFF
+                uint mask = BuildDirtyMask();
+                if (_lod != null) mask &= _lod.CurrentSyncVarMask;
+                WriteMask(writer, mask);
+                for (int i = 0; i < _syncVars.Count; i++)
+                {
+                    if ((mask & (1u << i)) != 0)
+                        _syncVars[i].WriteTo(writer);
+                }
+            }
+
+            // NB sections
+            if (_behaviours != null)
+            {
+                for (int b = 0; b < _behaviours.Length; b++)
+                {
+                    var nb = _behaviours[b];
+                    if (!nb._isDirty || nb._syncVars.Count == 0) continue;
+                    writer.WriteByte(nb.ComponentIndex);
+                    nb.SerializeDirtyNB(writer);
+                }
             }
         }
 
         /// <summary>
-        /// Read dirty SyncVars from a delta update.
+        /// Read dirty SyncVars from the sectioned format.
         /// </summary>
         internal void DeserializeDirty(NetReader reader)
         {
-            uint mask = ReadMask(reader);
-
-            for (int i = 0; i < _syncVars.Count; i++)
+            byte sectionCount = reader.ReadByte();
+            for (int s = 0; s < sectionCount; s++)
             {
-                if ((mask & (1u << i)) != 0)
-                    _syncVars[i].ReadFrom(reader);
+                byte compIdx = reader.ReadByte();
+                if (compIdx == SELF_COMPONENT_INDEX)
+                {
+                    // Self section
+                    uint mask = ReadMask(reader);
+                    for (int i = 0; i < _syncVars.Count; i++)
+                    {
+                        if ((mask & (1u << i)) != 0)
+                            _syncVars[i].ReadFrom(reader);
+                    }
+                }
+                else if (_behaviours != null && compIdx < _behaviours.Length)
+                {
+                    _behaviours[compIdx].DeserializeDirtyNB(reader);
+                }
+                // else: unknown component index — data is unrecoverable, break
             }
         }
 
         /// <summary>
-        /// Write ALL SyncVar/SyncList full state (for spawn/snapshot). Format: [value0][value1]...
-        /// Uses WriteFullState which handles SyncLists correctly (writes full list, not pending ops).
+        /// Write ALL SyncVar/SyncList full state (for spawn/snapshot) using sectioned format.
+        /// Format: [sectionCount: byte] [foreach: componentIndex + all values]
         /// </summary>
         internal void SerializeAll(NetWriter writer)
         {
-            for (int i = 0; i < _syncVars.Count; i++)
-                _syncVars[i].WriteFullState(writer);
+            // Count sections with SyncVars
+            byte sectionCount = 0;
+            if (_syncVars.Count > 0) sectionCount++;
+            if (_behaviours != null)
+                for (int b = 0; b < _behaviours.Length; b++)
+                    if (_behaviours[b]._syncVars.Count > 0) sectionCount++;
+
+            writer.WriteByte(sectionCount);
+
+            // Self
+            if (_syncVars.Count > 0)
+            {
+                writer.WriteByte(SELF_COMPONENT_INDEX);
+                for (int i = 0; i < _syncVars.Count; i++)
+                    _syncVars[i].WriteFullState(writer);
+            }
+
+            // NB's
+            if (_behaviours != null)
+            {
+                for (int b = 0; b < _behaviours.Length; b++)
+                {
+                    var nb = _behaviours[b];
+                    if (nb._syncVars.Count == 0) continue;
+                    writer.WriteByte(nb.ComponentIndex);
+                    nb.SerializeAllNB(writer);
+                }
+            }
         }
 
         /// <summary>
-        /// Read ALL SyncVar/SyncList full state (from spawn/snapshot).
-        /// Uses ReadFullState which handles SyncLists correctly (reads full list, not ops).
+        /// Read ALL SyncVar/SyncList full state (from spawn/snapshot) using sectioned format.
         /// </summary>
         internal void DeserializeAll(NetReader reader)
         {
-            for (int i = 0; i < _syncVars.Count; i++)
-                _syncVars[i].ReadFullState(reader);
+            byte sectionCount = reader.ReadByte();
+            for (int s = 0; s < sectionCount; s++)
+            {
+                byte compIdx = reader.ReadByte();
+                if (compIdx == SELF_COMPONENT_INDEX)
+                {
+                    for (int i = 0; i < _syncVars.Count; i++)
+                        _syncVars[i].ReadFullState(reader);
+                }
+                else if (_behaviours != null && compIdx < _behaviours.Length)
+                {
+                    _behaviours[compIdx].DeserializeAllNB(reader);
+                }
+            }
         }
 
-        /// <summary>Clear dirty flags on all SyncVars.</summary>
+        /// <summary>Clear dirty flags on all SyncVars (self and all behaviours).</summary>
         internal void ClearDirty()
         {
             _isDirty = false;
             for (int i = 0; i < _syncVars.Count; i++)
                 _syncVars[i].ClearDirty();
+            if (_behaviours != null)
+                for (int b = 0; b < _behaviours.Length; b++)
+                    _behaviours[b].ClearDirtyNB();
         }
 
         #endregion
 
-        #region Dirty Mask
+        #region Dirty Mask (self SyncVars only)
+
+        private bool HasDirtySelfSyncVars()
+        {
+            for (int i = 0; i < _syncVars.Count; i++)
+                if (_syncVars[i].IsDirty) return true;
+            return false;
+        }
 
         private uint BuildDirtyMask()
         {
@@ -369,6 +475,12 @@ namespace EOSNative.Net
         }
 
         /// <summary>
+        /// Sentinel component index used for RPCs declared directly on a NetworkObject subclass.
+        /// NetworkBehaviours use indices 0, 1, 2, ... based on GetComponents order.
+        /// </summary>
+        internal const byte SELF_COMPONENT_INDEX = 0xFF;
+
+        /// <summary>
         /// Weaver-generated override that registers all [NetRpc] handlers declared directly on this NetworkObject.
         /// Called by NotifyNetworkSpawn before processing NetworkBehaviours. Do not call manually.
         /// </summary>
@@ -380,12 +492,13 @@ namespace EOSNative.Net
             // Register RPCs declared directly on this NetworkObject subclass (if any)
             __RegisterNetRPCs();
 
-            // Register weaver-generated RPCs and fire lifecycle on all behaviours
-            var behaviours = GetComponents<NetworkBehaviour>();
-            for (int i = 0; i < behaviours.Length; i++)
+            // Cache behaviours and assign component indices
+            _behaviours = GetComponents<NetworkBehaviour>();
+            for (int i = 0; i < _behaviours.Length; i++)
             {
-                behaviours[i].__RegisterNetRPCs();
-                behaviours[i].OnNetworkSpawn();
+                _behaviours[i].ComponentIndex = (byte)i;
+                _behaviours[i].__RegisterNetRPCs();
+                _behaviours[i].OnNetworkSpawn();
             }
             OnNetworkSpawn?.Invoke();
         }
@@ -393,9 +506,9 @@ namespace EOSNative.Net
         /// <summary>Invoke the OnNetworkDespawn event and NetworkBehaviour lifecycle hooks.</summary>
         internal void NotifyNetworkDespawn()
         {
-            var behaviours = GetComponents<NetworkBehaviour>();
-            for (int i = 0; i < behaviours.Length; i++)
-                behaviours[i].OnNetworkDespawn();
+            if (_behaviours != null)
+                for (int i = 0; i < _behaviours.Length; i++)
+                    _behaviours[i].OnNetworkDespawn();
             OnNetworkDespawn?.Invoke();
         }
 

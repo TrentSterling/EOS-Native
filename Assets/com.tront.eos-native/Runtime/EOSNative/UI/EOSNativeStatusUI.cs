@@ -864,6 +864,11 @@ namespace EOSNative.UI
                     }
                     GUILayout.EndHorizontal();
 
+                    GUILayout.BeginHorizontal();
+                    _lobbyVoice = GUILayout.Toggle(_lobbyVoice, "Voice", _toggleStyle, GUILayout.Width(60));
+                    _lobbyHostMigration = GUILayout.Toggle(_lobbyHostMigration, "Migrate", _toggleStyle, GUILayout.Width(70));
+                    GUILayout.EndHorizontal();
+
                     GUILayout.EndVertical();
                 }
             }

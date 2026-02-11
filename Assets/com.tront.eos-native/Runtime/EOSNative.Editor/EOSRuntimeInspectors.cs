@@ -475,4 +475,53 @@ namespace EOSNative.Editor
             serializedObject.ApplyModifiedProperties();
         }
     }
+
+    [CustomEditor(typeof(NetworkPrefabTable))]
+    public class NetworkPrefabTableEditor : UnityEditor.Editor
+    {
+        private string _folderFilter;
+
+        public override void OnInspectorGUI()
+        {
+            DrawDefaultInspector();
+
+            var table = (NetworkPrefabTable)target;
+
+            EditorGUILayout.Space(8);
+            EditorGUILayout.LabelField("Auto-Collect", EditorStyles.boldLabel);
+
+            EditorGUILayout.BeginHorizontal();
+            _folderFilter = EditorGUILayout.TextField("Folder Filter", _folderFilter);
+            if (GUILayout.Button("Browse", GUILayout.Width(60)))
+            {
+                var path = EditorUtility.OpenFolderPanel("Select Prefab Folder", "Assets", "");
+                if (!string.IsNullOrEmpty(path))
+                {
+                    // Convert absolute to Assets-relative
+                    if (path.Contains("Assets"))
+                        _folderFilter = "Assets" + path.Substring(path.IndexOf("Assets") + 6);
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Collect All NetworkObject Prefabs"))
+            {
+                Undo.RecordObject(table, "Collect Prefabs");
+                string filter = string.IsNullOrWhiteSpace(_folderFilter) ? null : _folderFilter;
+                table.CollectAll(filter);
+            }
+            if (GUILayout.Button("Remove Nulls"))
+            {
+                Undo.RecordObject(table, "Remove Null Prefabs");
+                table.RemoveNulls();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.HelpBox(
+                $"Table has {table.Count} entries. Index = PrefabId used by Spawn().\n" +
+                "Collect scans for all prefabs with NetworkObject. Order is preserved for existing entries.",
+                MessageType.Info);
+        }
+    }
 }

@@ -43,6 +43,7 @@ namespace EOSNative.Net
         private readonly Dictionary<TKey, TValue> _dict;
         private readonly List<DictChange> _pendingOps = new();
         private readonly NetworkObject _owner;
+        private readonly Action _notifyDirty;
         private readonly byte _index;
         private bool _dirty;
         private readonly SyncVarWriteAccess _writeAccess;
@@ -59,11 +60,15 @@ namespace EOSNative.Net
         #region Constructor
 
         internal SyncDictionary(NetworkObject owner, Dictionary<TKey, TValue> initial, byte index, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+            : this(owner, initial, index, writeAccess, null) { }
+
+        internal SyncDictionary(NetworkObject owner, Dictionary<TKey, TValue> initial, byte index, SyncVarWriteAccess writeAccess, Action notifyDirty)
         {
             _owner = owner;
             _dict = initial ?? new Dictionary<TKey, TValue>();
             _index = index;
             _writeAccess = writeAccess;
+            _notifyDirty = notifyDirty;
         }
 
         #endregion
@@ -254,7 +259,7 @@ namespace EOSNative.Net
                 Value = newValue
             });
             _dirty = true;
-            _owner?.MarkDirty();
+            if (_notifyDirty != null) _notifyDirty(); else _owner?.MarkDirty();
             OnChanged?.Invoke(op, key, oldValue, newValue);
         }
 

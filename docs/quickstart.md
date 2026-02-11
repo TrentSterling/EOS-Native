@@ -118,7 +118,9 @@ Press **F1** to toggle the runtime debug overlay with tabs for:
 
 ## Next Steps
 
+- [Connecting: Lobby to Networking](connecting.md) - How to go from lobby to spawned players
 - [Setup Guide](setup.md) - Detailed credential configuration
 - [Lobbies](lobbies.md) - Deep dive into lobby features
+- [Networking Overview](networking.md) - SyncVars, RPCs, spawning
 - [Voice Chat](voice.md) - Voice communication details
 - [Party System](party.md) - Persistent cross-game groups

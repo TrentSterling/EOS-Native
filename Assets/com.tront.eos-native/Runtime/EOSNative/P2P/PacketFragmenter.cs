@@ -24,10 +24,17 @@ namespace EOSNative.P2P
         public float StaleTimeout { get; set; } = 5f;
 
         /// <summary>Maximum pending fragment assemblies per sender. Prevents memory exhaustion.</summary>
-        public const int MaxPendingPerSender = 8;
+        public const int MaxPendingPerSender = 16;
 
         /// <summary>Maximum fragment index. Caps reassembled packet size at ~300 KB.</summary>
         public const int MaxFragmentIndex = 256;
+
+        // Diagnostic counters
+        public int FragmentsReceived { get; private set; }
+        public int MessagesReassembled { get; private set; }
+        public int MessagesDroppedStale { get; private set; }
+        public int SingleFragmentMessages { get; private set; }
+        public int PendingAssemblies => _pending.Count;
 
         private uint _nextPacketId;
 
@@ -122,6 +129,7 @@ namespace EOSNative.P2P
         {
             if (data.Count < HeaderSize) return null;
 
+            FragmentsReceived++;
             byte[] buf = data.Array;
             int off = data.Offset;
 
@@ -135,6 +143,8 @@ namespace EOSNative.P2P
             // Single-fragment fast path
             if (fragmentIndex == 0 && isLast)
             {
+                SingleFragmentMessages++;
+                MessagesReassembled++;
                 var result = new byte[payloadSize];
                 if (payloadSize > 0)
                     Buffer.BlockCopy(buf, off + HeaderSize, result, 0, payloadSize);
@@ -187,6 +197,7 @@ namespace EOSNative.P2P
             if (assembly.TotalFragments > 0 && assembly.ReceivedCount >= assembly.TotalFragments)
             {
                 _pending.Remove(key);
+                MessagesReassembled++;
                 return Reassemble(assembly);
             }
 
@@ -228,6 +239,7 @@ namespace EOSNative.P2P
                     _staleKeys.Add(kvp.Key);
             }
 
+            MessagesDroppedStale += _staleKeys.Count;
             for (int i = 0; i < _staleKeys.Count; i++)
                 _pending.Remove(_staleKeys[i]);
         }

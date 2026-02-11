@@ -544,6 +544,7 @@ namespace EOSNative.Net
                 {
                     Target = target,
                     MethodName = methodName,
+                    ComponentIndex = NetworkObject.SELF_COMPONENT_INDEX,
                     MethodHash = FnvHash(methodName),
                     Targets = targets,
                     ArgData = bufWriter.ToArray()
@@ -616,6 +617,7 @@ namespace EOSNative.Net
             {
                 var writer = NetWriterPool.Get();
                 writer.WriteUInt32(target.NetworkId);
+                writer.WriteByte(NetworkObject.SELF_COMPONENT_INDEX);
                 writer.WriteUInt32(nameHash);
                 writer.WriteBytesRaw(argData, 0, argData.Length);
 
@@ -680,6 +682,7 @@ namespace EOSNative.Net
 
             var writer = NetWriterPool.Get();
             writer.WriteUInt32(target.NetworkId);
+            writer.WriteByte(NetworkObject.SELF_COMPONENT_INDEX);
             writer.WriteUInt32(nameHash);
             writer.WriteBytesRaw(argData, 0, argData.Length);
             Router.SendToPeer(MSG_RPC, writer, peer, PacketReliability.ReliableOrdered, 1);
@@ -724,6 +727,7 @@ namespace EOSNative.Net
 
                 var writer = NetWriterPool.Get();
                 writer.WriteUInt32(target.NetworkId);
+                writer.WriteByte(NetworkObject.SELF_COMPONENT_INDEX);
                 writer.WriteUInt32(nameHash);
                 writer.WriteBytesRaw(argData, 0, argData.Length);
                 Router.SendToPeer(MSG_RPC, writer, peer, PacketReliability.ReliableOrdered, 1);
@@ -781,12 +785,13 @@ namespace EOSNative.Net
 
         /// <summary>
         /// Register an RPC handler for a method name on a specific NetworkObject.
+        /// Uses SELF_COMPONENT_INDEX (0xFF) — for runtime string-based RPCs without component scoping.
         /// The handler receives a NetReader positioned after the method hash — read args from it.
         /// </summary>
         public void RegisterRPC(NetworkObject target, string methodName, Action<NetReader> handler)
         {
             uint nameHash = FnvHash(methodName);
-            var key = new RPCKey { NetworkId = target.NetworkId, MethodHash = nameHash };
+            var key = new RPCKey { NetworkId = target.NetworkId, ComponentIndex = NetworkObject.SELF_COMPONENT_INDEX, MethodHash = nameHash };
 
             if (_rpcHandlers.ContainsKey(key))
             {
@@ -801,22 +806,31 @@ namespace EOSNative.Net
         }
 
         /// <summary>
-        /// Register an RPC handler by pre-computed hash. Called by weaver-generated __RegisterNetRPCs().
-        /// The hash is computed at compile time to avoid runtime string hashing.
+        /// Register an RPC handler by pre-computed hash with component scoping.
+        /// Called by weaver-generated __RegisterNetRPCs() on NetworkBehaviour subclasses.
         /// </summary>
-        public void RegisterRPC(NetworkObject target, uint methodHash, string methodName, Action<NetReader> handler)
+        public void RegisterRPC(NetworkObject target, byte componentIndex, uint methodHash, string methodName, Action<NetReader> handler)
         {
-            var key = new RPCKey { NetworkId = target.NetworkId, MethodHash = methodHash };
+            var key = new RPCKey { NetworkId = target.NetworkId, ComponentIndex = componentIndex, MethodHash = methodHash };
 
             if (_rpcHandlers.ContainsKey(key))
             {
                 if (_rpcMethodNames.TryGetValue(key, out string existing) && existing != methodName)
                     throw new InvalidOperationException(
-                        $"RPC hash collision: '{methodName}' collides with '{existing}' on object {target.NetworkId}");
+                        $"RPC hash collision: '{methodName}' collides with '{existing}' on object {target.NetworkId} component {componentIndex}");
             }
 
             _rpcHandlers[key] = handler;
             _rpcMethodNames[key] = methodName;
+        }
+
+        /// <summary>
+        /// Legacy overload for backward compatibility. Uses SELF_COMPONENT_INDEX.
+        /// Called by weaver-generated __RegisterNetRPCs() on NetworkObject subclasses.
+        /// </summary>
+        public void RegisterRPC(NetworkObject target, uint methodHash, string methodName, Action<NetReader> handler)
+        {
+            RegisterRPC(target, NetworkObject.SELF_COMPONENT_INDEX, methodHash, methodName, handler);
         }
 
         /// <summary>
@@ -839,17 +853,18 @@ namespace EOSNative.Net
         }
 
         /// <summary>
-        /// Send a validated RPC through the host. Called by weaver for [NetRpc(Validated = true)].
+        /// Send a validated RPC through the host with component scoping.
+        /// Called by weaver for [NetRpc(Validated = true)].
         /// Client sends to host only. Host validates, then rebroadcasts to all.
         /// </summary>
-        public void SendRPCValidated(NetworkObject target, uint methodHash, RPCTarget originalTarget, byte[] argData)
+        public void SendRPCValidated(NetworkObject target, byte componentIndex, uint methodHash, RPCTarget originalTarget, byte[] argData)
         {
             if (target == null || !target.IsRegistered) return;
 
             // Offline mode: skip validation overhead, execute locally
             if (OfflineMode)
             {
-                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(target.NetworkId, componentIndex, methodHash, argData, argData.Length);
                 return;
             }
 
@@ -874,11 +889,12 @@ namespace EOSNative.Net
                     _ => false,
                 };
                 if (executeLocal)
-                    ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                    ExecuteRPCLocal(target.NetworkId, componentIndex, methodHash, argData, argData.Length);
 
                 // Rebroadcast to interested peers using MSG_RPC_REBROADCAST
                 var writer = NetWriterPool.Get();
                 writer.WriteUInt32(target.NetworkId);
+                writer.WriteByte(componentIndex);
                 writer.WriteUInt32(methodHash);
                 writer.WriteByte((byte)originalTarget);
                 writer.WriteBytesRaw(argData, 0, argData.Length);
@@ -893,6 +909,7 @@ namespace EOSNative.Net
 
                 var writer = NetWriterPool.Get();
                 writer.WriteUInt32(target.NetworkId);
+                writer.WriteByte(componentIndex);
                 writer.WriteUInt32(methodHash);
                 writer.WriteByte((byte)originalTarget);
                 writer.WriteBytesRaw(argData, 0, argData.Length);
@@ -902,17 +919,25 @@ namespace EOSNative.Net
         }
 
         /// <summary>
-        /// Send a pre-serialized RPC. Called by weaver-generated dispatch stubs.
+        /// Legacy overload without component index. Uses SELF_COMPONENT_INDEX.
+        /// </summary>
+        public void SendRPCValidated(NetworkObject target, uint methodHash, RPCTarget originalTarget, byte[] argData)
+        {
+            SendRPCValidated(target, NetworkObject.SELF_COMPONENT_INDEX, methodHash, originalTarget, argData);
+        }
+
+        /// <summary>
+        /// Send a pre-serialized RPC with component scoping. Called by weaver-generated dispatch stubs.
         /// Args are already packed into argData by the generated serialization code.
         /// </summary>
-        public void SendRPCWeaved(NetworkObject target, uint methodHash, RPCTarget targets, byte[] argData)
+        public void SendRPCWeaved(NetworkObject target, byte componentIndex, uint methodHash, RPCTarget targets, byte[] argData)
         {
             if (target == null || !target.IsRegistered) return;
 
             // Offline mode: always execute locally, never send remote
             if (OfflineMode)
             {
-                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(target.NetworkId, componentIndex, methodHash, argData, argData.Length);
                 return;
             }
 
@@ -923,6 +948,7 @@ namespace EOSNative.Net
                 {
                     Target = target,
                     MethodName = null,
+                    ComponentIndex = componentIndex,
                     MethodHash = methodHash,
                     Targets = targets,
                     ArgData = argData
@@ -957,12 +983,13 @@ namespace EOSNative.Net
             }
 
             if (executeLocal)
-                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(target.NetworkId, componentIndex, methodHash, argData, argData.Length);
 
             if (sendRemote)
             {
                 var writer = NetWriterPool.Get();
                 writer.WriteUInt32(target.NetworkId);
+                writer.WriteByte(componentIndex);
                 writer.WriteUInt32(methodHash);
                 writer.WriteBytesRaw(argData, 0, argData.Length);
 
@@ -994,6 +1021,14 @@ namespace EOSNative.Net
         }
 
         /// <summary>
+        /// Legacy overload without component index. Uses SELF_COMPONENT_INDEX.
+        /// </summary>
+        public void SendRPCWeaved(NetworkObject target, uint methodHash, RPCTarget targets, byte[] argData)
+        {
+            SendRPCWeaved(target, NetworkObject.SELF_COMPONENT_INDEX, methodHash, targets, argData);
+        }
+
+        /// <summary>
         /// Send a pre-serialized RPC to a specific peer. Called by weaver-generated code.
         /// </summary>
         public void SendRPCWeavedToPeer(NetworkObject target, uint methodHash, ProductUserId peer, byte[] argData)
@@ -1003,7 +1038,7 @@ namespace EOSNative.Net
             // Offline mode: execute locally (no peers exist)
             if (OfflineMode)
             {
-                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(target.NetworkId, NetworkObject.SELF_COMPONENT_INDEX, methodHash, argData, argData.Length);
                 return;
             }
 
@@ -1012,12 +1047,13 @@ namespace EOSNative.Net
             var localPuid = EOSManager.Instance?.LocalProductUserId;
             if (localPuid != null && peer == localPuid)
             {
-                ExecuteRPCLocal(target.NetworkId, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(target.NetworkId, NetworkObject.SELF_COMPONENT_INDEX, methodHash, argData, argData.Length);
                 return;
             }
 
             var writer = NetWriterPool.Get();
             writer.WriteUInt32(target.NetworkId);
+            writer.WriteByte(NetworkObject.SELF_COMPONENT_INDEX);
             writer.WriteUInt32(methodHash);
             writer.WriteBytesRaw(argData, 0, argData.Length);
             Router.SendToPeer(MSG_RPC, writer, peer, PacketReliability.ReliableOrdered, 1);
@@ -1120,6 +1156,7 @@ namespace EOSNative.Net
         {
             public NetworkObject Target;
             public string MethodName;   // null for weaved RPCs
+            public byte ComponentIndex;
             public uint MethodHash;     // pre-computed for weaved RPCs
             public RPCTarget Targets;
             public byte[] ArgData;
@@ -1153,11 +1190,12 @@ namespace EOSNative.Net
         private struct RPCKey : IEquatable<RPCKey>
         {
             public uint NetworkId;
+            public byte ComponentIndex;
             public uint MethodHash;
 
-            public bool Equals(RPCKey other) => NetworkId == other.NetworkId && MethodHash == other.MethodHash;
+            public bool Equals(RPCKey other) => NetworkId == other.NetworkId && ComponentIndex == other.ComponentIndex && MethodHash == other.MethodHash;
             public override bool Equals(object obj) => obj is RPCKey other && Equals(other);
-            public override int GetHashCode() => (int)(NetworkId * 397 ^ MethodHash);
+            public override int GetHashCode() => (int)(NetworkId * 397 ^ (uint)(ComponentIndex << 24) ^ MethodHash);
         }
 
         #endregion
@@ -2445,9 +2483,9 @@ namespace EOSNative.Net
             if (IsRateLimited(sender)) return;
 
             uint networkId = reader.ReadUInt32();
+            byte componentIndex = reader.ReadByte();
             uint methodHash = reader.ReadUInt32();
             // Args are left in the reader for the handler to consume
-            // (argCount + typeId + value pairs)
 
             // Validate incoming RPC if callback is set
             if (OnRPCValidation != null)
@@ -2460,8 +2498,15 @@ namespace EOSNative.Net
                 }
             }
 
-            var key = new RPCKey { NetworkId = networkId, MethodHash = methodHash };
-            if (_rpcHandlers.TryGetValue(key, out var handler))
+            // Try exact key first (component-scoped), then fallback to SELF_COMPONENT_INDEX
+            var key = new RPCKey { NetworkId = networkId, ComponentIndex = componentIndex, MethodHash = methodHash };
+            if (!_rpcHandlers.TryGetValue(key, out var handler) && componentIndex != NetworkObject.SELF_COMPONENT_INDEX)
+            {
+                key.ComponentIndex = NetworkObject.SELF_COMPONENT_INDEX;
+                _rpcHandlers.TryGetValue(key, out handler);
+            }
+
+            if (handler != null)
             {
                 try
                 {
@@ -2474,10 +2519,16 @@ namespace EOSNative.Net
             }
         }
 
-        private void ExecuteRPCLocal(uint networkId, uint methodHash, byte[] argData, int argDataLen)
+        private void ExecuteRPCLocal(uint networkId, byte componentIndex, uint methodHash, byte[] argData, int argDataLen)
         {
-            var key = new RPCKey { NetworkId = networkId, MethodHash = methodHash };
-            if (!_rpcHandlers.TryGetValue(key, out var handler)) return;
+            // Try exact key first (component-scoped), then fallback to SELF_COMPONENT_INDEX
+            var key = new RPCKey { NetworkId = networkId, ComponentIndex = componentIndex, MethodHash = methodHash };
+            if (!_rpcHandlers.TryGetValue(key, out var handler) && componentIndex != NetworkObject.SELF_COMPONENT_INDEX)
+            {
+                key.ComponentIndex = NetworkObject.SELF_COMPONENT_INDEX;
+                _rpcHandlers.TryGetValue(key, out handler);
+            }
+            if (handler == null) return;
 
             // Create a reader from the same raw arg bytes that remote peers receive
             var reader = new NetReader(argData, 0, argDataLen);
@@ -2491,10 +2542,16 @@ namespace EOSNative.Net
             }
         }
 
+        /// <summary>Legacy overload without component index. Uses SELF_COMPONENT_INDEX.</summary>
+        private void ExecuteRPCLocal(uint networkId, uint methodHash, byte[] argData, int argDataLen)
+        {
+            ExecuteRPCLocal(networkId, NetworkObject.SELF_COMPONENT_INDEX, methodHash, argData, argDataLen);
+        }
+
         /// <summary>
         /// Host receives this when a client sends a [NetRpc(Validated = true)] RPC.
         /// The host runs the validator and, if approved, rebroadcasts to all peers.
-        /// Wire format: [networkId:u32][methodHash:u32][originalTarget:u8][argData...]
+        /// Wire format: [networkId:u32][componentIndex:u8][methodHash:u32][originalTarget:u8][argData...]
         /// </summary>
         private void HandleRPCValidated(ProductUserId sender, NetReader reader)
         {
@@ -2502,6 +2559,7 @@ namespace EOSNative.Net
             if (!IsHost) return; // Only the host handles validated RPCs
 
             uint networkId = reader.ReadUInt32();
+            byte componentIndex = reader.ReadByte();
             uint methodHash = reader.ReadUInt32();
             byte originalTarget = reader.ReadByte();
             byte[] argData = reader.ReadBytesRemaining();
@@ -2518,6 +2576,7 @@ namespace EOSNative.Net
             // Approved — rebroadcast to interested peers (including back to sender)
             var writer = NetWriterPool.Get();
             writer.WriteUInt32(networkId);
+            writer.WriteByte(componentIndex);
             writer.WriteUInt32(methodHash);
             writer.WriteByte(originalTarget);
             writer.WriteBytesRaw(argData, 0, argData.Length);
@@ -2544,12 +2603,12 @@ namespace EOSNative.Net
                 executeOnHost = true;
 
             if (executeOnHost)
-                ExecuteRPCLocal(networkId, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(networkId, componentIndex, methodHash, argData, argData.Length);
         }
 
         /// <summary>
         /// All peers receive this when the host rebroadcasts an approved validated RPC.
-        /// Wire format: [networkId:u32][methodHash:u32][originalTarget:u8][argData...]
+        /// Wire format: [networkId:u32][componentIndex:u8][methodHash:u32][originalTarget:u8][argData...]
         /// </summary>
         private void HandleRPCRebroadcast(ProductUserId sender, NetReader reader)
         {
@@ -2562,13 +2621,13 @@ namespace EOSNative.Net
             }
 
             uint networkId = reader.ReadUInt32();
+            byte componentIndex = reader.ReadByte();
             uint methodHash = reader.ReadUInt32();
             byte originalTarget = reader.ReadByte();
             byte[] argData = reader.ReadBytesRemaining();
 
             // Check if we should execute based on the original target
             var targets = (RPCTarget)originalTarget;
-            var localPuid = EOSManager.Instance?.LocalProductUserId;
             _objects.TryGetValue(networkId, out var targetObj);
 
             bool execute = targets switch
@@ -2582,7 +2641,7 @@ namespace EOSNative.Net
             };
 
             if (execute)
-                ExecuteRPCLocal(networkId, methodHash, argData, argData.Length);
+                ExecuteRPCLocal(networkId, componentIndex, methodHash, argData, argData.Length);
         }
 
         /// <summary>
@@ -2832,12 +2891,13 @@ namespace EOSNative.Net
                 }
 
                 if (executeLocal)
-                    ExecuteRPCLocal(buffered.Target.NetworkId, nameHash, buffered.ArgData, buffered.ArgData.Length);
+                    ExecuteRPCLocal(buffered.Target.NetworkId, buffered.ComponentIndex, nameHash, buffered.ArgData, buffered.ArgData.Length);
 
                 if (sendRemote)
                 {
                     var writer = NetWriterPool.Get();
                     writer.WriteUInt32(buffered.Target.NetworkId);
+                    writer.WriteByte(buffered.ComponentIndex);
                     writer.WriteUInt32(nameHash);
                     writer.WriteBytesRaw(buffered.ArgData, 0, buffered.ArgData.Length);
 

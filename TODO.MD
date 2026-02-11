@@ -95,8 +95,8 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 **Prediction & Rollback:**
 - [x] Client-side prediction (input prediction for owned objects) (v2.31.0)
 - [x] Collider rollback (lag compensation for hit detection) (v2.31.0)
-- [ ] Study Valve networking docs (Source/CS:GO PDFs) for rollback architecture
-- [ ] Study Photon PUN architecture for shared-mode patterns
+- [x] Study Valve networking docs (Source/CS:GO PDFs) for rollback architecture (valve.md)
+- [x] Study Photon PUN architecture for shared-mode patterns (photon.md)
 
 **Security & Validation:**
 - [x] Host-validated RPCs — `[NetRpc(Validated = true)]` routes through host, auto-discovers `Validate_X` methods (v2.18.0)
@@ -325,3 +325,8 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] SimulationBehaviour — abstract MonoBehaviour base for game managers (match manager, wave spawner, score tracker) with auto-subscribing tick/peer/host callbacks (v2.37.0)
 - [x] Reconnect without despawning — PersistOnDisconnect on NetworkObject, ReconnectGracePeriod on NetworkManager (default 30s), hibernation dictionary, auto-restore ownership on reconnect. OnHostChanged event on NetworkManager (v2.37.0)
 - [x] Spawn overloads — `Spawn(GameObject, ...)` with auto-register, `Spawn(string, ...)` by prefab name, `GetPrefabId(GameObject)` helper. `NetworkPrefabTable.IndexOf(GameObject)`. P2PDemoManager disabled by default in scene (v2.38.0, community request — Ducky)
+- [x] Per-NetworkBehaviour component IDs — each NB addressable via `componentIndex` byte in RPC wire format. SELF_COMPONENT_INDEX=0xFF sentinel. IL weaver updated for 5-param RegisterRPC/SendRPC. +1 byte per RPC overhead (v2.40.0, community request — CometDev)
+- [x] Per-NB scoped SyncVars — each NetworkBehaviour owns its own SyncVar pool (up to 32 per NB). Sectioned wire format: `[sectionCount][foreach: componentIndex + mask + values]`. `_notifyDirty` Action callback pattern. Unlimited SyncVars per object (32 per NB x N behaviours) (v2.40.0, community request — CometDev)
+- [x] Auto-collecting prefab pool — `NetworkPrefabTable.CollectAll()` scans project for prefabs with NetworkObject. Custom editor with "Collect All" button, folder filter, "Remove Nulls". Inspector in EOSRuntimeInspectors.cs (v2.40.0, community request — Ducky)
+- [x] "Connecting" docs page — `docs/connecting.md` explains lobby→P2P→NetworkManager→PlayerSpawner flow. Added to sidebar + quickstart next steps (v2.40.0, community request — Ducky)
+- [x] Voice toggle UI fix — Added Voice/Migrate toggles to F1 overlay's "Join / Quick Match" section. Both sections now show shared toggles. Fixes voice offline confusion when switching between Create Lobby and Quick Match (v2.40.0, community request — Ducky)
