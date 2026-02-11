@@ -1389,13 +1389,19 @@ namespace EOSNative.Lobbies
                 LobbyId = lobbyId
             };
 
-            // Small delay to let EOS sync
-            await Task.Delay(100);
+            // Retry with backoff — EOS SDK local cache may not be populated immediately after join
+            LobbyDetails details = null;
+            Result result = Result.NotFound;
+            for (int i = 0; i < 5; i++)
+            {
+                await Task.Delay(100 * (i + 1));
+                result = LobbyInterface.CopyLobbyDetailsHandle(ref options, out details);
+                if (result == Result.Success && details != null) break;
+            }
 
-            var result = LobbyInterface.CopyLobbyDetailsHandle(ref options, out LobbyDetails details);
             if (result != Result.Success || details == null)
             {
-                Debug.LogWarning($"[EOSLobbyManager] Failed to get lobby details: {result}");
+                Debug.LogWarning($"[EOSLobbyManager] Failed to get lobby details after retries: {result}");
                 return default;
             }
 

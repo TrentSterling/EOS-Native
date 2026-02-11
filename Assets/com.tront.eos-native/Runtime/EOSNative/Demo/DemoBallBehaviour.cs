@@ -1,3 +1,4 @@
+using System.Collections;
 using EOSNative.Net;
 using EOSNative.P2P;
 using UnityEngine;
@@ -102,6 +103,34 @@ namespace EOSNative.Demo
         {
             if (IsOwner)
                 Score.Value += amount;
+        }
+
+        [NetRpc(RPCTarget.All)]
+        public void TakeHit(float fromX, float fromZ)
+        {
+            // Knockback away from shooter
+            var rb = GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                var away = (transform.position - new Vector3(fromX, transform.position.y, fromZ)).normalized;
+                rb.AddForce((away + Vector3.up * 0.3f) * 5f, ForceMode.Impulse);
+            }
+
+            // Red flash
+            StartCoroutine(FlashRedCoroutine());
+
+            // Score decrement (owner only — SyncVar propagates to all)
+            if (IsOwner)
+                Score.Value -= 1;
+        }
+
+        private IEnumerator FlashRedCoroutine()
+        {
+            var rend = GetComponent<Renderer>();
+            if (rend == null) yield break;
+            rend.material.color = Color.red;
+            yield return new WaitForSeconds(0.2f);
+            rend.material.color = BallColor.Value;
         }
 
         #endregion

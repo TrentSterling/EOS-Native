@@ -928,10 +928,36 @@ Editor-mode unit tests for core networking primitives. Uses Unity Test Framework
 | `SyncVarTests.cs` | ~20 | Dirty tracking, OnChanged, owner-write guard, SetInternal bypass, serialize round-trip, multiple SyncVars, dirty mask |
 | `SyncListTests.cs` | ~18 | Add/Set/RemoveAt/Insert/Clear, delta serialization, full state, OnChanged, enumerate |
 | `SyncDictionaryTests.cs` | ~16 | Set/Remove/Clear, delta serialization, full state, OnChanged, TryGetValue, enumerate |
+| `SyncHashSetTests.cs` | ~25 | Add/Remove/Clear, delta serialization, full state, Contains, OnChanged, enumerate |
+| `SyncTimerTests.cs` | ~45 | SyncTimer countdown/pause/resume/reset/tick/expired, SyncStopwatch start/stop/reset/restart/tick, serialization round-trips, factory methods, wire size (5 bytes) |
 | `PacketFragmenterTests.cs` | ~12 | Single-fragment fast path, multi-fragment round-trip, out-of-order, stale cleanup, max payload, duplicate ignore |
+| `MessageRouterTests.cs` | ~10 | Message registration, dispatch, batch, compression integration |
 | `NetworkIdTests.cs` | ~8 | Partition generation, scene object IDs, demo ball IDs, well-known IDs, reserved PrefabIds |
 | `CompressionTests.cs` | ~12 | Vector3Half accuracy, compressed rotation (smallest-three) round-trip, edge cases, many angles |
 | `PacketCompressionTests.cs` | ~10 | Deflate compress/decompress round-trip, various sizes, offsets, empty data, random data, threshold edge cases |
+| `CompressionSecurityTests.cs` | ~27 | Decompression bomb defense, compressed single/batch dispatch, batch count limits, malformed batch, rate limiting |
+| `LobbyOptionsTests.cs` | ~10 | Fluent builder, presets, implicit conversions, search/create options |
+| `NetworkPrefabTableTests.cs` | ~10 | AddPrefab, RemovePrefabAt, CollectAll, duplicate guard, IndexOf |
+| `RegisterExistingTests.cs` | ~10 | RegisterExisting lifecycle, NotifyNetworkSpawn, RPC registration |
+| `NetworkManagerCoreTests.cs` | ~30 | Online/offline mode, spawn/despawn, authority, host election, prefab registry |
+| `SpawnDespawnTests.cs` | ~25 | Spawn flow, despawn cleanup, pool integration, DestroyWithOwner, multi-object |
+| `SpawnOverloadTests.cs` | ~10 | Spawn(GameObject), Spawn(string), auto-register, GetPrefabId |
+| `SpawnPayloadTests.cs` | ~19 | WriteSpawnData/ReadSpawnData, length-prefixed sections, multi-NB, empty payloads |
+| `NetworkObjectHierarchyTests.cs` | ~20 | Nested objects, child spawn/despawn, reparenting, detach/attach, late-join |
+| `SyncVarAllTypesTests.cs` | ~43 | All 19 builtin serializer types isolated, mixed-type dirty/full-state round-trips |
+| `PerNBSyncVarTests.cs` | ~28 | Sectioned wire format, per-NB dirty, serialization round-trips, adaptive mask, OnChanged |
+| `PerNBComponentIdTests.cs` | ~16 | ComponentIndex assignment, RPC routing per NB, SELF fallback, backward compat |
+| `SingletonLifecycleTests.cs` | ~15 | Auto-create, parenting, shutdown guard, duplicate prevention |
+| `EndToEndTests.cs` | ~22 | Spawn+sync, SerializeAll round-trips, despawn lifecycle, respawn, multi-object, DespawnAll |
+| `LifecycleHookTests.cs` | ~22 | Convenience props, spawn/despawn hooks, host/ownership changed, GiveOwnership/RemoveOwnership |
+| `RPCGuardTests.cs` | ~22 | [HostOnly]/[OwnerOnly] registration, guard checking, cleanup, combined guards |
+| `RPCImprovementsTests.cs` | ~22 | RunLocally, ExcludeOwner, Channel, Reliability on NetRpcAttribute and SendRPCWeaved |
+| `BufferLastRPCTests.cs` | ~27 | BufferLast registration, storage, overwrite, cleanup, ClearBufferLastRPCs, offline mode, integration |
+| `InstanceFinderTests.cs` | ~10 | Static accessors, convenience shortcuts, null safety |
+| `SimulationBehaviourTests.cs` | ~10 | Auto-subscribe, tick dispatch, peer events |
+| `ReconnectHibernationTests.cs` | ~10 | PersistOnDisconnect, grace period, hibernation, ownership restore |
+
+**Total: 34 test files, 721 tests** (v2.48.0)
 
 **Run:** Window > General > Test Runner > EditMode > Run All
 
@@ -996,3 +1022,260 @@ Static class. All `NetworkPrediction` components auto-register.
 Auto-fetches RTT from `NetworkStats.Instance.RTT(shooter)`. If RTT unknown, executes without rewind.
 
 **`TrackedCount`** — number of registered objects (for debugging/UI)
+
+## SyncHashSet\<T\> (v2.42.0)
+
+Operation-based synchronized hash set. Tracks Add/Remove/Clear operations and sends minimal deltas, like SyncList and SyncDictionary.
+
+**File:** `Net/SyncHashSet.cs`
+
+```csharp
+SyncHashSet<string> Abilities;
+
+void Awake() {
+    Abilities = SyncHashSet<string>();
+    Abilities.OnChanged += (op, item) =>
+        Debug.Log($"{op}: {item}");
+}
+
+void LearnAbility(string name) {
+    if (!IsOwner) return;
+    Abilities.Add(name); // Synced to all peers
+}
+```
+
+**Operations:** Add, Remove, Clear. Each sends a 1-byte op code + serialized item. Full state sends count + all items.
+
+**Implements:** `ISyncVar`, `IReadOnlyCollection<T>`. Supports `Contains()`, `Count`, enumeration.
+
+## NetworkBehaviour Convenience API (v2.42.0)
+
+**Properties:**
+- `IsSpawned` — true after NetworkObject registered
+- `HasAuthority` — true if local peer is the owner
+- `IsOnline` / `IsOffline` — proxies to NetworkManager (no auto-create)
+
+**Methods:**
+- `Despawn()` — despawns the NetworkObject
+- `GiveOwnership(ProductUserId)` — transfers authority
+- `RemoveOwnership()` — removes owner (host claims)
+
+All use `._instance` direct field access instead of `.Instance` to prevent singleton auto-create in tests.
+
+## NetworkBehaviour Lifecycle Hooks (v2.42.0)
+
+Virtual methods called at key lifecycle points:
+
+| Hook | When | Use |
+|------|------|-----|
+| `OnStartHost()` | Local peer becomes host | Initialize host-only logic |
+| `OnStopHost()` | Local peer stops being host | Cleanup host logic |
+| `OnStartOwner()` | Local peer gains ownership | Start input handling |
+| `OnStopOwner()` | Local peer loses ownership | Stop input handling |
+| `OnOwnershipChanged(string oldOwner, string newOwner)` | Ownership transfers | Update UI, effects |
+
+Wired into `NotifyOwnerChanged` and host election. Multiple behaviours on one object all receive notifications.
+
+## Spawn Payload (v2.44.0)
+
+Per-NetworkBehaviour custom data sent with spawn/snapshot messages. Override on your NetworkBehaviour:
+
+```csharp
+public override void WriteSpawnData(NetWriter writer) {
+    writer.WriteString(_skinName);
+    writer.WriteInt32(_teamId);
+}
+
+public override void ReadSpawnData(NetReader reader) {
+    _skinName = reader.ReadString();
+    _teamId = reader.ReadInt32();
+}
+```
+
+**Wire format:** Length-prefixed per-NB sections in the spawn message. Each section: `[dataLength:u16][data...]`. Sections written per-behaviour in component order.
+
+**Paths wired:** Spawn, Snapshot, reserved scene objects, and child data all include spawn payload.
+
+## OnTick / OnPeerConnected / OnPeerDisconnected (v2.44.0)
+
+Virtual hooks on NetworkBehaviour dispatched by NetworkManager:
+
+```csharp
+public override void OnTick(uint tick) {
+    // Fixed-rate game logic (requires TickSimulation active)
+}
+
+public override void OnPeerConnected(ProductUserId peer) {
+    // Peer just connected
+}
+
+public override void OnPeerDisconnected(ProductUserId peer) {
+    // Peer just disconnected
+}
+```
+
+NetworkManager subscribes to `TickSimulation.OnTick` and dispatches to all spawned NetworkObjects → each NB's `OnTick`. Peer events dispatched in `OnPeerConnected`/`OnPeerDisconnected`.
+
+## TargetRpc — RPCTarget.Peer (v2.45.0)
+
+Send an RPC to a specific peer (not broadcast). Uses dedicated `SendRPCWeavedToPeer` overload.
+
+```csharp
+// Weaver generates peer-targeted send for RPCTarget.Peer
+[NetRpc(RPCTarget.Peer)]
+public void NotifyHit(float damage) { ... }
+
+// Called like:
+targetObject.NotifyHit(25f);  // Caller must specify target peer
+```
+
+**Guard:** Using `RPCTarget.Peer` in regular `SendRPCWeaved` logs an error — must use the peer-targeted overload.
+
+**Wire format:** Same as regular RPC but sent only to the specified `ProductUserId`.
+
+## [HostOnly] / [OwnerOnly] Guard Attributes (v2.45.0)
+
+Receiver-side guard attributes that reject RPCs from unauthorized senders:
+
+```csharp
+[NetRpc(RPCTarget.All), HostOnly]
+public void StartRound(int roundNumber) { ... }
+// Only executes if sender == host
+
+[NetRpc(RPCTarget.All), OwnerOnly]
+public void TakeDamage(float damage) { ... }
+// Only executes if sender == object owner
+```
+
+**Implementation:**
+- `RPCGuard` flags enum: `None = 0`, `HostOnly = 1`, `OwnerOnly = 2`
+- `RegisterRPCGuard(target, componentIndex, hash, guard)` — per-RPC registration
+- Guards checked in `HandleRPC` after handler lookup, before invocation
+- Silently rejected with warning log if guard fails
+- Cleanup in `UnregisterRPCs`
+
+## RPC Improvements (v2.46.0)
+
+Extended `[NetRpc]` attribute properties:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `Target` | RPCTarget | All | Who receives |
+| `Validated` | bool | false | Route through host for validation |
+| `RunLocally` | bool | false | Also execute on caller |
+| `ExcludeOwner` | bool | false | Skip owner in broadcast |
+| `Channel` | byte | 1 | EOS P2P channel |
+| `Reliability` | PacketReliability | ReliableOrdered | Packet reliability |
+| `BufferLast` | bool | false | Store last call for late joiners |
+
+```csharp
+// Fire-and-forget position update
+[NetRpc(RPCTarget.All, Channel = 0, Reliability = PacketReliability.UnreliableUnordered)]
+public void SyncPosition(Vector3 pos) { ... }
+
+// Run locally + send to others
+[NetRpc(RPCTarget.Others, RunLocally = true)]
+public void ApplyDamage(float amount) { Health.Value -= amount; }
+
+// Broadcast but skip owner
+[NetRpc(RPCTarget.All, ExcludeOwner = true)]
+public void PlayHitReaction() { ... }
+```
+
+**Helpers on NetworkManager:**
+- `SendToInterestedPeersExcluding(msgId, writer, excludePuid, ...)` — broadcast minus one peer
+- `SendToInterestedNonSpectatorsExcluding(msgId, writer, excludePuid, ...)` — non-spectator broadcast minus one peer
+
+## SyncTimer / SyncStopwatch (v2.47.0)
+
+Utility ISyncVar types for synchronized timers. Both use 5-byte wire format (float + running byte).
+
+**Files:** `Net/SyncTimer.cs`
+
+### SyncTimer (Countdown)
+
+```csharp
+private SyncTimer _roundTimer;
+
+protected override void Awake() {
+    base.Awake();
+    _roundTimer = SyncTimer(60f);  // 60 second countdown
+    _roundTimer.OnChanged += (old, remaining) => UpdateTimerUI(remaining);
+    _roundTimer.OnExpired += () => EndRound();
+}
+
+public override void OnTick(uint tick) {
+    if (IsOwner) _roundTimer.Tick(FixedTickTime);
+}
+
+void StartRound() {
+    if (!IsOwner) return;
+    _roundTimer.Start(60f);  // (re)start with duration
+}
+```
+
+**API:**
+- `Start(float duration)` — start/restart with duration
+- `Pause()` / `Resume()` — pause/resume without reset
+- `Reset()` — zero + stop
+- `Tick(float deltaTime)` — advance countdown (owner calls each tick/frame)
+- `Remaining` (float), `IsRunning` (bool), `IsExpired` (bool)
+- `OnChanged` event: `(oldRemaining, newRemaining)`
+- `OnExpired` event: fires when timer reaches zero
+
+### SyncStopwatch (Elapsed Time)
+
+```csharp
+private SyncStopwatch _matchTime;
+
+protected override void Awake() {
+    base.Awake();
+    _matchTime = SyncStopwatch();
+    _matchTime.OnChanged += (old, elapsed) => UpdateTimeUI(elapsed);
+}
+
+public override void OnTick(uint tick) {
+    if (IsOwner) _matchTime.Tick(FixedTickTime);
+}
+```
+
+**API:**
+- `Start()` — start/resume counting
+- `Stop()` — pause (elapsed preserved)
+- `Reset()` — zero + stop
+- `Restart()` — zero + start
+- `Tick(float deltaTime)` — advance elapsed (owner calls each tick/frame)
+- `Elapsed` (float), `IsRunning` (bool)
+- `OnChanged` event: `(oldElapsed, newElapsed)`
+
+**Factory methods** on both `NetworkBehaviour` (`SyncTimer()`, `SyncStopwatch()`) and `NetworkObject`. Both respect `SyncVarWriteAccess`.
+
+## BufferLast RPCs (v2.48.0)
+
+Store the most recent call per RPC method for late-joiner replay. Only the LAST invocation per (NetworkObject, componentIndex, methodHash) is kept.
+
+```csharp
+[NetRpc(RPCTarget.All, BufferLast = true)]
+public void SetTeamColor(Color color) {
+    _renderer.material.color = color;
+}
+// Late joiners receive the most recent SetTeamColor call automatically
+```
+
+**How it works:**
+1. IL weaver extracts `BufferLast = true` from `[NetRpc]` attribute
+2. Weaver emits `NetworkManager.RegisterBufferLastRPC(hash)` in `__RegisterNetRPCs()`
+3. `SendRPCWeaved` stores the call in `_bufferLastRpcs[RPCKey]` (before offline shortcut)
+4. `HandleSnapshotRequest` replays all buffered RPCs to the late joiner after objects + reparent messages
+5. `UnregisterRPCs` cleans up buffered entries for despawned objects
+
+**Storage key:** `RPCKey { NetworkId, ComponentIndex, MethodHash }` — composite struct used for all per-RPC lookups.
+
+**Wire:** Replayed RPCs use the same MSG_RPC format. ArgData is cloned (`byte[].Clone()`) to prevent aliasing.
+
+**API on NetworkManager:**
+- `RegisterBufferLastRPC(uint hash)` — mark a method hash for buffering (called by weaver)
+- `BufferLastCount` (int) — number of buffered entries
+- `ClearBufferLastRPCs()` — clear all buffered entries
+
+**Use cases:** Team color, game mode, ready state, configuration RPCs — anything where late joiners need to see the most recent value but a SyncVar isn't appropriate (e.g., the RPC has side effects beyond state).

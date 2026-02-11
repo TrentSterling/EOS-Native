@@ -557,11 +557,63 @@ namespace EOSNative.Demo
                 _heldWeapon.GetComponent<DemoWeapon>().Throw(direction, 8f);
                 _heldWeapon = null;
             }
+
+            // Weapon aiming and shooting
+            if (_heldWeapon != null)
+            {
+                var weapon = _heldWeapon.GetComponent<DemoWeapon>();
+                if (weapon != null)
+                {
+                    var aimDir = GetAimDirection();
+                    if (aimDir.sqrMagnitude > 0.01f)
+                        weapon.SetAimDirection(aimDir);
+
+#if EOS_HAS_INPUT_SYSTEM
+                    bool firePressed = Mouse.current != null && Mouse.current.leftButton.isPressed;
+#else
+                    bool firePressed = Input.GetMouseButton(0);
+#endif
+                    if (firePressed && !IsPointerOverUI() && weapon.CanFire)
+                        weapon.ShootHitscan(aimDir);
+                }
+            }
         }
 
         #endregion
 
         #region Weapons
+
+        private Vector3 GetAimDirection()
+        {
+            var cam = Camera.main;
+            if (cam == null || _localBall == null) return Vector3.forward;
+
+#if EOS_HAS_INPUT_SYSTEM
+            if (Mouse.current == null) return Vector3.forward;
+            Vector3 mousePos = Mouse.current.position.ReadValue();
+#else
+            Vector3 mousePos = Input.mousePosition;
+#endif
+
+            var ray = cam.ScreenPointToRay(mousePos);
+            float ballY = _localBall.transform.position.y;
+            var plane = new Plane(Vector3.up, new Vector3(0f, ballY, 0f));
+            if (plane.Raycast(ray, out float dist))
+            {
+                var aimPoint = ray.GetPoint(dist);
+                var dir = aimPoint - _localBall.transform.position;
+                dir.y = 0f;
+                if (dir.sqrMagnitude > 0.01f)
+                    return dir.normalized;
+            }
+
+            return Vector3.forward;
+        }
+
+        private bool IsPointerOverUI()
+        {
+            return EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+        }
 
         private NetworkObject FindNearestWeapon(float maxDist)
         {
@@ -600,7 +652,7 @@ namespace EOSNative.Demo
             float y = 10f;
             GUI.Label(new Rect(10, y, 500, 25), "P2P Ball Demo (Layer 1 + Layer 2)", style);
             y += 20f;
-            GUI.Label(new Rect(10, y, 600, 25), "WASD: Move | Space: Jump | E: Color | Q: Shockwave | T: Chat | R: Effect | F: Pickup/Drop | G: Throw", style);
+            GUI.Label(new Rect(10, y, 600, 25), "WASD: Move | Space: Jump | E: Color | Q: Shockwave | T: Chat | R: Effect | F: Pickup/Drop | G: Throw | LMB: Shoot", style);
             y += 20f;
             GUI.Label(new Rect(10, y, 500, 25), "F1: EOS Overlay", style);
             y += 20f;

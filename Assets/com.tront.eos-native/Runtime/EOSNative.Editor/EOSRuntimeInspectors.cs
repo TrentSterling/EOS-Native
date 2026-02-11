@@ -117,7 +117,9 @@ namespace EOSNative.Editor
             {
                 EditorGUILayout.TextField("Network ID", obj.IsRegistered ? $"0x{obj.NetworkId:X8}" : "(unregistered)");
                 EditorGUILayout.TextField("Prefab ID", $"0x{obj.PrefabId:X4}");
-                EditorGUILayout.TextField("Owner", obj.OwnerId?.ToString() ?? "(none)");
+                string ownerStr = "(none)";
+                try { if (obj.OwnerId != null) ownerStr = obj.OwnerId.ToString(); } catch { }
+                EditorGUILayout.TextField("Owner", ownerStr);
                 EditorGUILayout.Toggle("Is Owner", obj.IsOwner);
                 EditorGUILayout.Toggle("Is Host", obj.IsHost);
                 EditorGUILayout.Toggle("Is Registered", obj.IsRegistered);
