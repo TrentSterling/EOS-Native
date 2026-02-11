@@ -17,6 +17,7 @@ GameObject:
   - component: {fileID: 1309906786897273829}
   - component: {fileID: 7582610190642807438}
   - component: {fileID: 4367810284805748146}
+  - component: {fileID: 1309555028632636381}
   m_Layer: 0
   m_Name: PlayerBall
   m_TagString: Untagged
@@ -191,6 +192,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _destroyWithOwner: 1
+  _persistOnDisconnect: 0
   _alwaysVisible: 0
 --- !u!114 &4367810284805748146
 MonoBehaviour:
@@ -202,5 +204,17 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 564cb31eb563e4e4cb8b6d61658a391f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &1309555028632636381
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4223733129369437499}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 100a17023d06dc14bad7f253740b97d4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
