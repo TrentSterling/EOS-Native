@@ -27,7 +27,7 @@ namespace EOSNative
     {
         #region Singleton
 
-        private static EOSManager s_Instance;
+        internal static EOSManager s_Instance;
 
         /// <summary>
         /// The singleton instance of EOSManager.

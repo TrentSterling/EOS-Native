@@ -18,7 +18,7 @@ namespace EOSNative.P2P
     {
         #region Singleton
 
-        private static EOSP2PManager _instance;
+        internal static EOSP2PManager _instance;
         private static bool _shuttingDown;
         public static EOSP2PManager Instance
         {

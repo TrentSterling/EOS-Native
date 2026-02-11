@@ -185,7 +185,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Layer 2 RPCs work (E=color, Q=shockwave, T=chat, R=effect)
 
 **Automated Unit Tests:**
-- [x] All ~331 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
+- [x] All 490 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
 
 **UI — F1 OnGUI Overlay (EOSNativeStatusUI):**
 - [ ] F1 toggle opens/closes overlay
@@ -334,3 +334,10 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Per-NB SyncVar tests — 28 new EditMode tests for sectioned wire format: Sync<T>() registration, ComponentIndex assignment, NB dirty tracking, NB serialization round-trips, sectioned SerializeDirty/SerializeAll with self+NB sections, ClearDirty, adaptive mask sizes, OnChanged callbacks (v2.41.0)
 - [x] Per-NB component ID tests — 16 new EditMode tests for RPC routing: ComponentIndex assignment, RegisterRPC with componentIndex, RPC routing to correct NB in offline mode, SELF fallback, legacy backward compat, arg data passing, validated RPCs (v2.41.0)
 - [x] DemoBallStats — second NetworkBehaviour on PlayerBall prefab demonstrating per-NB scoped SyncVars with 7 varied types: Health (float), IsGrounded (bool), Velocity (Vector3), Kills (short), Deaths (short), PlayTime (double), Team (byte). Stats HUD, damage/heal/team RPCs (v2.41.0)
+- [x] NB.Net fix for inactive clones — `NotifyNetworkSpawn()` now sets `NB.Net = this` so convenience props work even when Awake() didn't run. NB.Net setter changed from `private` to `internal` (v2.42.0)
+- [x] Convenience properties on NetworkBehaviour — IsSpawned, HasAuthority, IsOnline, IsOffline. Convenience methods: Despawn(), GiveOwnership(), RemoveOwnership() (v2.42.0)
+- [x] NetworkBehaviour lifecycle hooks — OnStartHost, OnStopHost, OnStartOwner, OnStopOwner, OnOwnershipChanged. Wired into NotifyOwnerChanged and host election (v2.42.0)
+- [x] SyncHashSet\<T\> — operation-based delta sync collection (Add/Remove/Clear) with OnChanged callbacks, full state snapshots, ISyncVar implementation. 25 tests (v2.42.0)
+- [x] Singleton auto-create prevention — IsOwner, IsHost, IsOnline property getters use `._instance` instead of `.Instance` to prevent auto-create + DontDestroyOnLoad in tests. TransferAuthority offline guard added (v2.42.0)
+- [x] End-to-end tests — 22 tests covering spawn+sync dirty, SerializeAll round-trips, despawn lifecycle, respawn cycles, multi-object independence, NB convenience integration, DespawnAll (v2.42.0)
+- [x] Lifecycle hook tests — 22 tests for convenience props, spawn/despawn hooks, host/ownership changed callbacks, GiveOwnership/RemoveOwnership, multiple behaviour notification (v2.42.0)

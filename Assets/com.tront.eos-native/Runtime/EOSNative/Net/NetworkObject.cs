@@ -74,15 +74,15 @@ namespace EOSNative.Net
             get
             {
                 if (OwnerId != null)
-                    return OwnerId == EOSManager.Instance?.LocalProductUserId;
+                    return OwnerId == EOSManager.s_Instance?.LocalProductUserId;
                 // Offline mode fallback: OwnerId is null but we track ownership via NetworkManager
-                var nm = NetworkManager.Instance;
+                var nm = NetworkManager._instance;
                 return nm != null && nm.IsLocallyOwnedOffline(NetworkId);
             }
         }
 
         /// <summary>True if the local peer is the current host (lowest PUID).</summary>
-        public bool IsHost => NetworkManager.Instance != null && NetworkManager.Instance.IsHost;
+        public bool IsHost => NetworkManager._instance != null && NetworkManager._instance.IsHost;
 
         /// <summary>
         /// If true, this object is always replicated to all peers regardless of spatial interest.
@@ -186,6 +186,22 @@ namespace EOSNative.Net
             var syncDict = new SyncDictionary<TKey, TValue>(this, initial ?? new Dictionary<TKey, TValue>(), index, writeAccess);
             _syncVars.Add(syncDict);
             return syncDict;
+        }
+
+        /// <summary>
+        /// Create and register a SyncHashSet on this NetworkObject directly.
+        /// For SyncHashSets scoped to a NetworkBehaviour, use <see cref="NetworkBehaviour.SyncHashSet{T}"/> instead.
+        /// </summary>
+        public SyncHashSet<T> SyncHashSet<T>(HashSet<T> initial = null, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+        {
+            if (_syncVars.Count >= 32)
+                throw new InvalidOperationException(
+                    $"NetworkObject on '{name}' has 32 SyncVars/SyncLists/SyncDicts/SyncHashSets — max supported.");
+
+            byte index = (byte)_syncVars.Count;
+            var syncSet = new SyncHashSet<T>(this, initial ?? new HashSet<T>(), index, writeAccess);
+            _syncVars.Add(syncSet);
+            return syncSet;
         }
 
         /// <summary>
@@ -443,9 +459,35 @@ namespace EOSNative.Net
         /// <summary>Fired when this object is despawned from the network.</summary>
         public event Action OnNetworkDespawn;
 
-        /// <summary>Invoke the OnOwnerChanged event.</summary>
+        /// <summary>Invoke the OnOwnerChanged event and NetworkBehaviour lifecycle hooks.</summary>
         internal void NotifyOwnerChanged(ProductUserId oldOwner, ProductUserId newOwner)
         {
+            if (_behaviours != null)
+            {
+                var nm = NetworkManager._instance; // avoid auto-create
+                var localPuid = EOSManager.s_Instance?.LocalProductUserId;
+
+                // Determine if local player was/is the owner
+                bool wasLocalOwner = localPuid != null && oldOwner != null && oldOwner == localPuid;
+                bool isLocalOwner = localPuid != null && newOwner != null && newOwner == localPuid;
+
+                // In offline mode, all spawned objects are owned by local player
+                if (nm != null && nm.OfflineMode)
+                {
+                    wasLocalOwner = oldOwner != null || nm.IsLocallyOwnedOffline(NetworkId);
+                    isLocalOwner = true;
+                }
+
+                for (int i = 0; i < _behaviours.Length; i++)
+                {
+                    _behaviours[i].OnOwnershipChanged(oldOwner);
+                    if (!wasLocalOwner && isLocalOwner)
+                        _behaviours[i].OnStartOwner();
+                    else if (wasLocalOwner && !isLocalOwner)
+                        _behaviours[i].OnStopOwner();
+                }
+            }
+
             OnOwnerChanged?.Invoke(oldOwner, newOwner);
         }
 
@@ -496,6 +538,7 @@ namespace EOSNative.Net
             _behaviours = GetComponents<NetworkBehaviour>();
             for (int i = 0; i < _behaviours.Length; i++)
             {
+                _behaviours[i].Net = this; // Ensure Net is set even if Awake didn't run (inactive clones)
                 _behaviours[i].ComponentIndex = (byte)i;
                 _behaviours[i].__RegisterNetRPCs();
                 _behaviours[i].OnNetworkSpawn();

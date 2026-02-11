@@ -49,7 +49,7 @@ namespace EOSNative.Net
 
         #region Singleton
 
-        private static NetworkManager _instance;
+        internal static NetworkManager _instance;
         private static bool _shuttingDown;
         public static NetworkManager Instance
         {
@@ -213,7 +213,7 @@ namespace EOSNative.Net
         {
             get
             {
-                var peers = EOSP2PManager.Instance?.Peers;
+                var peers = EOSP2PManager._instance?.Peers;
                 return peers != null && peers.Count > 0;
             }
         }
@@ -2026,11 +2026,14 @@ namespace EOSNative.Net
 
             // Authority changes always broadcast to all (not interest-filtered)
             // because the new owner needs to know even if they can't "see" the object yet
-            var writer = NetWriterPool.Get();
-            writer.WriteUInt32(obj.NetworkId);
-            writer.WriteProductUserId(newOwner);
-            Router.SendToAll(MSG_AUTHORITY, writer, PacketReliability.ReliableOrdered, 1);
-            NetWriterPool.Return(writer);
+            if (!OfflineMode)
+            {
+                var writer = NetWriterPool.Get();
+                writer.WriteUInt32(obj.NetworkId);
+                writer.WriteProductUserId(newOwner);
+                Router.SendToAll(MSG_AUTHORITY, writer, PacketReliability.ReliableOrdered, 1);
+                NetWriterPool.Return(writer);
+            }
         }
 
         /// <summary>
@@ -2724,6 +2727,18 @@ namespace EOSNative.Net
 
                     // Ensure RoomState exists (may have been created by previous host)
                     EnsureRoomState();
+                }
+
+                // Notify all NetworkBehaviours on registered objects
+                foreach (var kvp in _objects)
+                {
+                    var behaviours = kvp.Value._behaviours;
+                    if (behaviours == null) continue;
+                    for (int b = 0; b < behaviours.Length; b++)
+                    {
+                        if (IsHost) behaviours[b].OnStartHost();
+                        else behaviours[b].OnStopHost();
+                    }
                 }
 
                 OnHostChanged?.Invoke(IsHost);

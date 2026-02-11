@@ -19,7 +19,7 @@ namespace EOSNative.Net
     public abstract class NetworkBehaviour : MonoBehaviour
     {
         /// <summary>The NetworkObject on this GameObject. Auto-added if missing.</summary>
-        public NetworkObject Net { get; private set; }
+        public NetworkObject Net { get; internal set; }
 
         /// <summary>
         /// Index of this NetworkBehaviour within its NetworkObject's behaviour list.
@@ -42,6 +42,18 @@ namespace EOSNative.Net
 
         /// <summary>True if the local peer is a spectator (read-only observer).</summary>
         public bool IsSpectator => NetworkManager.Instance?.IsSpectator ?? false;
+
+        /// <summary>True if this object has been spawned and has a valid NetworkId.</summary>
+        public bool IsSpawned => Net != null && Net.IsRegistered;
+
+        /// <summary>True if this peer has authority over this object (owner, or host for unowned objects).</summary>
+        public bool HasAuthority => IsOwner || (IsHost && OwnerId == null);
+
+        /// <summary>True if connected to peers via P2P.</summary>
+        public bool IsOnline => NetworkManager._instance?.IsOnline ?? false;
+
+        /// <summary>True if running in offline mode (local-only networking).</summary>
+        public bool IsOffline => NetworkManager._instance?.OfflineMode ?? false;
 
         /// <summary>Shortcut to NetworkManager.Instance.</summary>
         protected NetworkManager Manager => NetworkManager.Instance;
@@ -108,6 +120,22 @@ namespace EOSNative.Net
             var syncDict = new SyncDictionary<TKey, TValue>(Net, initial ?? new Dictionary<TKey, TValue>(), index, writeAccess, MarkDirtyNB);
             _syncVars.Add(syncDict);
             return syncDict;
+        }
+
+        /// <summary>
+        /// Create and register a SyncHashSet scoped to this NetworkBehaviour.
+        /// Call in Awake() after base.Awake().
+        /// </summary>
+        protected SyncHashSet<T> SyncHashSet<T>(HashSet<T> initial = null, SyncVarWriteAccess writeAccess = SyncVarWriteAccess.Owner)
+        {
+            if (_syncVars.Count >= 32)
+                throw new InvalidOperationException(
+                    $"NetworkBehaviour '{GetType().Name}' on '{name}' has 32 SyncVars/SyncHashSets — max per behaviour.");
+
+            byte index = (byte)_syncVars.Count;
+            var syncSet = new SyncHashSet<T>(Net, initial ?? new HashSet<T>(), index, writeAccess, MarkDirtyNB);
+            _syncVars.Add(syncSet);
+            return syncSet;
         }
 
         /// <summary>Called by SyncVar setters when a value changes on this behaviour.</summary>
@@ -213,6 +241,30 @@ namespace EOSNative.Net
 
         #endregion
 
+        #region Convenience Methods
+
+        /// <summary>Despawn this object from the network. Only callable by owner or host.</summary>
+        public void Despawn()
+        {
+            if (Net != null) Manager?.Despawn(Net);
+        }
+
+        /// <summary>Transfer ownership of this object to another peer.</summary>
+        public void GiveOwnership(ProductUserId newOwner)
+        {
+            if (Net != null) Manager?.TransferAuthority(Net, newOwner);
+        }
+
+        /// <summary>Release ownership — host will claim this object.</summary>
+        public void RemoveOwnership()
+        {
+            if (Net != null) Manager?.TransferAuthority(Net, null);
+        }
+
+        #endregion
+
+        #region Lifecycle Hooks
+
         /// <summary>
         /// Called by NetworkManager after NetworkId is assigned and the object is registered.
         /// Override for post-spawn initialization (e.g. subscribing to events that need NetworkId).
@@ -224,6 +276,23 @@ namespace EOSNative.Net
         /// Override for cleanup before the object is deactivated/pooled.
         /// </summary>
         public virtual void OnNetworkDespawn() { }
+
+        /// <summary>Called when this peer becomes the host (e.g. after host migration).</summary>
+        public virtual void OnStartHost() { }
+
+        /// <summary>Called when this peer is no longer the host.</summary>
+        public virtual void OnStopHost() { }
+
+        /// <summary>Called when the local peer gains ownership of this object.</summary>
+        public virtual void OnStartOwner() { }
+
+        /// <summary>Called when the local peer loses ownership of this object (transferred away).</summary>
+        public virtual void OnStopOwner() { }
+
+        /// <summary>Called when this object's ownership changes. Args: previous owner PUID (null if unowned).</summary>
+        public virtual void OnOwnershipChanged(ProductUserId previousOwner) { }
+
+        #endregion
 
         /// <summary>
         /// Weaver-generated override that registers all [NetRpc] handlers on this behaviour.
