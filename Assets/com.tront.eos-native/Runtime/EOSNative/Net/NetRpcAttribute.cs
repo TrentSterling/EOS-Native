@@ -75,6 +75,18 @@ namespace EOSNative.Net
         /// </summary>
         public PacketReliability Reliability { get; set; } = PacketReliability.ReliableOrdered;
 
+        /// <summary>
+        /// If true, the most recent call to this RPC is stored and replayed to late-joining peers.
+        /// Only the LAST call per (NetworkObject, componentIndex, methodHash) is kept.
+        /// Use for state-setting RPCs like SetTeamColor, SetGameMode, etc.
+        /// <example><code>
+        /// [NetRpc(RPCTarget.All, BufferLast = true)]
+        /// public void SetTeamColor(Color color) { _teamColor.Value = color; }
+        /// // Late joiners receive the most recent SetTeamColor call
+        /// </code></example>
+        /// </summary>
+        public bool BufferLast { get; set; }
+
         public NetRpcAttribute(RPCTarget target = RPCTarget.All)
         {
             Target = target;

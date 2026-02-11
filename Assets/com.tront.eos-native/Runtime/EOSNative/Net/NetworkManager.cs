@@ -869,6 +869,16 @@ namespace EOSNative.Net
         }
 
         /// <summary>
+        /// Mark a method hash as requiring BufferLast storage. Called by weaver-generated
+        /// __RegisterNetRPCs() when [NetRpc(BufferLast = true)] is present.
+        /// The most recent call per (object, component, method) is stored and replayed to late joiners.
+        /// </summary>
+        public void RegisterBufferLastRPC(uint methodHash)
+        {
+            _bufferLastHashes.Add(methodHash);
+        }
+
+        /// <summary>
         /// Send a validated RPC through the host with component scoping.
         /// Called by weaver for [NetRpc(Validated = true)].
         /// Client sends to host only. Host validates, then rebroadcasts to all.
@@ -967,6 +977,21 @@ namespace EOSNative.Net
             {
                 Debug.LogError("[NetworkManager] RPCTarget.Peer requires SendRPCWeavedToPeer — use the peer-targeted overload");
                 return;
+            }
+
+            // BufferLast: store the most recent call for late-joiner replay (before offline shortcut)
+            if (_bufferLastHashes.Contains(methodHash))
+            {
+                var key = new RPCKey { NetworkId = target.NetworkId, ComponentIndex = componentIndex, MethodHash = methodHash };
+                _bufferLastRpcs[key] = new BufferedRPC
+                {
+                    Target = target,
+                    MethodName = null,
+                    ComponentIndex = componentIndex,
+                    MethodHash = methodHash,
+                    Targets = targets,
+                    ArgData = (byte[])argData.Clone()
+                };
             }
 
             // Offline mode: always execute locally, never send remote
@@ -1132,6 +1157,7 @@ namespace EOSNative.Net
                 _rpcHandlers.Remove(key);
                 _rpcMethodNames.Remove(key);
                 _rpcGuards.Remove(key);
+                _bufferLastRpcs.Remove(key);
             }
         }
 
@@ -1231,6 +1257,16 @@ namespace EOSNative.Net
         private readonly Dictionary<uint, Func<ProductUserId, NetworkObject, byte[], bool>> _rpcValidators = new();
         // Track which method hashes require host validation
         private readonly HashSet<uint> _validatedRpcHashes = new();
+
+        // BufferLast RPCs: hashes marked for buffering, and the most recent call per (object, component, method)
+        internal readonly HashSet<uint> _bufferLastHashes = new();
+        private readonly Dictionary<RPCKey, BufferedRPC> _bufferLastRpcs = new();
+
+        /// <summary>Number of buffered RPCs currently stored (for testing/diagnostics).</summary>
+        public int BufferLastCount => _bufferLastRpcs.Count;
+
+        /// <summary>Clear all buffered RPCs (for testing/cleanup).</summary>
+        internal void ClearBufferLastRPCs() => _bufferLastRpcs.Clear();
 
         // Interest management: reusable buffer for filtered peer lists
         private readonly List<ProductUserId> _interestedPeersBuffer = new();
@@ -2380,6 +2416,27 @@ namespace EOSNative.Net
                     Router.SendToPeer(MSG_REPARENT, rw, sender, PacketReliability.ReliableOrdered, 1);
                     NetWriterPool.Return(rw);
                 }
+            }
+
+            // Replay BufferLast RPCs to the late joiner
+            if (_bufferLastRpcs.Count > 0)
+            {
+                foreach (var kvp in _bufferLastRpcs)
+                {
+                    var buffered = kvp.Value;
+                    if (buffered.Target == null || !buffered.Target.IsRegistered) continue;
+
+                    var rw = NetWriterPool.Get();
+                    rw.WriteUInt32(buffered.Target.NetworkId);
+                    rw.WriteByte(buffered.ComponentIndex);
+                    rw.WriteUInt32(buffered.MethodHash);
+                    rw.WriteBytesRaw(buffered.ArgData, 0, buffered.ArgData.Length);
+                    Router.SendToPeer(MSG_RPC, rw, sender, PacketReliability.ReliableOrdered, 1);
+                    NetWriterPool.Return(rw);
+                }
+
+                EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
+                    $"Replayed {_bufferLastRpcs.Count} BufferLast RPCs to {sender}");
             }
         }
 

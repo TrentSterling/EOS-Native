@@ -36,6 +36,7 @@ namespace EOSNative.CodeGen
         public MethodReference NetworkManager_SendRPCValidated;  // (NetworkObject, byte, uint, RPCTarget, byte[])
         public MethodReference NetworkManager_MarkRPCValidated;
         public MethodReference NetworkManager_RegisterRPCValidator;
+        public MethodReference NetworkManager_RegisterBufferLastRPC;
         public MethodReference NetworkBehaviour_get_Net;
         public MethodReference NetworkBehaviour_get_ComponentIndex;
         public MethodReference NetWriterPool_Get;
@@ -144,6 +145,10 @@ namespace EOSNative.CodeGen
             // NetworkManager.RegisterRPCValidator(uint, Func<ProductUserId, NetworkObject, byte[], bool>)
             NetworkManager_RegisterRPCValidator = _module.ImportReference(
                 FindMethod(nmDef, "RegisterRPCValidator", 2));
+
+            // NetworkManager.RegisterBufferLastRPC(uint)
+            NetworkManager_RegisterBufferLastRPC = _module.ImportReference(
+                FindMethod(nmDef, "RegisterBufferLastRPC", 1));
 
             // NetworkBehaviour.Net getter + ComponentIndex getter
             var nbDef = ResolveTypeDef(eosNativeAsm, "EOSNative.Net.NetworkBehaviour");

@@ -73,7 +73,7 @@ namespace EOSNative.CodeGen
                 var rpcMethods = FindRpcMethods(type);
                 if (rpcMethods.Count == 0) continue;
 
-                var invokeHandlers = new List<(uint hash, string name, MethodDefinition invoker, bool validated)>();
+                var invokeHandlers = new List<(uint hash, string name, MethodDefinition invoker, bool validated, bool bufferLast)>();
 
                 foreach (var rpcMethod in rpcMethods)
                 {
@@ -91,14 +91,17 @@ namespace EOSNative.CodeGen
                     if (attr.HasConstructorArguments && attr.ConstructorArguments.Count > 0)
                         target = (int)attr.ConstructorArguments[0].Value;
 
-                    // Check for Validated = true (named property on the attribute)
+                    // Check for Validated = true, BufferLast = true (named properties on the attribute)
                     bool validated = false;
+                    bool bufferLast = false;
                     if (attr.HasProperties)
                     {
                         foreach (var prop in attr.Properties)
                         {
                             if (prop.Name == "Validated" && prop.Argument.Value is bool v)
                                 validated = v;
+                            if (prop.Name == "BufferLast" && prop.Argument.Value is bool b)
+                                bufferLast = b;
                         }
                     }
 
@@ -111,7 +114,7 @@ namespace EOSNative.CodeGen
                     // 2. Create __InvokeNetRpc_ method (deserialize + call UserCode_)
                     var invoker = CreateInvokerMethod(type, rpcMethod, userCode);
                     type.Methods.Add(invoker);
-                    invokeHandlers.Add((methodHash, rpcMethod.Name, invoker, validated));
+                    invokeHandlers.Add((methodHash, rpcMethod.Name, invoker, validated, bufferLast));
 
                     // 3. Rewrite original method body (dispatch stub)
                     // NetworkObject subclasses use 'this' directly; NetworkBehaviours use 'this.Net'
@@ -472,7 +475,7 @@ namespace EOSNative.CodeGen
         /// </summary>
         /// <param name="isNetworkObject">True if the declaring type is a NetworkObject subclass (use 'this' directly instead of 'this.Net').</param>
         private void GenerateRegisterMethod(TypeDefinition type,
-            List<(uint hash, string name, MethodDefinition invoker, bool validated)> handlers,
+            List<(uint hash, string name, MethodDefinition invoker, bool validated, bool bufferLast)> handlers,
             bool isNetworkObject)
         {
             // Remove existing __RegisterNetRPCs if the weaver already generated one
@@ -510,7 +513,7 @@ namespace EOSNative.CodeGen
             }
 
             // For each RPC: NetworkManager.Instance.RegisterRPC(netObj, hash, "name", __InvokeNetRpc_Name)
-            foreach (var (hash, name, invoker, validated) in handlers)
+            foreach (var (hash, name, invoker, validated, bufferLast) in handlers)
             {
                 // NetworkManager.Instance
                 il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);
@@ -568,6 +571,14 @@ namespace EOSNative.CodeGen
                         il.Emit(OpCodes.Newobj, _types.FuncValidator_Ctor);
                         il.Emit(OpCodes.Callvirt, _types.NetworkManager_RegisterRPCValidator);
                     }
+                }
+
+                // If BufferLast, register for late-joiner replay
+                if (bufferLast)
+                {
+                    il.Emit(OpCodes.Call, _types.NetworkManager_get_Instance);
+                    il.Emit(OpCodes.Ldc_I4, unchecked((int)hash));
+                    il.Emit(OpCodes.Callvirt, _types.NetworkManager_RegisterBufferLastRPC);
                 }
             }
 
