@@ -1,18 +1,48 @@
+using System.Reflection;
 using NUnit.Framework;
 using EOSNative.Net;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace EOSNative.Tests
 {
     /// <summary>
     /// Tests for nested NetworkObjects (v2.33.0) and runtime reparenting (v2.34.0).
     /// Tests focus on the NetworkObject property/state layer — no actual P2P networking.
+    /// Spawning tests use the inactive GO + reflection pattern.
     /// </summary>
     public class NetworkObjectHierarchyTests
     {
+        private NetworkManager _nm;
+
+        private static readonly FieldInfo NmInstanceField =
+            typeof(NetworkManager).GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static);
+
+        [SetUp]
+        public void SetUp()
+        {
+            var go = new GameObject("NetworkManager");
+            go.SetActive(false);
+            _nm = go.AddComponent<NetworkManager>();
+            NmInstanceField.SetValue(null, _nm);
+
+            typeof(NetworkManager).GetProperty("OfflineMode").SetValue(_nm, true);
+            typeof(NetworkManager).GetProperty("IsHost").SetValue(_nm, true);
+            typeof(NetworkManager)
+                .GetField("_localIdPrefix", BindingFlags.NonPublic | BindingFlags.Instance)
+                .SetValue(_nm, (ushort)0xFFFF);
+            typeof(NetworkManager)
+                .GetField("_localIdCounter", BindingFlags.NonPublic | BindingFlags.Instance)
+                .SetValue(_nm, (ushort)1);
+        }
+
         [TearDown]
         public void TearDown()
         {
+            NmInstanceField.SetValue(null, null);
+            if (_nm != null)
+                Object.DestroyImmediate(_nm.gameObject);
+
             foreach (var name in new[] { "NetworkManager", "EOSP2PManager", "EOSLobbyManager", "NetworkSceneManager" })
             {
                 var obj = GameObject.Find(name);
@@ -374,6 +404,330 @@ namespace EOSNative.Tests
             Assert.AreEqual(99.9f, sv2.Value, 0.001f);
 
             Cleanup(root);
+        }
+
+        #endregion
+
+        #region Spawning Nested Objects
+
+        /// <summary>Create a prefab with root + N nested children.</summary>
+        private GameObject CreateNestedPrefab(string name, int childCount)
+        {
+            var root = new GameObject(name);
+            root.AddComponent<NetworkObject>();
+            for (int i = 0; i < childCount; i++)
+            {
+                var child = new GameObject($"Child{i}");
+                child.transform.SetParent(root.transform);
+                child.AddComponent<NetworkObject>();
+            }
+            root.SetActive(false);
+            return root;
+        }
+
+        [Test]
+        public void Spawn_NestedPrefab_RootAndChildrenRegistered()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 2);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            Assert.AreEqual(3, allNetObjs.Length, "Should have root + 2 children");
+
+            foreach (var netObj in allNetObjs)
+            {
+                Assert.IsTrue(netObj.IsRegistered, $"{netObj.name} should be registered");
+                Assert.AreNotEqual(0u, netObj.NetworkId, $"{netObj.name} should have a NetworkId");
+            }
+        }
+
+        [Test]
+        public void Spawn_NestedPrefab_ChildrenHaveParentNetworkId()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 2);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            var root = allNetObjs[0];
+
+            for (int i = 1; i < allNetObjs.Length; i++)
+            {
+                Assert.AreEqual(root.NetworkId, allNetObjs[i].ParentNetworkId,
+                    $"Child {i} should have ParentNetworkId = root's NetworkId");
+                Assert.IsTrue(allNetObjs[i].IsChildNetworkObject);
+            }
+        }
+
+        [Test]
+        public void Spawn_NestedPrefab_ChildrenHaveOriginalParentNetworkId()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 1);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            var root = allNetObjs[0];
+            var child = allNetObjs[1];
+
+            Assert.AreEqual(root.NetworkId, child.OriginalParentNetworkId,
+                "OriginalParentNetworkId should be set to root's NetworkId at spawn");
+        }
+
+        [Test]
+        public void Spawn_NestedPrefab_ChildrenInObjectsDict()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 2);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            for (int i = 0; i < allNetObjs.Length; i++)
+            {
+                Assert.IsTrue(_nm.Objects.ContainsKey(allNetObjs[i].NetworkId),
+                    $"{allNetObjs[i].name} should be in Objects dictionary");
+            }
+        }
+
+        [Test]
+        public void Spawn_SinglePrefab_NoChildren()
+        {
+            var prefab = new GameObject("Simple");
+            prefab.AddComponent<NetworkObject>();
+            prefab.SetActive(false);
+            _nm.RegisterPrefab(prefab, 0);
+
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+            Assert.IsTrue(spawned.IsRootNetworkObject);
+            Assert.AreEqual(0u, spawned.ParentNetworkId);
+            Assert.AreEqual(0u, spawned.OriginalParentNetworkId);
+        }
+
+        [Test]
+        public void Spawn_NestedPrefab_UniqueNetworkIds()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 3);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            var ids = new System.Collections.Generic.HashSet<uint>();
+
+            foreach (var netObj in allNetObjs)
+            {
+                Assert.IsTrue(ids.Add(netObj.NetworkId),
+                    $"Duplicate NetworkId {netObj.NetworkId} on {netObj.name}");
+            }
+        }
+
+        #endregion
+
+        #region Despawn Cascade
+
+        [Test]
+        public void Despawn_Root_RemovesAllChildren()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 2);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            var childIds = new uint[allNetObjs.Length - 1];
+            for (int i = 1; i < allNetObjs.Length; i++)
+                childIds[i - 1] = allNetObjs[i].NetworkId;
+
+            _nm.Despawn(spawned);
+
+            foreach (var childId in childIds)
+            {
+                Assert.IsFalse(_nm.Objects.ContainsKey(childId),
+                    $"Child {childId} should be removed from Objects after root despawn");
+            }
+        }
+
+        [Test]
+        public void Despawn_Child_Directly_IsBlocked()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 1);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            var child = allNetObjs[1];
+
+            LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("Cannot despawn child"));
+            _nm.Despawn(child);
+
+            // Child should still be registered
+            Assert.IsTrue(_nm.Objects.ContainsKey(child.NetworkId),
+                "Child should still be in Objects after blocked direct despawn");
+        }
+
+        #endregion
+
+        #region Reparenting via NetworkManager
+
+        [Test]
+        public void Reparent_UpdatesParentNetworkId()
+        {
+            // Spawn two separate root objects
+            var prefabA = new GameObject("PrefabA");
+            prefabA.AddComponent<NetworkObject>();
+            prefabA.SetActive(false);
+            _nm.RegisterPrefab(prefabA, 0);
+
+            var prefabB = new GameObject("PrefabB");
+            prefabB.AddComponent<NetworkObject>();
+            prefabB.SetActive(false);
+            _nm.RegisterPrefab(prefabB, 1);
+
+            var objA = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+            var objB = _nm.Spawn(1, new Vector3(10, 0, 0), Quaternion.identity);
+
+            Assert.IsTrue(objA.IsRootNetworkObject);
+            Assert.IsTrue(objB.IsRootNetworkObject);
+
+            // Reparent A under B
+            objA.SetNetworkParent(objB);
+
+            Assert.AreEqual(objB.NetworkId, objA.ParentNetworkId,
+                "ParentNetworkId should be B's NetworkId after reparent");
+            Assert.IsTrue(objA.IsChildNetworkObject);
+        }
+
+        [Test]
+        public void Detach_ClearsParentNetworkId()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 1);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            var child = allNetObjs[1];
+
+            Assert.IsTrue(child.IsChildNetworkObject);
+
+            child.DetachFromNetworkParent();
+
+            Assert.AreEqual(0u, child.ParentNetworkId, "ParentNetworkId should be 0 after detach");
+            Assert.IsTrue(child.IsRootNetworkObject);
+        }
+
+        [Test]
+        public void Reparent_OriginalParentUnchanged()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 1);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            var root = allNetObjs[0];
+            var child = allNetObjs[1];
+            uint originalParent = child.OriginalParentNetworkId;
+
+            Assert.AreEqual(root.NetworkId, originalParent);
+
+            // Detach
+            child.DetachFromNetworkParent();
+            Assert.AreEqual(originalParent, child.OriginalParentNetworkId,
+                "OriginalParentNetworkId should not change after detach");
+        }
+
+        [Test]
+        public void Reparent_FiresOnReparentedEvent()
+        {
+            var prefabA = new GameObject("PrefabA");
+            prefabA.AddComponent<NetworkObject>();
+            prefabA.SetActive(false);
+            _nm.RegisterPrefab(prefabA, 0);
+
+            var prefabB = new GameObject("PrefabB");
+            prefabB.AddComponent<NetworkObject>();
+            prefabB.SetActive(false);
+            _nm.RegisterPrefab(prefabB, 1);
+
+            var objA = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+            var objB = _nm.Spawn(1, Vector3.zero, Quaternion.identity);
+
+            int eventCount = 0;
+            NetworkObject receivedNewParent = null;
+            objA.OnReparented += (oldP, newP) =>
+            {
+                eventCount++;
+                receivedNewParent = newP;
+            };
+
+            objA.SetNetworkParent(objB);
+
+            Assert.AreEqual(1, eventCount, "OnReparented should fire once");
+            Assert.AreSame(objB, receivedNewParent, "New parent should be objB");
+        }
+
+        [Test]
+        public void Reparent_CannotNestUnderChild()
+        {
+            var prefab = CreateNestedPrefab("NestedPrefab", 1);
+            _nm.RegisterPrefab(prefab, 0);
+            var spawned = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            var allNetObjs = spawned.GetComponentsInChildren<NetworkObject>(true);
+            var child = allNetObjs[1];
+
+            // Create another object and try to parent under child
+            var prefab2 = new GameObject("Other");
+            prefab2.AddComponent<NetworkObject>();
+            prefab2.SetActive(false);
+            _nm.RegisterPrefab(prefab2, 1);
+            var other = _nm.Spawn(1, Vector3.zero, Quaternion.identity);
+
+            LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("Cannot reparent"));
+            other.SetNetworkParent(child);
+
+            Assert.IsTrue(other.IsRootNetworkObject,
+                "Object should remain root when trying to parent under a child");
+        }
+
+        [Test]
+        public void Reparent_NoOp_WhenAlreadyParented()
+        {
+            var prefabA = new GameObject("PrefabA");
+            prefabA.AddComponent<NetworkObject>();
+            prefabA.SetActive(false);
+            _nm.RegisterPrefab(prefabA, 0);
+
+            var prefabB = new GameObject("PrefabB");
+            prefabB.AddComponent<NetworkObject>();
+            prefabB.SetActive(false);
+            _nm.RegisterPrefab(prefabB, 1);
+
+            var objA = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+            var objB = _nm.Spawn(1, Vector3.zero, Quaternion.identity);
+
+            objA.SetNetworkParent(objB);
+
+            int eventCount = 0;
+            objA.OnReparented += (oldP, newP) => eventCount++;
+
+            // Parent again under same object — should be no-op
+            objA.SetNetworkParent(objB);
+            Assert.AreEqual(0, eventCount, "No event should fire for redundant reparent");
+        }
+
+        [Test]
+        public void Detach_NoOp_WhenAlreadyRoot()
+        {
+            var prefab = new GameObject("Simple");
+            prefab.AddComponent<NetworkObject>();
+            prefab.SetActive(false);
+            _nm.RegisterPrefab(prefab, 0);
+            var obj = _nm.Spawn(0, Vector3.zero, Quaternion.identity);
+
+            int eventCount = 0;
+            obj.OnReparented += (oldP, newP) => eventCount++;
+
+            obj.DetachFromNetworkParent();
+            Assert.AreEqual(0, eventCount, "No event should fire for detaching a root object");
         }
 
         #endregion

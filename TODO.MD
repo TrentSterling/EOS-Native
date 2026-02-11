@@ -185,7 +185,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Layer 2 RPCs work (E=color, Q=shockwave, T=chat, R=effect)
 
 **Automated Unit Tests:**
-- [x] All 490 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
+- [x] All 559 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
 
 **UI — F1 OnGUI Overlay (EOSNativeStatusUI):**
 - [ ] F1 toggle opens/closes overlay

@@ -138,6 +138,51 @@ namespace EOSNative.Tests
             Cleanup(netObj);
         }
 
+        [Test]
+        public void Clear_IsNoOpWhenEmpty()
+        {
+            var (netObj, list) = CreateSyncList<int>();
+            list.Clear();
+            Assert.IsFalse(list.IsDirty, "Clear on empty list should not mark dirty");
+            Assert.AreEqual(0, list.Count);
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void InitialValues_Preserved()
+        {
+            var (netObj, list) = CreateSyncList(new List<int> { 10, 20, 30 });
+            Assert.AreEqual(3, list.Count);
+            Assert.AreEqual(10, list[0]);
+            Assert.AreEqual(20, list[1]);
+            Assert.AreEqual(30, list[2]);
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void Insert_AtStart()
+        {
+            var (netObj, list) = CreateSyncList(new List<string> { "b", "c" });
+            list.ClearDirty();
+            list.Insert(0, "a");
+            Assert.AreEqual(3, list.Count);
+            Assert.AreEqual("a", list[0]);
+            Assert.AreEqual("b", list[1]);
+            Assert.AreEqual("c", list[2]);
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void Insert_AtEnd()
+        {
+            var (netObj, list) = CreateSyncList(new List<int> { 1, 2 });
+            list.ClearDirty();
+            list.Insert(2, 3);
+            Assert.AreEqual(3, list.Count);
+            Assert.AreEqual(3, list[2]);
+            Cleanup(netObj);
+        }
+
         #endregion
 
         #region Dirty Tracking
@@ -159,6 +204,56 @@ namespace EOSNative.Tests
             list.Add(1);
             list.ClearDirty();
             Assert.IsFalse(list.IsDirty);
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void Set_MarksDirty()
+        {
+            var (netObj, list) = CreateSyncList(new List<int> { 10 });
+            list.ClearDirty();
+            list[0] = 99;
+            Assert.IsTrue(list.IsDirty, "Set should mark dirty");
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void Insert_MarksDirty()
+        {
+            var (netObj, list) = CreateSyncList(new List<int> { 1 });
+            list.ClearDirty();
+            list.Insert(0, 0);
+            Assert.IsTrue(list.IsDirty, "Insert should mark dirty");
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void RemoveAt_MarksDirty()
+        {
+            var (netObj, list) = CreateSyncList(new List<int> { 1, 2 });
+            list.ClearDirty();
+            list.RemoveAt(0);
+            Assert.IsTrue(list.IsDirty, "RemoveAt should mark dirty");
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void Clear_MarksDirty()
+        {
+            var (netObj, list) = CreateSyncList(new List<int> { 1, 2 });
+            list.ClearDirty();
+            list.Clear();
+            Assert.IsTrue(list.IsDirty, "Clear should mark dirty");
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void Remove_MarksDirty()
+        {
+            var (netObj, list) = CreateSyncList(new List<string> { "a" });
+            list.ClearDirty();
+            list.Remove("a");
+            Assert.IsTrue(list.IsDirty, "Remove should mark dirty");
             Cleanup(netObj);
         }
 
@@ -210,6 +305,51 @@ namespace EOSNative.Tests
             list.OnChanged += (op, idx, old, _) => { if (op == SyncListOp.RemoveAt) removed = old; };
             list.RemoveAt(0);
             Assert.AreEqual("a", removed);
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void OnChanged_Insert()
+        {
+            var (netObj, list) = CreateSyncList(new List<int> { 1, 3 });
+            list.ClearDirty();
+
+            SyncListOp lastOp = (SyncListOp)255;
+            int lastIdx = -1;
+            int lastNew = -1;
+            list.OnChanged += (op, idx, old, n) => { lastOp = op; lastIdx = idx; lastNew = n; };
+            list.Insert(1, 2);
+            Assert.AreEqual(SyncListOp.Insert, lastOp);
+            Assert.AreEqual(1, lastIdx);
+            Assert.AreEqual(2, lastNew);
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void OnChanged_Clear()
+        {
+            var (netObj, list) = CreateSyncList(new List<int> { 1, 2, 3 });
+            list.ClearDirty();
+
+            SyncListOp lastOp = (SyncListOp)255;
+            list.OnChanged += (op, idx, old, n) => lastOp = op;
+            list.Clear();
+            Assert.AreEqual(SyncListOp.Clear, lastOp);
+            Cleanup(netObj);
+        }
+
+        [Test]
+        public void OnChanged_Remove_ByValue()
+        {
+            var (netObj, list) = CreateSyncList(new List<string> { "a", "b", "c" });
+            list.ClearDirty();
+
+            SyncListOp lastOp = (SyncListOp)255;
+            string lastOld = null;
+            list.OnChanged += (op, idx, old, n) => { lastOp = op; lastOld = old; };
+            list.Remove("b");
+            Assert.AreEqual(SyncListOp.RemoveAt, lastOp, "Remove(value) should fire as RemoveAt");
+            Assert.AreEqual("b", lastOld);
             Cleanup(netObj);
         }
 
@@ -265,6 +405,93 @@ namespace EOSNative.Tests
             Cleanup(netObj2);
         }
 
+        [Test]
+        public void Delta_Insert_RoundTrip()
+        {
+            var (netObj1, list1) = CreateSyncList(new List<int> { 1, 3 });
+            list1.ClearDirty();
+            list1.Insert(1, 2);
+
+            var w = new NetWriter();
+            list1.WriteTo(w);
+
+            var (netObj2, list2) = CreateSyncList(new List<int> { 1, 3 });
+            var r = new NetReader(w.ToArray());
+            list2.ReadFrom(r);
+
+            Assert.AreEqual(3, list2.Count);
+            Assert.AreEqual(1, list2[0]);
+            Assert.AreEqual(2, list2[1]);
+            Assert.AreEqual(3, list2[2]);
+
+            Cleanup(netObj1);
+            Cleanup(netObj2);
+        }
+
+        [Test]
+        public void Delta_RemoveAt_RoundTrip()
+        {
+            var (netObj1, list1) = CreateSyncList(new List<string> { "a", "b", "c" });
+            list1.ClearDirty();
+            list1.RemoveAt(1);
+
+            var w = new NetWriter();
+            list1.WriteTo(w);
+
+            var (netObj2, list2) = CreateSyncList(new List<string> { "a", "b", "c" });
+            var r = new NetReader(w.ToArray());
+            list2.ReadFrom(r);
+
+            Assert.AreEqual(2, list2.Count);
+            Assert.AreEqual("a", list2[0]);
+            Assert.AreEqual("c", list2[1]);
+
+            Cleanup(netObj1);
+            Cleanup(netObj2);
+        }
+
+        [Test]
+        public void Delta_Clear_RoundTrip()
+        {
+            var (netObj1, list1) = CreateSyncList(new List<int> { 1, 2, 3 });
+            list1.ClearDirty();
+            list1.Clear();
+
+            var w = new NetWriter();
+            list1.WriteTo(w);
+
+            var (netObj2, list2) = CreateSyncList(new List<int> { 1, 2, 3 });
+            var r = new NetReader(w.ToArray());
+            list2.ReadFrom(r);
+
+            Assert.AreEqual(0, list2.Count);
+
+            Cleanup(netObj1);
+            Cleanup(netObj2);
+        }
+
+        [Test]
+        public void Delta_OnChanged_FiresOnReceiver()
+        {
+            var (netObj1, list1) = CreateSyncList<int>();
+            list1.Add(42);
+
+            var w = new NetWriter();
+            list1.WriteTo(w);
+
+            var (netObj2, list2) = CreateSyncList<int>();
+            int receivedValue = -1;
+            list2.OnChanged += (op, idx, old, n) => receivedValue = n;
+
+            var r = new NetReader(w.ToArray());
+            list2.ReadFrom(r);
+
+            Assert.AreEqual(42, receivedValue, "OnChanged should fire during ReadFrom");
+
+            Cleanup(netObj1);
+            Cleanup(netObj2);
+        }
+
         #endregion
 
         #region Full State
@@ -311,6 +538,46 @@ namespace EOSNative.Tests
 
             Assert.AreEqual(1, list2.Count);
             Assert.AreEqual("x", list2[0]);
+
+            Cleanup(netObj1);
+            Cleanup(netObj2);
+        }
+
+        [Test]
+        public void FullState_EmptyList()
+        {
+            var (netObj1, list1) = CreateSyncList<int>();
+
+            var w = new NetWriter();
+            list1.WriteFullState(w);
+
+            var (netObj2, list2) = CreateSyncList(new List<int> { 99 });
+            var r = new NetReader(w.ToArray());
+            list2.ReadFullState(r);
+
+            Assert.AreEqual(0, list2.Count, "Full state from empty list should clear receiver");
+
+            Cleanup(netObj1);
+            Cleanup(netObj2);
+        }
+
+        [Test]
+        public void FullState_LargeList_100Items()
+        {
+            var (netObj1, list1) = CreateSyncList<int>();
+            for (int i = 0; i < 100; i++)
+                list1.Add(i * 10);
+
+            var w = new NetWriter();
+            list1.WriteFullState(w);
+
+            var (netObj2, list2) = CreateSyncList<int>();
+            var r = new NetReader(w.ToArray());
+            list2.ReadFullState(r);
+
+            Assert.AreEqual(100, list2.Count);
+            for (int i = 0; i < 100; i++)
+                Assert.AreEqual(i * 10, list2[i]);
 
             Cleanup(netObj1);
             Cleanup(netObj2);
