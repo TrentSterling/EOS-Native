@@ -13,7 +13,12 @@ namespace EOSNative.Tests
     {
         public int SpawnCount, DespawnCount, StartHostCount, StopHostCount;
         public int StartOwnerCount, StopOwnerCount, OwnershipChangedCount;
+        public int TickCount, PeerConnectedCount, PeerDisconnectedCount;
+        public uint LastTick;
         public ProductUserId LastPreviousOwner;
+        public ProductUserId LastConnectedPeer, LastDisconnectedPeer;
+        public int SpawnDataWritten, SpawnDataRead;
+        public int LastWrittenValue, LastReadValue;
 
         public override void OnNetworkSpawn() => SpawnCount++;
         public override void OnNetworkDespawn() => DespawnCount++;
@@ -26,6 +31,23 @@ namespace EOSNative.Tests
         {
             OwnershipChangedCount++;
             LastPreviousOwner = prev;
+        }
+
+        public override void OnTick(uint tick) { TickCount++; LastTick = tick; }
+        public override void OnPeerConnected(ProductUserId peer) { PeerConnectedCount++; LastConnectedPeer = peer; }
+        public override void OnPeerDisconnected(ProductUserId peer) { PeerDisconnectedCount++; LastDisconnectedPeer = peer; }
+
+        public override void WriteSpawnData(EOSNative.P2P.NetWriter writer)
+        {
+            SpawnDataWritten++;
+            writer.WriteInt32(42);
+            LastWrittenValue = 42;
+        }
+
+        public override void ReadSpawnData(EOSNative.P2P.NetReader reader)
+        {
+            SpawnDataRead++;
+            LastReadValue = reader.ReadInt32();
         }
     }
 

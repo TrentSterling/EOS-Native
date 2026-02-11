@@ -185,7 +185,7 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [ ] Layer 2 RPCs work (E=color, Q=shockwave, T=chat, R=effect)
 
 **Automated Unit Tests:**
-- [x] All 559 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
+- [x] All 578 editor-mode tests pass (Window > Test Runner > EditMode > Run All)
 
 **UI — F1 OnGUI Overlay (EOSNativeStatusUI):**
 - [ ] F1 toggle opens/closes overlay
@@ -341,3 +341,5 @@ RPCs go direct peer-to-peer (not routed through host like FishNet/Mirror). EOS-f
 - [x] Singleton auto-create prevention — IsOwner, IsHost, IsOnline property getters use `._instance` instead of `.Instance` to prevent auto-create + DontDestroyOnLoad in tests. TransferAuthority offline guard added (v2.42.0)
 - [x] End-to-end tests — 22 tests covering spawn+sync dirty, SerializeAll round-trips, despawn lifecycle, respawn cycles, multi-object independence, NB convenience integration, DespawnAll (v2.42.0)
 - [x] Lifecycle hook tests — 22 tests for convenience props, spawn/despawn hooks, host/ownership changed callbacks, GiveOwnership/RemoveOwnership, multiple behaviour notification (v2.42.0)
+- [x] Spawn payload hooks — WriteSpawnData/ReadSpawnData on NetworkBehaviour, length-prefixed per-NB sections in spawn wire format, wired into spawn, snapshot, reserved objects, and child data paths. 19 new tests (v2.44.0)
+- [x] Tick/Peer lifecycle hooks — OnTick(uint), OnPeerConnected(ProductUserId), OnPeerDisconnected(ProductUserId) on NetworkBehaviour. NetworkManager subscribes TickSimulation.OnTick and dispatches to all spawned objects. Peer events dispatched in OnPeerConnected/OnPeerDisconnected (v2.44.0)

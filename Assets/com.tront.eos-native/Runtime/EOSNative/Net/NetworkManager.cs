@@ -1285,6 +1285,8 @@ namespace EOSNative.Net
             var tick = TickSimulation.Instance;
             if (tick != null && tick.IsEnabled)
             {
+                tick.OnTick -= OnSimulationTick;
+                tick.OnTick += OnSimulationTick;
                 tick.OnPostTick -= OnSimulationPostTick;
                 tick.OnPostTick += OnSimulationPostTick;
                 _tickSubscribed = true;
@@ -1297,7 +1299,10 @@ namespace EOSNative.Net
             {
                 var tick = TickSimulation.Instance;
                 if (tick != null)
+                {
+                    tick.OnTick -= OnSimulationTick;
                     tick.OnPostTick -= OnSimulationPostTick;
+                }
                 _tickSubscribed = false;
             }
         }
@@ -1324,6 +1329,13 @@ namespace EOSNative.Net
             // Check if any hibernated peers' grace periods have expired
             if (IsHost)
                 CheckHibernationExpiry();
+        }
+
+        /// <summary>Called by TickSimulation.OnTick — dispatches OnTick to all spawned NetworkBehaviours.</summary>
+        private void OnSimulationTick(uint tick, float fixedDeltaTime)
+        {
+            foreach (var kvp in _objects)
+                kvp.Value.NotifyTick(tick);
         }
 
         /// <summary>Called by TickSimulation.OnPostTick — sends state updates on tick boundary.</summary>
@@ -1738,6 +1750,9 @@ namespace EOSNative.Net
             writer.WriteByte((byte)obj.SyncVarCount);
             obj.SerializeAll(writer);
 
+            // Write per-NB spawn payload (user-defined data via WriteSpawnData/ReadSpawnData)
+            obj.WriteSpawnPayload(writer);
+
             // Write children using _originalChildren registry (tracks original prefab hierarchy)
             if (obj.IsRootNetworkObject && _originalChildren.TryGetValue(obj.NetworkId, out var origList))
             {
@@ -1768,6 +1783,7 @@ namespace EOSNative.Net
                     var childDataWriter = NetWriterPool.Get();
                     childDataWriter.WriteByte((byte)child.SyncVarCount);
                     child.SerializeAll(childDataWriter);
+                    child.WriteSpawnPayload(childDataWriter);
                     var childData = childDataWriter.ToArraySegment();
                     writer.WriteUInt16((ushort)childData.Count);
                     writer.WriteBytesRaw(childData);
@@ -1840,6 +1856,9 @@ namespace EOSNative.Net
             if (syncVarCount > 0 && netObj.SyncVarCount > 0)
                 netObj.DeserializeAll(reader);
 
+            // Read per-NB spawn payload (user-defined data)
+            netObj.ReadSpawnPayload(reader);
+
             netObj.NotifyNetworkSpawn();
 
             // Read and register children
@@ -1875,9 +1894,12 @@ namespace EOSNative.Net
                         origChildren.Add((childNetId, localIndex));
 
                         if (childSyncVarCount > 0 && child.SyncVarCount > 0 && childSyncVarCount == child.SyncVarCount)
+                        {
                             child.DeserializeAll(reader);
+                            child.ReadSpawnPayload(reader);
+                        }
                         else if (childDataLen > 1)
-                            reader.Skip(childDataLen - 1); // skip SyncVar data (1 byte already read)
+                            reader.Skip(childDataLen - 1); // skip SyncVar data + spawn payload (1 byte already read)
 
                         // If detached: unparent Transform. Position comes from NetworkTransform.
                         if (isDetached)
@@ -2335,6 +2357,7 @@ namespace EOSNative.Net
                     var existing = _objects[networkId];
                     if (syncVarCount > 0 && existing.SyncVarCount > 0)
                         existing.DeserializeAll(reader);
+                    existing.ReadSpawnPayload(reader); // consume payload to advance reader
                     // Read and update children state
                     ReadSnapshotChildren(reader, existing, prefabId, ownerId, networkId, destroyWithOwner, true);
                     continue;
@@ -2370,6 +2393,9 @@ namespace EOSNative.Net
 
                 if (syncVarCount > 0 && netObj.SyncVarCount > 0)
                     netObj.DeserializeAll(reader);
+
+                // Read per-NB spawn payload (user-defined data)
+                netObj.ReadSpawnPayload(reader);
 
                 netObj.NotifyNetworkSpawn();
 
@@ -2415,7 +2441,10 @@ namespace EOSNative.Net
                     var existing = _objects[childNetId];
                     byte childSyncVarCount = reader.ReadByte();
                     if (childSyncVarCount > 0 && existing.SyncVarCount > 0 && childSyncVarCount == existing.SyncVarCount)
+                    {
                         existing.DeserializeAll(reader);
+                        existing.ReadSpawnPayload(reader); // consume payload to advance reader
+                    }
                     else if (childDataLen > 1)
                         reader.Skip(childDataLen - 1);
 
@@ -2443,7 +2472,10 @@ namespace EOSNative.Net
                     origChildren.Add((childNetId, localIndex));
 
                     if (childSyncVarCount > 0 && child.SyncVarCount > 0 && childSyncVarCount == child.SyncVarCount)
+                    {
                         child.DeserializeAll(reader);
+                        child.ReadSpawnPayload(reader);
+                    }
                     else if (childDataLen > 1)
                         reader.Skip(childDataLen - 1);
 
@@ -2829,6 +2861,10 @@ namespace EOSNative.Net
                 // Already have objects but new peer joined — ensure our PlayerState
                 EnsureLocalPlayerState();
             }
+
+            // Notify all spawned NetworkBehaviours
+            foreach (var kvp in _objects)
+                kvp.Value.NotifyPeerConnected(peer);
         }
 
         private void OnPeerDisconnected(ProductUserId peer)
@@ -2857,6 +2893,10 @@ namespace EOSNative.Net
             // Clean up interest management state
             if (InterestManagementEnabled)
                 InterestManager.Instance?.OnPeerDisconnected(peer);
+
+            // Notify all spawned NetworkBehaviours
+            foreach (var kvp in _objects)
+                kvp.Value.NotifyPeerDisconnected(peer);
 
             // End migration window and flush buffered RPCs
             _migrationInProgress = false;
@@ -3206,6 +3246,7 @@ namespace EOSNative.Net
 
                 if (syncVarCount > 0 && netObj.SyncVarCount > 0)
                     netObj.DeserializeAll(reader);
+                netObj.ReadSpawnPayload(reader);
 
                 RoomState = roomState;
                 netObj.NotifyNetworkSpawn();
@@ -3233,6 +3274,7 @@ namespace EOSNative.Net
 
                 if (syncVarCount > 0 && netObj.SyncVarCount > 0)
                     netObj.DeserializeAll(reader);
+                netObj.ReadSpawnPayload(reader);
 
                 if (ownerId != null)
                     _playerStates[ownerId] = playerState;

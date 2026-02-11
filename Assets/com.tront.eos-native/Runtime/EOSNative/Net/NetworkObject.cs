@@ -555,6 +555,65 @@ namespace EOSNative.Net
             OnNetworkDespawn?.Invoke();
         }
 
+        /// <summary>Write per-NB spawn payload (length-prefixed sections).</summary>
+        internal void WriteSpawnPayload(NetWriter writer)
+        {
+            if (_behaviours == null || _behaviours.Length == 0)
+            {
+                writer.WriteByte(0); // section count
+                return;
+            }
+            writer.WriteByte((byte)_behaviours.Length);
+            for (int i = 0; i < _behaviours.Length; i++)
+            {
+                var sectionWriter = NetWriterPool.Get();
+                _behaviours[i].WriteSpawnData(sectionWriter);
+                var data = sectionWriter.ToArraySegment();
+                writer.WriteUInt16((ushort)data.Count);
+                if (data.Count > 0)
+                    writer.WriteBytesRaw(data);
+                NetWriterPool.Return(sectionWriter);
+            }
+        }
+
+        /// <summary>Read per-NB spawn payload (length-prefixed sections).</summary>
+        internal void ReadSpawnPayload(NetReader reader)
+        {
+            byte sectionCount = reader.ReadByte();
+            for (int i = 0; i < sectionCount; i++)
+            {
+                ushort len = reader.ReadUInt16();
+                if (_behaviours != null && i < _behaviours.Length && len > 0)
+                    _behaviours[i].ReadSpawnData(reader);
+                else if (len > 0)
+                    reader.Skip(len); // skip unknown/extra section
+            }
+        }
+
+        /// <summary>Dispatch OnTick to all behaviours on this object.</summary>
+        internal void NotifyTick(uint tick)
+        {
+            if (_behaviours == null) return;
+            for (int i = 0; i < _behaviours.Length; i++)
+                _behaviours[i].OnTick(tick);
+        }
+
+        /// <summary>Dispatch OnPeerConnected to all behaviours on this object.</summary>
+        internal void NotifyPeerConnected(ProductUserId peer)
+        {
+            if (_behaviours == null) return;
+            for (int i = 0; i < _behaviours.Length; i++)
+                _behaviours[i].OnPeerConnected(peer);
+        }
+
+        /// <summary>Dispatch OnPeerDisconnected to all behaviours on this object.</summary>
+        internal void NotifyPeerDisconnected(ProductUserId peer)
+        {
+            if (_behaviours == null) return;
+            for (int i = 0; i < _behaviours.Length; i++)
+                _behaviours[i].OnPeerDisconnected(peer);
+        }
+
         #endregion
 
         private void OnDestroy()

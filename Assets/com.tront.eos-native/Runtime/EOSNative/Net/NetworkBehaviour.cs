@@ -292,6 +292,32 @@ namespace EOSNative.Net
         /// <summary>Called when this object's ownership changes. Args: previous owner PUID (null if unowned).</summary>
         public virtual void OnOwnershipChanged(ProductUserId previousOwner) { }
 
+        /// <summary>
+        /// Called on the spawning peer to write custom data into the spawn message.
+        /// Override to inject initialization data that remote peers receive in <see cref="ReadSpawnData"/>.
+        /// Called after SyncVars are serialized.
+        /// </summary>
+        public virtual void WriteSpawnData(NetWriter writer) { }
+
+        /// <summary>
+        /// Called on remote peers to read custom data from the spawn message.
+        /// Override to consume data written by <see cref="WriteSpawnData"/>.
+        /// Called after SyncVars are deserialized but before OnNetworkSpawn.
+        /// </summary>
+        public virtual void ReadSpawnData(NetReader reader) { }
+
+        /// <summary>
+        /// Called every tick when TickSimulation is active. Only invoked on spawned objects.
+        /// Use for deterministic game logic that should run at a fixed rate.
+        /// </summary>
+        public virtual void OnTick(uint tick) { }
+
+        /// <summary>Called when a remote peer connects. Only invoked on spawned objects.</summary>
+        public virtual void OnPeerConnected(ProductUserId peer) { }
+
+        /// <summary>Called when a remote peer disconnects. Only invoked on spawned objects.</summary>
+        public virtual void OnPeerDisconnected(ProductUserId peer) { }
+
         #endregion
 
         /// <summary>
