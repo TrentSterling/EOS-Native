@@ -484,9 +484,13 @@ namespace EOSNative.Diagnostics
         private void RunP2PChecks()
         {
             var p2p = EOSP2PManager._instance;
+            var lobby = EOSLobbyManager._instance;
+            bool inLobby = lobby != null && lobby.IsInLobby;
 
             if (p2p != null && p2p.IsActive)
                 SetCheck("P2P Manager Active", CheckStatus.Pass, "Initialized");
+            else if (!inLobby)
+                SetCheck("P2P Manager Active", CheckStatus.Skipped, "No lobby joined");
             else if (p2p != null)
                 SetCheck("P2P Manager Active", CheckStatus.Fail, "Not active");
             else
@@ -500,7 +504,7 @@ namespace EOSNative.Diagnostics
                 if (nat != Epic.OnlineServices.P2P.NATType.Unknown)
                     SetCheck("NAT Type", CheckStatus.Pass, nat.ToString());
                 else
-                    SetCheck("NAT Type", CheckStatus.Fail, "Unknown");
+                    SetCheck("NAT Type", CheckStatus.Skipped, "Querying...");
             }
             else
             {
@@ -510,8 +514,10 @@ namespace EOSNative.Diagnostics
             // Peer Connected
             if (p2p != null && p2p.Peers.Count > 0)
                 SetCheck("Peer Connected", CheckStatus.Pass, $"{p2p.Peers.Count} peer(s)");
+            else if (!inLobby)
+                SetCheck("Peer Connected", CheckStatus.Skipped, "No lobby joined");
             else
-                SetCheck("Peer Connected", CheckStatus.Skipped, "No peers");
+                SetCheck("Peer Connected", CheckStatus.Skipped, "No peers yet");
         }
 
         #endregion
@@ -521,6 +527,8 @@ namespace EOSNative.Diagnostics
         private void RunNetworkingChecks()
         {
             var nm = NetworkManager._instance;
+            var lobby = EOSLobbyManager._instance;
+            bool inLobby = lobby != null && lobby.IsInLobby;
 
             SetCheck("Network Manager",
                 nm != null ? CheckStatus.Pass : CheckStatus.Fail,
@@ -528,17 +536,26 @@ namespace EOSNative.Diagnostics
 
             if (nm != null)
             {
-                SetCheck("Is Online",
-                    nm.IsOnline ? CheckStatus.Pass : CheckStatus.Fail,
-                    nm.IsOnline ? "Online" : "Offline");
+                if (nm.IsOnline)
+                    SetCheck("Is Online", CheckStatus.Pass, "Online");
+                else if (!inLobby)
+                    SetCheck("Is Online", CheckStatus.Skipped, "No lobby joined");
+                else
+                    SetCheck("Is Online", CheckStatus.Fail, "Offline");
 
-                SetCheck("Room State",
-                    nm.RoomState != null ? CheckStatus.Pass : CheckStatus.Fail,
-                    nm.RoomState != null ? "Present" : "Not created");
+                if (nm.RoomState != null)
+                    SetCheck("Room State", CheckStatus.Pass, "Present");
+                else if (!inLobby)
+                    SetCheck("Room State", CheckStatus.Skipped, "No lobby joined");
+                else
+                    SetCheck("Room State", CheckStatus.Fail, "Not created");
 
-                SetCheck("Player State",
-                    nm.LocalPlayerState != null ? CheckStatus.Pass : CheckStatus.Fail,
-                    nm.LocalPlayerState != null ? "Present" : "Not created");
+                if (nm.LocalPlayerState != null)
+                    SetCheck("Player State", CheckStatus.Pass, "Present");
+                else if (!inLobby)
+                    SetCheck("Player State", CheckStatus.Skipped, "No lobby joined");
+                else
+                    SetCheck("Player State", CheckStatus.Fail, "Not created");
             }
             else
             {

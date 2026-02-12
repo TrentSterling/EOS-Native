@@ -231,6 +231,35 @@ EOSManager exposes an `OverlayUIMode` enum to control which runtime UI is active
 
 Set via Inspector on the EOSManager component. The `_showConsole` bool independently controls the Canvas console.
 
+## Runtime Diagnostics (EOSHealthCheck)
+
+`EOSHealthCheck` is a singleton diagnostic system that auto-creates on `EOSManager.Start()` — zero manual setup required. It provides 26 checks across 5 categories with live traffic-light status (green/red/gray).
+
+**Auto-run behavior:**
+- `Start()` runs all passive checks immediately
+- `Update()` re-runs every 2 seconds for live status updates
+- No manual button press needed — status is always current
+
+**Categories and checks (26 total):**
+
+| Category | Checks | Notes |
+|----------|--------|-------|
+| SDK & Auth (8) | SDK Initialized, Logged In, PUID, Connect/P2P/Lobby/RTC/Auth interfaces | Instant |
+| Lobby (5) | Create, Join Code, Voice Room, Search, Leave | Async (Full Sequence only) |
+| P2P (3) | Manager Active, NAT Type, Peer Connected | Context-aware |
+| Networking (4) | NetworkManager, Is Online, Room State, Player State | Context-aware |
+| Object Sync (6) | Registered Objects, Spring Syncs, Scene Objects, Player Balls, Physics Objects, Held Objects | Layer 1 sync status |
+
+**Context-aware checks:** Pre-lobby checks show **Skipped** (gray) instead of **Fail** (red). Red only appears for actual failures. Uses `EOSLobbyManager._instance?.IsInLobby` to detect lobby state without triggering auto-create.
+
+**UI:** Visible in the "Diag" tab (7th tab) in both the F1 overlay and Canvas UI.
+
+**Public API:**
+- `RunAllPassive()` — instant state checks (SDK, P2P, Networking, Object Sync)
+- `RunFullSequence()` — async: all passive + lobby lifecycle (create, search, leave)
+- `RunCategory(string)` — run a single category
+- `ResetAll()` — clear all check results
+
 ## Detailed Reference Documentation
 
 Subsystem details are split into companion files to keep this file fast to load:

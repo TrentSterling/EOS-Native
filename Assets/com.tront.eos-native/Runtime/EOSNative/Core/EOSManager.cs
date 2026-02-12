@@ -580,6 +580,9 @@ namespace EOSNative
                 var _demo = global::EOSNative.Demo.P2PDemoManager.Instance;
             }
 
+            // Auto-create health check diagnostics (runs passive checks on Start + every 2s)
+            var _hc = global::EOSNative.Diagnostics.EOSHealthCheck.Instance;
+
             Debug.Log("[EOS-Native] Startup complete.");
         }
 
