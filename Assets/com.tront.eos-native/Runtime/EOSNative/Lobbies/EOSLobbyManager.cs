@@ -20,7 +20,7 @@ namespace EOSNative.Lobbies
     {
         #region Singleton
 
-        private static EOSLobbyManager _instance;
+        internal static EOSLobbyManager _instance;
         private static bool _shuttingDown;
         public static EOSLobbyManager Instance
         {

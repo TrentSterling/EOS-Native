@@ -22,7 +22,16 @@ namespace EOSNative.P2P
         private int _count;
         private int _position;
 
-        public int Position => _position;
+        public int Position
+        {
+            get => _position;
+            set
+            {
+                if (value < 0 || value > _count)
+                    throw new ArgumentOutOfRangeException(nameof(value), $"Position {value} out of range [0..{_count}]");
+                _position = value;
+            }
+        }
         public int Length => _count;
         public int Remaining => _count - _position;
 

@@ -13,6 +13,8 @@ GameObject:
   - component: {fileID: 5903421582891520471}
   - component: {fileID: 6930050432751953181}
   - component: {fileID: 8626748811512014943}
+  - component: {fileID: 7412358923156789012}
+  - component: {fileID: 2839475618203947561}
   m_Layer: 0
   m_Name: Crate
   m_TagString: Untagged
@@ -136,3 +138,53 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 0
   m_CollisionDetection: 0
+--- !u!114 &7412358923156789012
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 929122014743493254}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3048e6b28d636c044bb56429e1fbc5e3, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  _destroyWithOwner: 0
+  _alwaysVisible: 0
+  _sceneId: 0
+--- !u!114 &2839475618203947561
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 929122014743493254}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cc6a695d8ec1f7d48822b987a3de74bc, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  _syncPosition: 1
+  _syncRotation: 1
+  _syncScale: 0
+  _syncMethod: 0
+  _interpolationDelay: 0.1
+  _positionEaseSpeed: 0.85
+  _rotationEaseSpeed: 0.85
+  _extrapolationMode: 1
+  _extrapolationTimeLimit: 5
+  _extrapolationDistanceLimit: 20
+  _posSpringFreq: 8
+  _posDampingRatio: 0.9
+  _rotSpringFreq: 10
+  _rotDampingRatio: 0.85
+  _posSnapDistance: 5
+  _rotSnapAngle: 90
+  _positionThreshold: 0.001
+  _rotationThreshold: 0.1
+  _useDistanceLOD: 0
+  _fullSyncDistance: 10
+  _simpleSyncDistance: 30
+  _lodDeadZone: 5
+  _restTimeout: 0.5

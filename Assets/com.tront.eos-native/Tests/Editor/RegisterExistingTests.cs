@@ -152,6 +152,15 @@ namespace EOSNative.Tests
             Cleanup(first, second);
         }
 
+        [Test]
+        public void RegisterExisting_SetsPrefabId_NoPrefix()
+        {
+            var netObj = CreateNetObj();
+            _nm.RegisterExisting(netObj, 0xAA000010);
+            Assert.AreEqual(NetworkObject.NO_PREFAB, netObj.PrefabId);
+            Cleanup(netObj);
+        }
+
         #endregion
 
         #region RegisterExistingHierarchy

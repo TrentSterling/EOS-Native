@@ -6,6 +6,7 @@ using Epic.OnlineServices;
 using Epic.OnlineServices.Reports;
 using Epic.OnlineServices.RTCAudio;
 using EOSNative.AntiCheat;
+using EOSNative.Diagnostics;
 using EOSNative.Lobbies;
 using EOSNative.Net;
 using EOSNative.Replay;
@@ -83,7 +84,7 @@ namespace EOSNative.UI
 
         private bool _panelVisible;
         private int _currentTab;
-        private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social", "Stats", "Tools" };
+        private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social", "Stats", "Tools", "Diag" };
 
         // Canvas hierarchy
         private Canvas _canvas;
@@ -144,6 +145,9 @@ namespace EOSNative.UI
         private string _rankedGameMode = "ranked";
         private string _rankedStatus = "";
         private InputField _rankedModeInput;
+
+        // Diag tab state
+        private Transform _diagContainer;
 
         // Tools tab state
         private Transform _toolsContainer;
@@ -555,6 +559,7 @@ namespace EOSNative.UI
             BuildSocialTab(_tabContents[3].transform);
             BuildStatsTab(_tabContents[4].transform);
             BuildToolsTab(_tabContents[5].transform);
+            BuildDiagTab(_tabContents[6].transform);
         }
 
         #endregion
@@ -759,6 +764,15 @@ namespace EOSNative.UI
 
         #endregion
 
+        #region Tab Building - Diag
+
+        private void BuildDiagTab(Transform parent)
+        {
+            _diagContainer = parent;
+        }
+
+        #endregion
+
         #region Tab Selection
 
         private void SelectTab(int index)
@@ -799,6 +813,7 @@ namespace EOSNative.UI
                 case 3: RefreshSocialTab(); break;
                 case 4: RefreshStatsTab(); break;
                 case 5: RefreshToolsTab(); break;
+                case 6: RefreshDiagTab(); break;
             }
 
             // Force layout rebuild so ContentSizeFitter recalculates
@@ -2339,6 +2354,74 @@ namespace EOSNative.UI
                 options.WithGameMode(_lfgGameMode);
             var (result, posts) = await lfgMgr.SearchPostsAsync(options);
             _lfgStatus = result == Result.Success ? $"Found {posts.Count} posts" : $"Search failed: {result}";
+        }
+
+        #endregion
+
+        #region Diag Tab Refresh
+
+        private void RefreshDiagTab()
+        {
+            if (_diagContainer == null) return;
+            ClearChildren(_diagContainer);
+
+            var hc = EOSHealthCheck.Instance;
+
+            // Summary section
+            var summarySection = CreateSection(_diagContainer, "Health Check");
+
+            int pass = hc.PassCount;
+            int total = hc.TotalCount;
+            float dur = hc.TotalDuration;
+            bool anyRun = total > 0 && (pass > 0 || hc.FailCount > 0);
+            string summary = anyRun
+                ? $"Results: {pass}/{total} passed ({dur:F2}s)"
+                : "No checks run yet";
+            Color summaryColor = !anyRun ? ColDimText : (hc.FailCount == 0 ? ColGreen : ColOrange);
+            AddLabel(summarySection.transform, summary, 15, summaryColor);
+
+            if (hc.IsRunning)
+                AddLabel(summarySection.transform, "Running...", 14, ColYellow);
+
+            // Action buttons row
+            var btnRow = CreateRow(summarySection.transform, 34);
+            AddButton(btnRow.transform, "Run All", ColButton, () => hc.RunAllPassive(), preferredWidth: 90);
+            AddButton(btnRow.transform, "Full Sequence", ColButton, () => hc.RunFullSequence(), preferredWidth: 130);
+            AddButton(btnRow.transform, "Reset", ColButtonDanger, () => hc.ResetAll(), preferredWidth: 70);
+
+            var btnRow2 = CreateRow(summarySection.transform, 34);
+            AddButton(btnRow2.transform, "Lobby Sequence", ColButton, () => hc.RunLobbySequence(), preferredWidth: 130);
+
+            // Category sections
+            foreach (var cat in hc.GetCategories())
+            {
+                var (catPass, catTotal) = hc.GetCategoryCounts(cat);
+                var catSection = CreateSection(_diagContainer, $"{cat} ({catPass}/{catTotal})");
+
+                foreach (var check in hc.GetChecksForCategory(cat))
+                {
+                    var row = CreateRow(catSection.transform, 24);
+
+                    // Status icon
+                    string icon;
+                    Color iconColor;
+                    switch (check.Status)
+                    {
+                        case CheckStatus.Pass:    icon = "\u2713"; iconColor = ColGreen; break;
+                        case CheckStatus.Fail:    icon = "\u2717"; iconColor = ColRed; break;
+                        case CheckStatus.Running: icon = "\u25CF"; iconColor = ColYellow; break;
+                        case CheckStatus.Skipped: icon = "\u2014"; iconColor = ColDimText; break;
+                        default:                  icon = "\u25CB"; iconColor = ColDimText; break;
+                    }
+
+                    AddLabel(row.transform, icon, 16, iconColor, 20);
+                    AddLabel(row.transform, check.Name, 14, ColText, 150);
+                    AddLabel(row.transform, check.Message ?? "", 13, check.Status == CheckStatus.Fail ? ColRed : ColDimText);
+
+                    if (check.Duration > 0.001f)
+                        AddLabel(row.transform, $"{check.Duration * 1000:F0}ms", 12, ColDimText, 50);
+                }
+            }
         }
 
         #endregion

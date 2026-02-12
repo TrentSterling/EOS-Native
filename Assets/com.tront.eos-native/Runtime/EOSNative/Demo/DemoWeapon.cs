@@ -106,17 +106,12 @@ namespace EOSNative.Demo
             var dir = aimDir.normalized;
             float hitDist = -1f;
 
-            // Hitscan raycast
+            // Hitscan raycast (shooter-authoritative for hit detection + damage)
             if (Physics.Raycast(origin, dir, out var hit, 50f))
             {
                 hitDist = hit.distance;
 
-                // Knockback any Rigidbody we hit
-                var hitRb = hit.collider.GetComponentInParent<Rigidbody>();
-                if (hitRb != null && !hitRb.isKinematic)
-                    hitRb.AddForce(dir * 10f + Vector3.up * 2f, ForceMode.Impulse);
-
-                // Ball-specific: score damage
+                // Ball-specific: score damage (shooter-authoritative)
                 var victim = hit.collider.GetComponentInParent<DemoBallBehaviour>();
                 if (victim != null && victim != GetComponentInParent<DemoBallBehaviour>())
                     victim.TakeHit(origin.x, origin.z);
@@ -163,6 +158,18 @@ namespace EOSNative.Demo
             // Impact spark at hit point
             if (hitDist > 0f)
                 CreateImpactEffect(origin + direction * hitDist);
+
+            // Rigidbody knockback on all peers — owner sim is authoritative,
+            // non-owners get local prediction that spring sync smooths out
+            if (hitDist > 0f)
+            {
+                if (Physics.Raycast(origin, direction, out var hit, hitDist + 1f))
+                {
+                    var hitRb = hit.collider.GetComponentInParent<Rigidbody>();
+                    if (hitRb != null && !hitRb.isKinematic)
+                        hitRb.AddForce(direction * 10f + Vector3.up * 2f, ForceMode.Impulse);
+                }
+            }
 
             // Flash weapon white briefly
             if (_renderer != null)

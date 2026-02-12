@@ -6,6 +6,7 @@ using Epic.OnlineServices;
 using Epic.OnlineServices.Reports;
 using Epic.OnlineServices.RTCAudio;
 using EOSNative.AntiCheat;
+using EOSNative.Diagnostics;
 using EOSNative.Lobbies;
 using EOSNative.Logging;
 using EOSNative.Net;
@@ -205,8 +206,14 @@ namespace EOSNative.UI
         private string _lfgStatus = "";
         private Vector2 _lfgSearchScrollPos;
 
+        // Diag tab state
+        private bool _diagFoldSDK = true;
+        private bool _diagFoldLobby = true;
+        private bool _diagFoldP2P = true;
+        private bool _diagFoldNet = true;
+
         // Tab names
-        private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social", "Stats", "Tools" };
+        private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social", "Stats", "Tools", "Diag" };
 
         #endregion
 
@@ -594,6 +601,7 @@ namespace EOSNative.UI
                 case 3: DrawSocialTab(); break;
                 case 4: DrawStatsTab(); break;
                 case 5: DrawToolsTab(); break;
+                case 6: DrawDiagTab(); break;
             }
 
             GUILayout.EndScrollView();
@@ -1309,6 +1317,96 @@ namespace EOSNative.UI
             DrawSessionMetricsSection();
             GUILayout.Space(4);
             DrawLFGSection();
+        }
+
+        #endregion
+
+        #region Diag Tab
+
+        private void DrawDiagTab()
+        {
+            var hc = EOSHealthCheck.Instance;
+
+            // Summary
+            GUILayout.BeginVertical(_sectionBox);
+            GUILayout.Label("Health Check", _headerStyle);
+
+            int pass = hc.PassCount;
+            int total = hc.TotalCount;
+            float dur = hc.TotalDuration;
+            bool anyRun = total > 0 && (pass > 0 || hc.FailCount > 0);
+            string summary = anyRun
+                ? $"Results: {pass}/{total} passed ({dur:F2}s)"
+                : "No checks run yet";
+            GUILayout.Label(summary, anyRun ? (hc.FailCount == 0 ? _greenLabel : _orangeLabel) : _grayLabel);
+
+            if (hc.IsRunning)
+                GUILayout.Label("Running...", _yellowLabel);
+
+            // Action buttons
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Run All", _actionButton, GUILayout.Height(26)))
+                hc.RunAllPassive();
+            if (GUILayout.Button("Full Sequence", _actionButton, GUILayout.Height(26)))
+                hc.RunFullSequence();
+            if (GUILayout.Button("Reset", _actionButton, GUILayout.Height(26)))
+                hc.ResetAll();
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Lobby Sequence", _actionButton, GUILayout.Height(26)))
+                hc.RunLobbySequence();
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.EndVertical();
+            GUILayout.Space(4);
+
+            // Category foldouts
+            DrawDiagCategory(EOSHealthCheck.CAT_SDK, ref _diagFoldSDK);
+            GUILayout.Space(2);
+            DrawDiagCategory(EOSHealthCheck.CAT_LOBBY, ref _diagFoldLobby);
+            GUILayout.Space(2);
+            DrawDiagCategory(EOSHealthCheck.CAT_P2P, ref _diagFoldP2P);
+            GUILayout.Space(2);
+            DrawDiagCategory(EOSHealthCheck.CAT_NET, ref _diagFoldNet);
+        }
+
+        private void DrawDiagCategory(string category, ref bool foldout)
+        {
+            var hc = EOSHealthCheck.Instance;
+            var (catPass, catTotal) = hc.GetCategoryCounts(category);
+            string label = $"{category} ({catPass}/{catTotal})";
+
+            if (!DrawFoldout(label, ref foldout)) return;
+
+            GUILayout.BeginVertical(_sectionBox);
+            foreach (var check in hc.GetChecksForCategory(category))
+            {
+                GUILayout.BeginHorizontal();
+
+                // Status icon
+                string icon;
+                GUIStyle iconStyle;
+                switch (check.Status)
+                {
+                    case CheckStatus.Pass:    icon = "\u2713"; iconStyle = _greenLabel; break;
+                    case CheckStatus.Fail:    icon = "\u2717"; iconStyle = _redLabel; break;
+                    case CheckStatus.Running: icon = "\u25CF"; iconStyle = _yellowLabel; break;
+                    case CheckStatus.Skipped: icon = "\u2014"; iconStyle = _grayLabel; break;
+                    default:                  icon = "\u25CB"; iconStyle = _grayLabel; break;
+                }
+
+                GUILayout.Label(icon, iconStyle, GUILayout.Width(18));
+                GUILayout.Label(check.Name, _whiteLabel, GUILayout.Width(140));
+                GUILayout.Label(check.Message ?? "", check.Status == CheckStatus.Fail ? _redLabel : _grayLabel);
+
+                if (check.Duration > 0.001f)
+                    GUILayout.Label($"{check.Duration * 1000:F0}ms", _grayLabel, GUILayout.Width(50));
+
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.EndVertical();
         }
 
         #endregion

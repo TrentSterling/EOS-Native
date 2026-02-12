@@ -20,8 +20,14 @@ namespace EOSNative.Net
         /// <summary>Unique network ID. Upper 16 bits = owner hash, lower 16 bits = local counter.</summary>
         public uint NetworkId { get; internal set; }
 
+        /// <summary>Sentinel PrefabId for scene-placed objects (auto-registered, included in snapshots).</summary>
+        public const ushort SCENE_OBJECT = 0xFFFE;
+
+        /// <summary>Sentinel value meaning "no prefab assigned" (e.g. RegisterExisting objects).</summary>
+        public const ushort NO_PREFAB = 0xFFFF;
+
         /// <summary>Index into NetworkManager's prefab registry. Used for spawning on remote peers.</summary>
-        public ushort PrefabId { get; internal set; }
+        public ushort PrefabId { get; internal set; } = NO_PREFAB;
 
         /// <summary>
         /// NetworkId of the root NetworkObject in a nested hierarchy. 0 = this is the root.
@@ -68,15 +74,18 @@ namespace EOSNative.Net
         [SerializeField] private bool _persistOnDisconnect;
         public bool PersistOnDisconnect { get => _persistOnDisconnect; set => _persistOnDisconnect = value; }
 
-        /// <summary>True if the local peer owns this object.</summary>
+        /// <summary>True if the local peer owns this object.
+        /// Unowned objects (OwnerId == null) default to host authority.</summary>
         public bool IsOwner
         {
             get
             {
                 if (OwnerId != null)
                     return OwnerId == EOSManager.s_Instance?.LocalProductUserId;
-                // Offline mode fallback: OwnerId is null but we track ownership via NetworkManager
+                // Unowned objects: host is authoritative (standard FishNet/Fusion pattern)
                 var nm = NetworkManager._instance;
+                if (nm != null && nm.IsHost) return true;
+                // Offline mode fallback
                 return nm != null && nm.IsLocallyOwnedOffline(NetworkId);
             }
         }
@@ -91,6 +100,17 @@ namespace EOSNative.Net
         /// </summary>
         [SerializeField] private bool _alwaysVisible;
         public bool AlwaysVisible { get => _alwaysVisible; set => _alwaysVisible = value; }
+
+        /// <summary>
+        /// Stable scene-unique ID assigned by SceneObjectIdAssigner on scene save.
+        /// 0 = unassigned (falls back to hierarchy hash for backward compat).
+        /// Non-zero values generate deterministic NetworkIds as 0xEE000000 | SceneId.
+        /// </summary>
+        [SerializeField] private ushort _sceneId;
+        public ushort SceneId { get => _sceneId; internal set => _sceneId = value; }
+
+        /// <summary>True if this object is a scene-placed network object (has SceneId or SCENE_OBJECT PrefabId).</summary>
+        public bool IsSceneObject => _sceneId != 0 || PrefabId == SCENE_OBJECT;
 
         #endregion
 

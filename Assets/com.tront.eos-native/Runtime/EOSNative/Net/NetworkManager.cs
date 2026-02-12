@@ -45,6 +45,10 @@ namespace EOSNative.Net
         // Chunked snapshot delivery
         private const int SNAPSHOT_CHUNK_SIZE = 16;
 
+        // Snapshot type discriminator (first byte of MSG_SNAPSHOT payload)
+        private const byte SNAPSHOT_TYPE_MINI = 0; // Reliable fallback: single-object re-send
+        private const byte SNAPSHOT_TYPE_FULL = 1; // Full snapshot from HandleSnapshotRequest
+
         #endregion
 
         #region Singleton
@@ -1199,6 +1203,7 @@ namespace EOSNative.Net
         #region Private Fields
 
         private readonly Dictionary<uint, NetworkObject> _objects = new();
+        private readonly Dictionary<ushort, List<NetworkObject>> _unclaimedSceneObjects = new();
         private readonly List<NetworkObject> _dirtyObjects = new();
         private readonly Dictionary<RPCKey, Action<NetReader>> _rpcHandlers = new();
         private readonly Dictionary<RPCKey, string> _rpcMethodNames = new();
@@ -1219,6 +1224,9 @@ namespace EOSNative.Net
         // Reliable fallback tracking
         private const float RELIABLE_FALLBACK_DELAY = 0.2f; // 200ms
         private readonly List<NetworkObject> _reliableFallbackObjects = new();
+
+        // Snapshot tracking — ensures joiner requests exactly one snapshot
+        internal bool _snapshotReceived;
 
         // Host migration RPC buffer
         private bool _migrationInProgress;
@@ -1338,7 +1346,10 @@ namespace EOSNative.Net
                 // no peers connect and OnPeerConnected never fires)
                 var lobby = EOSLobbyManager.Instance;
                 if (lobby != null)
+                {
                     lobby.OnLobbyJoined += OnLobbyJoinedRecomputeHost;
+                    lobby.OnLobbyLeft += OnLobbyLeftReset;
+                }
 
                 // Subscribe to interest enter/exit for dynamic spawn/despawn
                 var im = InterestManager.Instance;
@@ -1351,6 +1362,7 @@ namespace EOSNative.Net
 
             // Subscribe to tick simulation if active
             SubscribeTickSimulation();
+
         }
 
         private void OnDisable()
@@ -1364,7 +1376,10 @@ namespace EOSNative.Net
 
             var lobby = EOSLobbyManager.Instance;
             if (lobby != null)
+            {
                 lobby.OnLobbyJoined -= OnLobbyJoinedRecomputeHost;
+                lobby.OnLobbyLeft -= OnLobbyLeftReset;
+            }
 
             var im = InterestManager.Instance;
             if (im != null)
@@ -1374,6 +1389,7 @@ namespace EOSNative.Net
             }
 
             UnsubscribeTickSimulation();
+            _snapshotReceived = false;
         }
 
         private void SubscribeTickSimulation()
@@ -1815,8 +1831,15 @@ namespace EOSNative.Net
                 _reliableFallbackObjects.RemoveAt(i);
 
                 var writer = NetWriterPool.Get();
+                writer.WriteByte(SNAPSHOT_TYPE_MINI); // mini-snapshot — don't trigger deactivation
                 writer.WritePackedUInt32(1); // 1 object
-                WriteSpawnData(writer, obj);
+                // Length-prefixed entry (must match HandleSnapshot reader format)
+                var entryWriter = NetWriterPool.Get();
+                WriteSpawnData(entryWriter, obj);
+                var entryData = entryWriter.ToArraySegment();
+                writer.WriteUInt16((ushort)entryData.Count);
+                writer.WriteBytesRaw(entryData);
+                NetWriterPool.Return(entryWriter);
 
                 SendToInterestedPeers(MSG_SNAPSHOT, writer, obj, PacketReliability.ReliableOrdered, 1);
                 NetWriterPool.Return(writer);
@@ -1843,7 +1866,7 @@ namespace EOSNative.Net
             writer.WriteVector3(obj.transform.position);
             writer.WriteQuaternion(obj.transform.rotation);
             writer.WriteBool(obj.DestroyWithOwner);
-            writer.WriteByte((byte)obj.SyncVarCount);
+            writer.WriteByte((byte)obj.TotalSyncVarCount);
             obj.SerializeAll(writer);
 
             // Write per-NB spawn payload (user-defined data via WriteSpawnData/ReadSpawnData)
@@ -1877,7 +1900,7 @@ namespace EOSNative.Net
                     // Write child data with length prefix for safe skipping
                     // Position is NOT included — that's NetworkTransform's job
                     var childDataWriter = NetWriterPool.Get();
-                    childDataWriter.WriteByte((byte)child.SyncVarCount);
+                    childDataWriter.WriteByte((byte)child.TotalSyncVarCount);
                     child.SerializeAll(childDataWriter);
                     child.WriteSpawnPayload(childDataWriter);
                     var childData = childDataWriter.ToArraySegment();
@@ -1911,9 +1934,12 @@ namespace EOSNative.Net
                 return;
             }
 
+            Debug.Log($"[Spawn] MSG_SPAWN: PrefabId={prefabId} NetId=0x{networkId:X8} syncVars={syncVarCount} pos={position}");
+
             // Don't re-spawn if we already have it (e.g. we're the owner)
             if (_objects.ContainsKey(networkId))
             {
+                Debug.Log($"[Spawn] Already have 0x{networkId:X8} → skip");
                 // Still need to consume child data from the reader
                 ReadAndDiscardChildren(reader);
                 return;
@@ -1922,9 +1948,30 @@ namespace EOSNative.Net
             // Handle reserved PrefabIds (RoomState / PlayerState)
             if (prefabId == NetworkRoomState.PREFAB_ID || prefabId == NetworkPlayerState.PREFAB_ID)
             {
+                Debug.Log($"[Spawn] Reserved PrefabId={prefabId} → SpawnReservedObject");
                 SpawnReservedObject(prefabId, networkId, ownerId, destroyWithOwner, syncVarCount, reader);
                 // Reserved objects have no children — but still read the child count byte
                 reader.ReadByte(); // childCount = 0
+                return;
+            }
+
+            // Try to claim a local scene object that matches this prefabId
+            Debug.Log($"[Spawn] Trying TryClaimSceneObject for PrefabId={prefabId}...");
+            var claimed = TryClaimSceneObject(prefabId, networkId, ownerId, destroyWithOwner, position, rotation);
+            if (claimed != null)
+            {
+                Debug.Log($"[Spawn] CLAIMED '{claimed.name}' for PrefabId={prefabId} NetId=0x{networkId:X8}");
+                claimed._behaviours = claimed.GetComponents<NetworkBehaviour>();
+                for (int b = 0; b < claimed._behaviours.Length; b++)
+                {
+                    claimed._behaviours[b].Net = claimed;
+                    claimed._behaviours[b].ComponentIndex = (byte)b;
+                }
+                if (syncVarCount > 0)
+                    claimed.DeserializeAll(reader);
+                claimed.ReadSpawnPayload(reader);
+                claimed.NotifyNetworkSpawn();
+                ReadAndDiscardChildren(reader); // scene objects don't have networked children in this path
                 return;
             }
 
@@ -1948,8 +1995,17 @@ namespace EOSNative.Net
             netObj.IsRegistered = true;
             _objects[networkId] = netObj;
 
+            // Pre-populate _behaviours so DeserializeAll can find NB SyncVars
+            // (NotifyNetworkSpawn fires OnNetworkSpawn, so we do the lightweight setup here first)
+            netObj._behaviours = netObj.GetComponents<NetworkBehaviour>();
+            for (int b = 0; b < netObj._behaviours.Length; b++)
+            {
+                netObj._behaviours[b].Net = netObj;
+                netObj._behaviours[b].ComponentIndex = (byte)b;
+            }
+
             // Read SyncVar state
-            if (syncVarCount > 0 && netObj.SyncVarCount > 0)
+            if (syncVarCount > 0)
                 netObj.DeserializeAll(reader);
 
             // Read per-NB spawn payload (user-defined data)
@@ -1989,7 +2045,15 @@ namespace EOSNative.Net
                         _objects[childNetId] = child;
                         origChildren.Add((childNetId, localIndex));
 
-                        if (childSyncVarCount > 0 && child.SyncVarCount > 0 && childSyncVarCount == child.SyncVarCount)
+                        // Pre-populate _behaviours so DeserializeAll can find NB SyncVars
+                        child._behaviours = child.GetComponents<NetworkBehaviour>();
+                        for (int cb = 0; cb < child._behaviours.Length; cb++)
+                        {
+                            child._behaviours[cb].Net = child;
+                            child._behaviours[cb].ComponentIndex = (byte)cb;
+                        }
+
+                        if (childSyncVarCount > 0 && child.TotalSyncVarCount > 0)
                         {
                             child.DeserializeAll(reader);
                             child.ReadSpawnPayload(reader);
@@ -2338,6 +2402,9 @@ namespace EOSNative.Net
         {
             if (!IsHost) return;
 
+            // Ensure scene objects are registered before building snapshot
+            RegisterSceneObjects();
+
             // Priority-ordered chunked snapshot delivery:
             // 1. RoomState first (so late joiners know game state immediately)
             // 2. All PlayerStates (so late joiners know about all players)
@@ -2366,6 +2433,9 @@ namespace EOSNative.Net
                 // Skip already-added RoomState and PlayerStates
                 if (obj.PrefabId == NetworkRoomState.PREFAB_ID || obj.PrefabId == NetworkPlayerState.PREFAB_ID)
                     continue;
+                // Skip RegisterExisting objects (NO_PREFAB) — they're created locally on each peer,
+                // synced via regular STATE_UPDATE messages, not reconstructible from a prefab
+                if (obj.PrefabId == NetworkObject.NO_PREFAB) continue;
                 // Skip original children — they're serialized as part of their root
                 if (obj.OriginalParentNetworkId != 0) continue;
                 // Interest filter: only include objects the joining peer can see
@@ -2374,8 +2444,11 @@ namespace EOSNative.Net
                 ordered.Add(obj);
             }
 
-            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Sending chunked snapshot to {sender} ({ordered.Count} objects, {(ordered.Count + SNAPSHOT_CHUNK_SIZE - 1) / SNAPSHOT_CHUNK_SIZE} chunks)");
+            Debug.Log($"[Snapshot] HOST sending snapshot to {sender}: {ordered.Count} objects, {(ordered.Count + SNAPSHOT_CHUNK_SIZE - 1) / SNAPSHOT_CHUNK_SIZE} chunks");
+#if UNITY_EDITOR
+            for (int d = 0; d < ordered.Count; d++)
+                Debug.Log($"  [{d}] '{ordered[d].name}' PrefabId={ordered[d].PrefabId} NetId=0x{ordered[d].NetworkId:X8} active={ordered[d].gameObject.activeSelf}");
+#endif
 
             // Send in chunks of SNAPSHOT_CHUNK_SIZE
             int offset = 0;
@@ -2384,10 +2457,19 @@ namespace EOSNative.Net
                 int chunkCount = Math.Min(SNAPSHOT_CHUNK_SIZE, ordered.Count - offset);
 
                 var writer = NetWriterPool.Get();
+                writer.WriteByte(SNAPSHOT_TYPE_FULL);
                 writer.WritePackedUInt32((uint)chunkCount);
 
                 for (int i = 0; i < chunkCount; i++)
-                    WriteSpawnData(writer, ordered[offset + i]);
+                {
+                    // Length-prefixed entry so reader can skip unknown entries
+                    var entryWriter = NetWriterPool.Get();
+                    WriteSpawnData(entryWriter, ordered[offset + i]);
+                    var entryData = entryWriter.ToArraySegment();
+                    writer.WriteUInt16((ushort)entryData.Count);
+                    writer.WriteBytesRaw(entryData);
+                    NetWriterPool.Return(entryWriter);
+                }
 
                 Router.SendToPeer(MSG_SNAPSHOT, writer, sender, PacketReliability.ReliableOrdered, 1);
                 NetWriterPool.Return(writer);
@@ -2399,6 +2481,7 @@ namespace EOSNative.Net
             if (ordered.Count == 0)
             {
                 var writer = NetWriterPool.Get();
+                writer.WriteByte(SNAPSHOT_TYPE_FULL);
                 writer.WritePackedUInt32(0);
                 Router.SendToPeer(MSG_SNAPSHOT, writer, sender, PacketReliability.ReliableOrdered, 1);
                 NetWriterPool.Return(writer);
@@ -2442,16 +2525,23 @@ namespace EOSNative.Net
 
         private void HandleSnapshot(ProductUserId sender, NetReader reader)
         {
+            // Ensure local scene objects are registered before matching snapshot entries
+            RegisterSceneObjects();
+
             var hostPuid = GetHostPuid();
             bool senderIsHost = hostPuid != null && sender.Equals(hostPuid);
 
+            byte snapshotType = reader.ReadByte();
             uint count = reader.ReadPackedUInt32();
 
-            EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
-                $"Received snapshot chunk with {count} objects from {sender}");
+            Debug.Log($"[Snapshot] === Received chunk: {count} objects from {sender} (type={snapshotType}, IsHost={IsHost}, totalObjects={_objects.Count}) ===");
 
             for (uint i = 0; i < count; i++)
             {
+                // Each entry is length-prefixed so we can skip unknown entries
+                ushort entryLen = reader.ReadUInt16();
+                int entryEnd = reader.Position + entryLen;
+
                 ushort prefabId = reader.ReadUInt16();
                 uint networkId = reader.ReadUInt32();
                 ProductUserId ownerId = reader.ReadProductUserId();
@@ -2464,37 +2554,89 @@ namespace EOSNative.Net
                 if (!senderIsHost && ownerId != null && !sender.Equals(ownerId))
                 {
                     EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "NetworkManager",
-                        $"Snapshot: sender {sender} is not owner/host for object {networkId}, skipping remainder");
-                    return; // Can't safely skip variable-length SyncVar data — bail on entire snapshot
+                        $"Snapshot: sender {sender} is not owner/host for object {networkId}, skipping");
+                    reader.Position = entryEnd;
+                    continue;
                 }
 
                 if (_objects.ContainsKey(networkId))
                 {
                     // Already have this object — update state
                     var existing = _objects[networkId];
-                    if (syncVarCount > 0 && existing.SyncVarCount > 0)
+                    Debug.Log($"[Snapshot] Entry {i}: EXISTING '{existing.name}' NetId=0x{networkId:X8} PrefabId={prefabId} active={existing.gameObject.activeSelf}");
+                    // Safety net: if the object is in the snapshot, it should be active
+                    if (!existing.gameObject.activeSelf)
+                        existing.gameObject.SetActive(true);
+                    // Remove from unclaimed so DeactivateUnclaimedSceneObjects won't deactivate it
+                    if ((networkId & 0xFF000000u) == 0xEE000000u && existing.PrefabId != NetworkObject.SCENE_OBJECT
+                        && _unclaimedSceneObjects.TryGetValue(existing.PrefabId, out var uList))
+                    {
+                        uList.Remove(existing);
+                        if (uList.Count == 0)
+                            _unclaimedSceneObjects.Remove(existing.PrefabId);
+                    }
+                    // Update ownership from snapshot (scene objects may not have received MSG_AUTHORITY yet)
+                    if (existing.OwnerId == null && ownerId != null)
+                        existing.OwnerId = ownerId;
+                    if (syncVarCount > 0)
                         existing.DeserializeAll(reader);
                     existing.ReadSpawnPayload(reader); // consume payload to advance reader
                     // Read and update children state
                     ReadSnapshotChildren(reader, existing, prefabId, ownerId, networkId, destroyWithOwner, true);
+                    reader.Position = entryEnd; // safety
                     continue;
                 }
 
                 // Handle reserved PrefabIds (RoomState / PlayerState)
                 if (prefabId == NetworkRoomState.PREFAB_ID || prefabId == NetworkPlayerState.PREFAB_ID)
                 {
+                    Debug.Log($"[Snapshot] Entry {i}: RESERVED PrefabId={prefabId} NetId=0x{networkId:X8}");
                     SpawnReservedObject(prefabId, networkId, ownerId, destroyWithOwner, syncVarCount, reader);
                     reader.ReadByte(); // childCount = 0 for reserved objects
+                    reader.Position = entryEnd; // safety
+                    continue;
+                }
+
+                // Scene object not found locally — skip (joiner may have a different scene)
+                if (prefabId == NetworkObject.SCENE_OBJECT)
+                {
+                    Debug.LogWarning($"[Snapshot] Entry {i}: SCENE_OBJECT (0xFFFE) NetId=0x{networkId:X8}, not in local scene → skip");
+                    reader.Position = entryEnd;
+                    continue;
+                }
+
+                // Try to claim a local scene object that matches this prefabId
+                Debug.Log($"[Snapshot] Entry {i}: NEW NetId=0x{networkId:X8} PrefabId={prefabId} → trying TryClaimSceneObject...");
+                var claimed = TryClaimSceneObject(prefabId, networkId, ownerId, destroyWithOwner, position, rotation);
+                if (claimed != null)
+                {
+                    Debug.Log($"[Snapshot] Entry {i}: CLAIMED '{claimed.name}' for NetId=0x{networkId:X8} PrefabId={prefabId}");
+                    // Pre-populate _behaviours so DeserializeAll can find NB SyncVars
+                    claimed._behaviours = claimed.GetComponents<NetworkBehaviour>();
+                    for (int b = 0; b < claimed._behaviours.Length; b++)
+                    {
+                        claimed._behaviours[b].Net = claimed;
+                        claimed._behaviours[b].ComponentIndex = (byte)b;
+                    }
+
+                    if (syncVarCount > 0)
+                        claimed.DeserializeAll(reader);
+                    claimed.ReadSpawnPayload(reader);
+                    claimed.NotifyNetworkSpawn();
+                    ReadSnapshotChildren(reader, claimed, prefabId, ownerId, networkId, destroyWithOwner, false);
+                    reader.Position = entryEnd;
                     continue;
                 }
 
                 var prefab = GetPrefab(prefabId);
                 if (prefab == null)
                 {
-                    Debug.LogWarning($"[NetworkManager] Snapshot: unknown prefab {prefabId}");
+                    Debug.LogWarning($"[Snapshot] Entry {i}: UNKNOWN prefab {prefabId} → skip");
+                    reader.Position = entryEnd;
                     continue;
                 }
 
+                Debug.Log($"[Snapshot] Entry {i}: SPAWNING from prefab table PrefabId={prefabId} NetId=0x{networkId:X8}");
                 var go = GetFromPool(prefabId, prefab, position, rotation);
                 var netObj = go.GetComponent<NetworkObject>();
                 if (netObj == null)
@@ -2508,7 +2650,15 @@ namespace EOSNative.Net
                 netObj.IsRegistered = true;
                 _objects[networkId] = netObj;
 
-                if (syncVarCount > 0 && netObj.SyncVarCount > 0)
+                // Pre-populate _behaviours so DeserializeAll can find NB SyncVars
+                netObj._behaviours = netObj.GetComponents<NetworkBehaviour>();
+                for (int b = 0; b < netObj._behaviours.Length; b++)
+                {
+                    netObj._behaviours[b].Net = netObj;
+                    netObj._behaviours[b].ComponentIndex = (byte)b;
+                }
+
+                if (syncVarCount > 0)
                     netObj.DeserializeAll(reader);
 
                 // Read per-NB spawn payload (user-defined data)
@@ -2518,7 +2668,34 @@ namespace EOSNative.Net
 
                 // Read and register children
                 ReadSnapshotChildren(reader, netObj, prefabId, ownerId, networkId, destroyWithOwner, false);
+                reader.Position = entryEnd; // safety
             }
+
+            // Deactivate scene objects not claimed by snapshot (non-host only, full snapshot final chunk only)
+            // Mini-snapshots (reliable fallback) must NOT trigger deactivation — they're single-object re-sends
+            if (snapshotType == SNAPSHOT_TYPE_FULL && count < SNAPSHOT_CHUNK_SIZE && !IsHost)
+            {
+                Debug.Log($"[Snapshot] Final chunk (count={count} < {SNAPSHOT_CHUNK_SIZE}), IsHost={IsHost} → DeactivateUnclaimedSceneObjects");
+                DeactivateUnclaimedSceneObjects();
+            }
+
+#if UNITY_EDITOR
+            // Post-snapshot dump: full object registry (editor only to avoid log spam in builds)
+            if (snapshotType == SNAPSHOT_TYPE_FULL && count < SNAPSHOT_CHUNK_SIZE)
+            {
+                Debug.Log($"[Snapshot] === POST-SNAPSHOT DUMP: {_objects.Count} objects ===");
+                foreach (var kvp in _objects)
+                {
+                    var o = kvp.Value;
+                    if (o == null) { Debug.Log($"  0x{kvp.Key:X8}: NULL"); continue; }
+                    var rend = o.GetComponent<Renderer>();
+                    bool rendEnabled = rend != null && rend.enabled;
+                    var mf = o.GetComponent<MeshFilter>();
+                    bool hasMesh = mf != null && mf.sharedMesh != null;
+                    Debug.Log($"  0x{kvp.Key:X8} '{o.name}' P:{o.PrefabId} Owner:{(o.OwnerId != null ? "yes" : "no")} IsOwner:{o.IsOwner} Parent:0x{o.ParentNetworkId:X8} active:{o.gameObject.activeSelf} activeH:{o.gameObject.activeInHierarchy} rend:{rendEnabled} mesh:{hasMesh} pos:{o.transform.position}");
+                }
+            }
+#endif
 
             // After snapshot chunks contain our RoomState, ensure our PlayerState exists
             if (RoomState != null)
@@ -2557,7 +2734,7 @@ namespace EOSNative.Net
                     // Update existing child's SyncVars
                     var existing = _objects[childNetId];
                     byte childSyncVarCount = reader.ReadByte();
-                    if (childSyncVarCount > 0 && existing.SyncVarCount > 0 && childSyncVarCount == existing.SyncVarCount)
+                    if (childSyncVarCount > 0 && existing.TotalSyncVarCount > 0)
                     {
                         existing.DeserializeAll(reader);
                         existing.ReadSpawnPayload(reader); // consume payload to advance reader
@@ -2588,7 +2765,15 @@ namespace EOSNative.Net
                     _objects[childNetId] = child;
                     origChildren.Add((childNetId, localIndex));
 
-                    if (childSyncVarCount > 0 && child.SyncVarCount > 0 && childSyncVarCount == child.SyncVarCount)
+                    // Pre-populate _behaviours so DeserializeAll can find NB SyncVars
+                    child._behaviours = child.GetComponents<NetworkBehaviour>();
+                    for (int cb = 0; cb < child._behaviours.Length; cb++)
+                    {
+                        child._behaviours[cb].Net = child;
+                        child._behaviours[cb].ComponentIndex = (byte)cb;
+                    }
+
+                    if (childSyncVarCount > 0 && child.TotalSyncVarCount > 0)
                     {
                         child.DeserializeAll(reader);
                         child.ReadSpawnPayload(reader);
@@ -2838,7 +3023,18 @@ namespace EOSNative.Net
 
         #region Host Election
 
-        private void OnLobbyJoinedRecomputeHost(LobbyData _) => RecomputeHost();
+        private void OnLobbyJoinedRecomputeHost(LobbyData _)
+        {
+            RecomputeHost();
+            // Retry RegisterSceneObjects in case RecomputeHost's call failed due to null PUID
+            if (IsHost)
+                RegisterSceneObjects();
+        }
+
+        private void OnLobbyLeftReset()
+        {
+            _snapshotReceived = false;
+        }
 
         private void RecomputeHost()
         {
@@ -2970,6 +3166,8 @@ namespace EOSNative.Net
             // If we're the host, ensure RoomState exists and create our PlayerState
             if (IsHost)
             {
+                // Ensure scene weapons are registered before snapshot (idempotent)
+                RegisterSceneObjects();
                 EnsureRoomState();
                 EnsureLocalPlayerState();
 
@@ -2984,15 +3182,17 @@ namespace EOSNative.Net
                 RestoreHibernatedObjects(peer);
             }
 
-            // If we're not the host but just connected, request a snapshot
-            // (our PlayerState will be created after we receive the snapshot)
-            if (!IsHost && _objects.Count == 0)
+            // If we're not the host and haven't received a snapshot yet, request one.
+            // Note: _objects may already contain RegisterExisting objects (e.g. balls) but we still
+            // need the snapshot for Spawn()-based objects (weapons, RoomState, PlayerState, etc.)
+            if (!IsHost && !_snapshotReceived)
             {
+                _snapshotReceived = true;
                 RequestSnapshot();
             }
             else if (!IsHost)
             {
-                // Already have objects but new peer joined — ensure our PlayerState
+                // Already have snapshot but new peer joined — ensure our PlayerState
                 EnsureLocalPlayerState();
             }
 
@@ -3378,7 +3578,15 @@ namespace EOSNative.Net
                 netObj.IsRegistered = true;
                 _objects[networkId] = netObj;
 
-                if (syncVarCount > 0 && netObj.SyncVarCount > 0)
+                // Pre-populate _behaviours so DeserializeAll can find NB SyncVars
+                netObj._behaviours = netObj.GetComponents<NetworkBehaviour>();
+                for (int b = 0; b < netObj._behaviours.Length; b++)
+                {
+                    netObj._behaviours[b].Net = netObj;
+                    netObj._behaviours[b].ComponentIndex = (byte)b;
+                }
+
+                if (syncVarCount > 0)
                     netObj.DeserializeAll(reader);
                 netObj.ReadSpawnPayload(reader);
 
@@ -3406,7 +3614,15 @@ namespace EOSNative.Net
                 netObj.IsRegistered = true;
                 _objects[networkId] = netObj;
 
-                if (syncVarCount > 0 && netObj.SyncVarCount > 0)
+                // Pre-populate _behaviours so DeserializeAll can find NB SyncVars
+                netObj._behaviours = netObj.GetComponents<NetworkBehaviour>();
+                for (int b = 0; b < netObj._behaviours.Length; b++)
+                {
+                    netObj._behaviours[b].Net = netObj;
+                    netObj._behaviours[b].ComponentIndex = (byte)b;
+                }
+
+                if (syncVarCount > 0)
                     netObj.DeserializeAll(reader);
                 netObj.ReadSpawnPayload(reader);
 
@@ -3689,6 +3905,7 @@ namespace EOSNative.Net
         public void RegisterExisting(NetworkObject obj, uint networkId)
         {
             obj.NetworkId = networkId;
+            obj.PrefabId = NetworkObject.NO_PREFAB;
             obj.IsRegistered = true;
             _objects[networkId] = obj;
             obj.NotifyNetworkSpawn();
@@ -3727,6 +3944,55 @@ namespace EOSNative.Net
         }
 
         /// <summary>
+        /// Try to find a prefab table entry that matches this scene object's NetworkBehaviour types.
+        /// Returns the table PrefabId if found, or SCENE_OBJECT if no match.
+        /// This allows peers with different scenes to spawn the object from the prefab table.
+        /// </summary>
+        private ushort FindPrefabTableMatch(NetworkObject sceneObj)
+        {
+            if (PrefabTable == null)
+            {
+                Debug.Log($"[NetworkManager] FindPrefabTableMatch('{sceneObj.name}'): no PrefabTable → SCENE_OBJECT");
+                return NetworkObject.SCENE_OBJECT;
+            }
+
+            var sceneNBs = sceneObj.GetComponents<NetworkBehaviour>();
+            if (sceneNBs.Length == 0)
+            {
+                Debug.Log($"[NetworkManager] FindPrefabTableMatch('{sceneObj.name}'): 0 NetworkBehaviours → SCENE_OBJECT");
+                return NetworkObject.SCENE_OBJECT;
+            }
+
+            var nbTypes = string.Join(", ", System.Array.ConvertAll(sceneNBs, nb => nb.GetType().Name));
+            for (ushort i = 0; i < PrefabTable.Count; i++)
+            {
+                var prefab = PrefabTable.GetPrefab(i);
+                if (prefab == null) continue;
+
+                var prefabNBs = prefab.GetComponents<NetworkBehaviour>();
+                if (prefabNBs.Length != sceneNBs.Length) continue;
+
+                bool allMatch = true;
+                for (int j = 0; j < sceneNBs.Length; j++)
+                {
+                    if (sceneNBs[j].GetType() != prefabNBs[j].GetType())
+                    {
+                        allMatch = false;
+                        break;
+                    }
+                }
+                if (allMatch)
+                {
+                    Debug.Log($"[NetworkManager] FindPrefabTableMatch('{sceneObj.name}'): [{nbTypes}] → matched PrefabId={i} ('{prefab.name}')");
+                    return i;
+                }
+            }
+
+            Debug.Log($"[NetworkManager] FindPrefabTableMatch('{sceneObj.name}'): [{nbTypes}] → no match → SCENE_OBJECT");
+            return NetworkObject.SCENE_OBJECT;
+        }
+
+        /// <summary>
         /// Find all NetworkObjects already in the scene and register them.
         /// Ownerless objects are automatically assigned to the current host.
         /// Called automatically when host status changes. Can also be called manually after scene load.
@@ -3734,9 +4000,14 @@ namespace EOSNative.Net
         public void RegisterSceneObjects()
         {
             var localPuid = EOSManager.Instance?.LocalProductUserId;
-            if (localPuid == null) return;
+            if (localPuid == null)
+            {
+                Debug.Log("[NetworkManager] RegisterSceneObjects: skipped (localPuid is null)");
+                return;
+            }
 
             var sceneObjects = FindObjectsByType<NetworkObject>(FindObjectsSortMode.None);
+            Debug.Log($"[NetworkManager] RegisterSceneObjects: found {sceneObjects.Length} NetworkObjects in scene (IsHost={IsHost})");
 
             // Two-pass: register roots first, then children
             // Pass 1: Roots (objects whose parent transform has no NetworkObject above them)
@@ -3754,13 +4025,18 @@ namespace EOSNative.Net
                 }
                 if (isChild) continue; // handled in pass 2
 
-                uint sceneNetId = 0xFFFF0000u | (FnvHash(GetHierarchyPath(obj.transform)) & 0xFFFFu);
+                uint sceneNetId = obj.SceneId != 0
+                    ? 0xEE000000u | obj.SceneId
+                    : 0xEE000000u | (FnvHash(GetHierarchyPath(obj.transform)) & 0x00FFFFFFu);
                 while (_objects.ContainsKey(sceneNetId)) sceneNetId++;
 
                 obj.NetworkId = sceneNetId;
+                obj.PrefabId = FindPrefabTableMatch(obj);
                 obj.ParentNetworkId = 0;
                 obj.IsRegistered = true;
                 _objects[sceneNetId] = obj;
+
+                Debug.Log($"[NetworkManager] RegisterSceneObjects: root '{obj.name}' → NetId=0x{sceneNetId:X8}, PrefabId={obj.PrefabId} (SceneId={obj.SceneId}), active={obj.gameObject.activeSelf}");
 
                 if (obj.OwnerId == null && IsHost)
                 {
@@ -3798,11 +4074,14 @@ namespace EOSNative.Net
                 while (rootObj != null && rootObj.ParentNetworkId != 0 && _objects.TryGetValue(rootObj.ParentNetworkId, out var grandparent))
                     rootObj = grandparent;
 
-                uint sceneNetId = 0xFFFF0000u | (FnvHash(GetHierarchyPath(obj.transform)) & 0xFFFFu);
+                uint sceneNetId = obj.SceneId != 0
+                    ? 0xEE000000u | obj.SceneId
+                    : 0xEE000000u | (FnvHash(GetHierarchyPath(obj.transform)) & 0x00FFFFFFu);
                 while (_objects.ContainsKey(sceneNetId)) sceneNetId++;
 
                 uint rootNetId = rootObj?.NetworkId ?? 0;
                 obj.NetworkId = sceneNetId;
+                obj.PrefabId = FindPrefabTableMatch(obj);
                 obj.ParentNetworkId = rootNetId;
                 obj.OriginalParentNetworkId = rootNetId;
                 obj.OwnerId = rootObj?.OwnerId;
@@ -3826,6 +4105,9 @@ namespace EOSNative.Net
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
                     $"Scene child '{obj.name}' ({sceneNetId}) registered under root {obj.ParentNetworkId}");
             }
+
+            // Build unclaimed scene object tracking for snapshot claiming
+            RebuildUnclaimedSceneObjects();
         }
 
         private static string GetHierarchyPath(Transform t)
@@ -3837,6 +4119,106 @@ namespace EOSNative.Net
                 path = t.name + "/" + path;
             }
             return path;
+        }
+
+        /// <summary>
+        /// Build lookup of scene objects keyed by their matched PrefabId.
+        /// Non-host uses this to claim scene objects when snapshot/spawn arrives with a matching PrefabId.
+        /// </summary>
+        private void RebuildUnclaimedSceneObjects()
+        {
+            _unclaimedSceneObjects.Clear();
+            int total = 0;
+            foreach (var kvp in _objects)
+            {
+                var obj = kvp.Value;
+                if (obj == null) continue;
+                // Only track scene objects (0xEE prefix) that have a prefab table match
+                if ((obj.NetworkId & 0xFF000000u) != 0xEE000000u) continue;
+                if (obj.PrefabId == NetworkObject.SCENE_OBJECT || obj.PrefabId == NetworkObject.NO_PREFAB) continue;
+
+                if (!_unclaimedSceneObjects.TryGetValue(obj.PrefabId, out var list))
+                {
+                    list = new List<NetworkObject>();
+                    _unclaimedSceneObjects[obj.PrefabId] = list;
+                }
+                list.Add(obj);
+                total++;
+            }
+            Debug.Log($"[NetworkManager] RebuildUnclaimedSceneObjects: {total} claimable objects across {_unclaimedSceneObjects.Count} prefabIds");
+            foreach (var kvp in _unclaimedSceneObjects)
+                Debug.Log($"  PrefabId={kvp.Key}: {kvp.Value.Count} objects ({string.Join(", ", kvp.Value.ConvertAll(o => o.name))})");
+        }
+
+        /// <summary>
+        /// Try to claim a local scene object for a snapshot/spawn entry.
+        /// Removes the old 0xEE key, reassigns NetworkId/PrefabId/OwnerId, re-adds under new key.
+        /// Returns the claimed object or null if no match.
+        /// </summary>
+        internal NetworkObject TryClaimSceneObject(ushort prefabId, uint newNetworkId, ProductUserId ownerId,
+            bool destroyWithOwner, Vector3 position, Quaternion rotation)
+        {
+            if (!_unclaimedSceneObjects.TryGetValue(prefabId, out var list) || list.Count == 0)
+            {
+                Debug.Log($"[NetworkManager] TryClaimSceneObject: NO match for PrefabId={prefabId} (unclaimed keys: {string.Join(",", _unclaimedSceneObjects.Keys)})");
+                return null;
+            }
+
+            // Claim the first available match
+            var claimed = list[0];
+            list.RemoveAt(0);
+            if (list.Count == 0)
+                _unclaimedSceneObjects.Remove(prefabId);
+
+            // Remove old 0xEE registration
+            uint oldId = claimed.NetworkId;
+            _objects.Remove(oldId);
+            _originalChildren.Remove(oldId);
+
+            // Reassign identity
+            claimed.NetworkId = newNetworkId;
+            claimed.PrefabId = prefabId;
+            claimed.OwnerId = ownerId;
+            claimed.DestroyWithOwner = destroyWithOwner;
+            claimed.ParentNetworkId = 0;
+            claimed.IsRegistered = true;
+            _objects[newNetworkId] = claimed;
+
+            // Update transform
+            claimed.transform.position = position;
+            claimed.transform.rotation = rotation;
+
+            // Ensure active
+            if (!claimed.gameObject.activeSelf)
+                claimed.gameObject.SetActive(true);
+
+            Debug.Log($"[NetworkManager] CLAIMED scene object '{claimed.name}' (0x{oldId:X8} → 0x{newNetworkId:X8}, PrefabId={prefabId}, active={claimed.gameObject.activeSelf})");
+
+            return claimed;
+        }
+
+        /// <summary>
+        /// Deactivate any scene objects that were not claimed by the snapshot.
+        /// Called on non-host after final snapshot chunk arrives.
+        /// </summary>
+        internal void DeactivateUnclaimedSceneObjects()
+        {
+            int deactivated = 0;
+            foreach (var kvp in _unclaimedSceneObjects)
+            {
+                foreach (var obj in kvp.Value)
+                {
+                    if (obj != null && obj.gameObject.activeSelf)
+                    {
+                        Debug.Log($"[NetworkManager] Deactivating unclaimed scene object '{obj.name}' (PrefabId={obj.PrefabId}, NetId=0x{obj.NetworkId:X8})");
+                        obj.gameObject.SetActive(false);
+                        deactivated++;
+                    }
+                }
+            }
+            _unclaimedSceneObjects.Clear();
+
+            Debug.Log($"[NetworkManager] DeactivateUnclaimedSceneObjects: {deactivated} objects deactivated");
         }
 
         #endregion

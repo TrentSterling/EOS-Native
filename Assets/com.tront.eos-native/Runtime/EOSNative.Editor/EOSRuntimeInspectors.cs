@@ -1,5 +1,6 @@
 using UnityEditor;
 using UnityEngine;
+using EOSNative.Diagnostics;
 using EOSNative.Net;
 using EOSNative.P2P;
 using EOSNative.UI;
@@ -68,11 +69,13 @@ namespace EOSNative.Editor
     {
         private SerializedProperty _destroyWithOwner;
         private SerializedProperty _alwaysVisible;
+        private SerializedProperty _sceneId;
 
         private void OnEnable()
         {
             _destroyWithOwner = serializedObject.FindProperty("_destroyWithOwner");
             _alwaysVisible = serializedObject.FindProperty("_alwaysVisible");
+            _sceneId = serializedObject.FindProperty("_sceneId");
         }
 
         public override void OnInspectorGUI()
@@ -87,6 +90,13 @@ namespace EOSNative.Editor
                 "Destroy when owner disconnects instead of transferring to host. Use for player avatars."));
             EditorGUILayout.PropertyField(_alwaysVisible, new GUIContent("Always Visible",
                 "Always replicate to all peers regardless of spatial interest. Use for objectives, world anchors."));
+
+            // SceneId (read-only display — assigned by SceneObjectIdAssigner on scene save)
+            using (new EditorGUI.DisabledGroupScope(true))
+            {
+                EditorGUILayout.PropertyField(_sceneId, new GUIContent("Scene ID",
+                    "Stable scene-unique ID. Auto-assigned on scene save. 0 = unassigned (uses hierarchy hash fallback)."));
+            }
 
             serializedObject.ApplyModifiedProperties();
 
@@ -524,6 +534,113 @@ namespace EOSNative.Editor
                 $"Table has {table.Count} entries. Index = PrefabId used by Spawn().\n" +
                 "Collect scans for all prefabs with NetworkObject. Order is preserved for existing entries.",
                 MessageType.Info);
+        }
+    }
+
+    [CustomEditor(typeof(EOSHealthCheck))]
+    public class EOSHealthCheckEditor : UnityEditor.Editor
+    {
+        private static readonly Color ColPass = new Color(0.3f, 0.9f, 0.3f);
+        private static readonly Color ColFail = new Color(1f, 0.35f, 0.35f);
+        private static readonly Color ColRunning = new Color(1f, 1f, 0.35f);
+        private static readonly Color ColSkipped = new Color(0.6f, 0.6f, 0.6f);
+        private static readonly Color ColPending = new Color(0.5f, 0.5f, 0.5f);
+
+        public override void OnInspectorGUI()
+        {
+            var hc = (EOSHealthCheck)target;
+
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("EOS Health Check", EditorStyles.boldLabel);
+
+            if (!Application.isPlaying)
+            {
+                EditorGUILayout.HelpBox("Enter Play Mode to run diagnostics.", MessageType.Info);
+                return;
+            }
+
+            // Summary
+            int pass = hc.PassCount;
+            int total = hc.TotalCount;
+            float dur = hc.TotalDuration;
+            bool anyRun = total > 0 && (pass > 0 || hc.FailCount > 0);
+
+            if (anyRun)
+            {
+                string summary = $"{pass}/{total} passed ({dur:F2}s)";
+                Color sumColor = hc.FailCount == 0 ? ColPass : ColFail;
+                var prev = GUI.contentColor;
+                GUI.contentColor = sumColor;
+                EditorGUILayout.LabelField("Results", summary);
+                GUI.contentColor = prev;
+            }
+
+            if (hc.IsRunning)
+                EditorGUILayout.HelpBox("Running checks...", MessageType.Info);
+
+            // Action buttons
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Run All Passive"))
+                hc.RunAllPassive();
+            if (GUILayout.Button("Full Sequence"))
+                hc.RunFullSequence();
+            if (GUILayout.Button("Reset"))
+                hc.ResetAll();
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Lobby Sequence"))
+                hc.RunLobbySequence();
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(5);
+
+            // Per-category sections
+            foreach (var cat in hc.GetCategories())
+            {
+                var (catPass, catTotal) = hc.GetCategoryCounts(cat);
+                EditorGUILayout.LabelField($"{cat} ({catPass}/{catTotal})", EditorStyles.boldLabel);
+                EditorGUI.indentLevel++;
+
+                foreach (var check in hc.GetChecksForCategory(cat))
+                {
+                    string icon;
+                    Color color;
+                    switch (check.Status)
+                    {
+                        case CheckStatus.Pass:    icon = "\u2713"; color = ColPass; break;
+                        case CheckStatus.Fail:    icon = "\u2717"; color = ColFail; break;
+                        case CheckStatus.Running: icon = "\u25CF"; color = ColRunning; break;
+                        case CheckStatus.Skipped: icon = "\u2014"; color = ColSkipped; break;
+                        default:                  icon = "\u25CB"; color = ColPending; break;
+                    }
+
+                    EditorGUILayout.BeginHorizontal();
+                    var prevColor = GUI.contentColor;
+                    GUI.contentColor = color;
+                    EditorGUILayout.LabelField(icon, GUILayout.Width(18));
+                    GUI.contentColor = prevColor;
+                    EditorGUILayout.LabelField(check.Name, GUILayout.Width(145));
+
+                    string msg = check.Message ?? "";
+                    if (check.Duration > 0.001f)
+                        msg += $"  ({check.Duration * 1000:F0}ms)";
+
+                    GUI.contentColor = check.Status == CheckStatus.Fail ? ColFail : Color.white;
+                    EditorGUILayout.LabelField(msg);
+                    GUI.contentColor = prevColor;
+
+                    EditorGUILayout.EndHorizontal();
+                }
+
+                EditorGUI.indentLevel--;
+                EditorGUILayout.Space(3);
+            }
+
+            // Continuous repaint while running
+            if (hc.IsRunning)
+                Repaint();
         }
     }
 }

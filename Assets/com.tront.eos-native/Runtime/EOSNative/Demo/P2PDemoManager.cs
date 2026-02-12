@@ -17,8 +17,8 @@ namespace EOSNative.Demo
 {
     /// <summary>
     /// P2P Ball Demo manager.
-    /// Spawns local/remote balls from prefabs, manages weapons via NetworkManager.Spawn(),
-    /// broadcasts positions via EOSP2PManager, routes incoming packets.
+    /// Spawns balls via RegisterExisting (Layer 1 position sync), weapons via NetworkManager.Spawn()
+    /// (Layer 2 snapshots for late-join). Broadcasts positions via EOSP2PManager, routes incoming packets.
     /// Place in scene with _ballPrefab and _prefabTable assigned in Inspector.
     /// </summary>
     public class P2PDemoManager : MonoBehaviour
@@ -78,10 +78,14 @@ namespace EOSNative.Demo
 
         // Weapons (reparenting demo)
         private NetworkObject _heldWeapon;
+        private bool _weaponsEnsured;
 
         // Mobile controls
         private Canvas _mobileCanvas;
         private JoystickDragHandler _joystickHandler;
+
+        // Debug label background texture (cached to avoid alloc per frame)
+        private Texture2D _debugBgTex;
 
         #endregion
 
@@ -100,7 +104,6 @@ namespace EOSNative.Demo
         private void Start()
         {
             InitializePrefabs();
-            RegisterSceneWeapons();
             CreateMobileControls();
 
             // If already in a lobby when demo starts, spawn immediately
@@ -166,6 +169,21 @@ namespace EOSNative.Demo
 
         private void InitializePrefabs()
         {
+            // If auto-created (singleton), find the prefab table in the project
+            if (_prefabTable == null)
+            {
+#if UNITY_EDITOR
+                var guids = UnityEditor.AssetDatabase.FindAssets("t:NetworkPrefabTable");
+                if (guids.Length > 0)
+                {
+                    var path = UnityEditor.AssetDatabase.GUIDToAssetPath(guids[0]);
+                    _prefabTable = UnityEditor.AssetDatabase.LoadAssetAtPath<NetworkPrefabTable>(path);
+                    EOSDebugLogger.Log(DebugCategory.EOSManager, "P2PDemoManager",
+                        $"Auto-discovered prefab table: {path} ({_prefabTable.Count} prefabs)");
+                }
+#endif
+            }
+
             // Register all prefabs from the table with NetworkManager
             if (_prefabTable != null)
             {
@@ -178,25 +196,6 @@ namespace EOSNative.Demo
                         nm.RegisterPrefab(prefab, (ushort)i);
                 }
             }
-        }
-
-        private void RegisterSceneWeapons()
-        {
-            // Scene-placed weapons need to be registered with NetworkManager
-            // so FindNearestWeapon (which searches Objects) can find them,
-            // and so SetNetworkParent/DetachFromNetworkParent work.
-            var weapons = FindObjectsByType<DemoWeapon>(FindObjectsSortMode.None);
-            for (int i = 0; i < weapons.Length; i++)
-            {
-                var netObj = weapons[i].GetComponent<NetworkObject>();
-                if (netObj != null && netObj.NetworkId == 0)
-                {
-                    uint id = 0xCC000000u | (uint)i;
-                    NetworkManager.Instance.RegisterExisting(netObj, id);
-                }
-            }
-            if (weapons.Length > 0)
-                EOSDebugLogger.Log(DebugCategory.PlayerBall, "P2PDemoManager", $"Registered {weapons.Length} scene weapons");
         }
 
         private void CreateMobileControls()
@@ -382,6 +381,7 @@ namespace EOSNative.Demo
         private void OnLobbyJoined(LobbyData lobby)
         {
             SpawnLocalBall();
+            _weaponsEnsured = false; // re-check weapons on new lobby join
         }
 
         private void OnLobbyLeftHandler()
@@ -406,6 +406,7 @@ namespace EOSNative.Demo
             }
 
             _heldWeapon = null;
+            _weaponsEnsured = false;
         }
 
         #endregion
@@ -472,6 +473,22 @@ namespace EOSNative.Demo
             // Feed joystick input to ball
             if (_localBall != null && _joystickHandler != null)
                 _localBall.MobileInput = _joystickHandler.Input;
+
+            // Host ensures weapons exist (scene objects or spawned from prefab table)
+            // Non-host: scene objects are claimed by snapshot via TryClaimSceneObject — no destruction needed
+            if (!_weaponsEnsured && _localBall != null)
+            {
+                var nm = NetworkManager.Instance;
+                if (nm.IsHost)
+                {
+                    _weaponsEnsured = true;
+                    EnsureWeapons();
+                }
+                else
+                {
+                    _weaponsEnsured = true; // non-host relies on snapshot claiming
+                }
+            }
 
             if (_localBall == null || _localBehaviour == null) return;
 
@@ -582,6 +599,46 @@ namespace EOSNative.Demo
         #endregion
 
         #region Weapons
+
+        /// <summary>
+        /// Ensure weapons exist. Scene-placed weapons (P2PDemo) are registered via RegisterSceneObjects.
+        /// If no weapons exist (e.g. SampleScene), host spawns them from the prefab table.
+        /// </summary>
+        private void EnsureWeapons()
+        {
+            // First, force RegisterSceneObjects to pick up any scene-placed weapons
+            NetworkManager.Instance.RegisterSceneObjects();
+
+            // Check if any weapons are already registered
+            int weaponCount = 0;
+            foreach (var kvp in NetworkManager.Instance.Objects)
+            {
+                if (kvp.Value.GetComponent<DemoWeapon>() != null)
+                    weaponCount++;
+            }
+
+            if (weaponCount > 0)
+            {
+                Debug.Log($"[P2PDemo] {weaponCount} weapons registered from scene");
+                return;
+            }
+
+            // No weapons in scene — spawn from prefab table (index 2 = Weapon)
+            if (_prefabTable == null || _prefabTable.Count <= 2) return;
+            var weaponPrefab = _prefabTable.GetPrefab(2);
+            if (weaponPrefab == null) return;
+
+            var nm = NetworkManager.Instance;
+            Vector3[] positions = { new(-3, 0.5f, 0), new(3, 0.5f, 0), new(0, 0.5f, 3) };
+            for (int i = 0; i < positions.Length; i++)
+            {
+                var obj = nm.Spawn(weaponPrefab, positions[i], Quaternion.identity);
+                if (obj != null)
+                    obj.name = $"Weapon_{i}";
+            }
+            Debug.Log($"[P2PDemo] Spawned {positions.Length} weapons from prefab table");
+        }
+
 
         private Vector3 GetAimDirection()
         {
@@ -703,70 +760,146 @@ namespace EOSNative.Demo
                 GUI.Label(new Rect(10, y, 400, 25), "Join/create a lobby via F1 overlay to start", style);
             }
 
-            // Weapon debug info (always shown)
+            // --- Debug HUD: NetworkManager summary ---
+            y += 10f;
+            var debugStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 13,
+                normal = { textColor = new Color(1f, 0.8f, 0.3f) }
+            };
+
+            var nm2 = NetworkManager.Instance;
+            var p2pInst = EOSP2PManager._instance;
+            int pc = p2pInst?.Peers?.Count ?? 0;
+            GUI.Label(new Rect(10, y, 900, 25),
+                $"[Net] Host:{nm2.IsHost} | Objs:{nm2.Objects.Count} | P2P:{(pc > 0 ? $"OK({pc})" : "NONE")} | Snap:{nm2._snapshotReceived} | Scene:{UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}",
+                debugStyle);
+            y += 18f;
+
+            // Weapon summary
             if (_localBall != null)
             {
-                y += 10f;
-                var debugStyle = new GUIStyle(GUI.skin.label)
-                {
-                    fontSize = 13,
-                    normal = { textColor = new Color(1f, 0.8f, 0.3f) }
-                };
-
-                int registeredWeapons = 0;
+                int weaponCount = 0;
                 float nearestDist = float.MaxValue;
                 string nearestName = "none";
                 bool nearestHeld = false;
                 var ballPos = _localBall.transform.position;
 
-                foreach (var kvp in NetworkManager.Instance.Objects)
+                foreach (var kvp in nm2.Objects)
                 {
                     var w = kvp.Value.GetComponent<DemoWeapon>();
                     if (w == null) continue;
-                    registeredWeapons++;
+                    weaponCount++;
                     float d = Vector3.Distance(ballPos, kvp.Value.transform.position);
-                    if (d < nearestDist)
-                    {
-                        nearestDist = d;
-                        nearestName = kvp.Value.name;
-                        nearestHeld = w.IsHeld;
-                    }
+                    if (d < nearestDist) { nearestDist = d; nearestName = kvp.Value.name; nearestHeld = w.IsHeld; }
                 }
 
                 string heldStr = _heldWeapon != null ? _heldWeapon.name : "none";
-                GUI.Label(new Rect(10, y, 600, 25),
-                    $"[Weapons] Registered: {registeredWeapons} | Held: {heldStr} | Nearest: {nearestName} ({nearestDist:F1}m, held={nearestHeld}) | Pickup range: 2m",
+                GUI.Label(new Rect(10, y, 700, 25),
+                    $"[Weapons] Count: {weaponCount} | Held: {heldStr} | Nearest: {nearestName} ({nearestDist:F1}m, held={nearestHeld})",
                     debugStyle);
                 y += 18f;
+            }
 
-                // Draw pickup range indicator on nearest weapon
-                if (nearestDist < 5f && nearestDist < float.MaxValue && Camera.main != null)
+            // --- World-space debug labels over all NetworkObjects ---
+            DrawWorldDebugLabels();
+        }
+
+        private void DrawWorldDebugLabels()
+        {
+            var cam = Camera.main;
+            if (cam == null) return;
+
+            var labelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                alignment = TextAnchor.UpperCenter,
+                wordWrap = false
+            };
+            if (_debugBgTex == null)
+            {
+                _debugBgTex = new Texture2D(1, 1);
+                _debugBgTex.SetPixel(0, 0, new Color(0f, 0f, 0f, 0.65f));
+                _debugBgTex.Apply();
+            }
+            var bgStyle = new GUIStyle { normal = { background = _debugBgTex } };
+
+            foreach (var kvp in NetworkManager.Instance.Objects)
+            {
+                var obj = kvp.Value;
+                if (obj == null) continue;
+
+                float yOffset = 1.5f;
+                var weapon = obj.GetComponent<DemoWeapon>();
+                var ball = obj.GetComponent<DemoBallBehaviour>();
+
+                var sp = cam.WorldToScreenPoint(obj.transform.position + Vector3.up * yOffset);
+                if (sp.z <= 0 || sp.z > 80f) continue; // behind camera or too far
+
+                float screenY = Screen.height - sp.y;
+
+                // Build info lines
+                string line1 = obj.name;
+                string idHex = $"0x{obj.NetworkId:X8}";
+                string prefabStr = obj.PrefabId == 0xFFFF ? "NoPrefab" :
+                                   obj.PrefabId == 0xFFFE ? "Scene" : $"P:{obj.PrefabId}";
+                string ownerStr = "none";
+                if (obj.OwnerId != null)
                 {
-                    var rangeStyle = new GUIStyle(GUI.skin.label)
-                    {
-                        fontSize = 14,
-                        fontStyle = FontStyle.Bold,
-                        alignment = TextAnchor.MiddleCenter,
-                        normal = { textColor = nearestDist <= 2f ? Color.green : Color.red }
-                    };
-                    // Find nearest weapon transform for screen position
-                    foreach (var kvp in NetworkManager.Instance.Objects)
-                    {
-                        var w = kvp.Value.GetComponent<DemoWeapon>();
-                        if (w == null) continue;
-                        float d = Vector3.Distance(ballPos, kvp.Value.transform.position);
-                        if (Mathf.Abs(d - nearestDist) < 0.01f)
-                        {
-                            var sp = Camera.main.WorldToScreenPoint(kvp.Value.transform.position + Vector3.up * 1.2f);
-                            if (sp.z > 0)
-                            {
-                                string label = nearestDist <= 2f ? $"[F] PICKUP ({d:F1}m)" : $"({d:F1}m)";
-                                GUI.Label(new Rect(sp.x - 60, Screen.height - sp.y, 120, 25), label, rangeStyle);
-                            }
-                            break;
-                        }
-                    }
+                    try { var s = obj.OwnerId.ToString(); ownerStr = s.Substring(0, Mathf.Min(6, s.Length)); }
+                    catch { ownerStr = "err"; }
                 }
+                string line2 = $"{idHex} {prefabStr} O:{ownerStr}";
+
+                // Common info
+                string isOwnerStr = obj.IsOwner ? "YES" : "no";
+                string parentStr = obj.ParentNetworkId != 0 ? $"0x{obj.ParentNetworkId:X8}" : "-";
+                string line2b = $"IsOwner:{isOwnerStr} Parent:{parentStr}";
+
+                // Extra info per type
+                string line3 = "";
+                string line4 = ""; // visual diagnostics
+                if (weapon != null)
+                {
+                    string holder = string.IsNullOrEmpty(weapon.HolderName.Value) ? "free" : weapon.HolderName.Value;
+                    line3 = $"Held:{holder} Aim:{weapon.AimAngle.Value:F0}";
+                    // Visual diagnostics for weapons
+                    var rend = obj.GetComponent<Renderer>();
+                    var mf = obj.GetComponent<MeshFilter>();
+                    bool rendOk = rend != null && rend.enabled;
+                    bool meshOk = mf != null && mf.sharedMesh != null;
+                    bool matOk = rend != null && rend.sharedMaterial != null;
+                    bool activeH = obj.gameObject.activeInHierarchy;
+                    var scale = obj.transform.localScale;
+                    line4 = $"Rend:{(rendOk ? "OK" : "BAD")} Mesh:{(meshOk ? "OK" : "BAD")} Mat:{(matOk ? "OK" : "BAD")} ActH:{activeH} Scl:{scale.x:F1},{scale.y:F1},{scale.z:F1}";
+                    labelStyle.normal.textColor = weapon.IsHeld ? Color.yellow : new Color(0.6f, 0.9f, 1f);
+                }
+                else if (ball != null)
+                {
+                    string displayName = string.IsNullOrEmpty(ball.DisplayName.Value) ? "?" : ball.DisplayName.Value;
+                    line3 = $"{displayName} Score:{ball.Score.Value}";
+                    labelStyle.normal.textColor = new Color(0.5f, 1f, 0.5f);
+                }
+                else
+                {
+                    // Crates and other objects — show basic visual diagnostics
+                    var rend = obj.GetComponent<Renderer>();
+                    bool rendOk = rend != null && rend.enabled;
+                    bool activeH = obj.gameObject.activeInHierarchy;
+                    line3 = $"Rend:{(rendOk ? "OK" : "BAD")} ActH:{activeH} IsOwner:{isOwnerStr}";
+                    labelStyle.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
+                }
+
+                string fullText = $"{line1}\n{line2}\n{line2b}";
+                if (!string.IsNullOrEmpty(line3)) fullText += $"\n{line3}";
+                if (!string.IsNullOrEmpty(line4)) fullText += $"\n{line4}";
+
+                int lineCount = fullText.Split('\n').Length;
+                float w = 280f;
+                float h = lineCount * 14f + 4f;
+                var rect = new Rect(sp.x - w * 0.5f, screenY - h, w, h);
+                GUI.Box(rect, GUIContent.none, bgStyle);
+                GUI.Label(rect, fullText, labelStyle);
             }
         }
 
