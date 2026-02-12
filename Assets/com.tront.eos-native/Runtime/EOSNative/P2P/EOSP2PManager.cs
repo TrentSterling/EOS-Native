@@ -498,6 +498,10 @@ namespace EOSNative.P2P
             var lobbyMgr = EOSLobbyManager.Instance;
             if (lobbyMgr == null || !lobbyMgr.IsInLobby) return;
 
+            // Don't retry if we're the only member — nobody to handshake with
+            var members = lobbyMgr.GetMemberPuids();
+            if (members.Count <= 1) return;
+
             _handshakeRetryTimer += Time.deltaTime;
             if (_handshakeRetryTimer < HANDSHAKE_RETRY_INTERVAL) return;
             _handshakeRetryTimer = 0f;

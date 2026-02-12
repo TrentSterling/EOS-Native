@@ -233,14 +233,14 @@ Set via Inspector on the EOSManager component. The `_showConsole` bool independe
 
 ## Runtime Diagnostics (EOSHealthCheck)
 
-`EOSHealthCheck` is a singleton diagnostic system that auto-creates on `EOSManager.Start()` — zero manual setup required. It provides 26 checks across 5 categories with live traffic-light status (green/red/gray).
+`EOSHealthCheck` is a singleton diagnostic system that auto-creates on `EOSManager.Start()` — zero manual setup required. It provides 34 checks across 6 categories with live traffic-light status (green/red/gray).
 
 **Auto-run behavior:**
 - `Start()` runs all passive checks immediately
 - `Update()` re-runs every 2 seconds for live status updates
 - No manual button press needed — status is always current
 
-**Categories and checks (26 total):**
+**Categories and checks (34 total):**
 
 | Category | Checks | Notes |
 |----------|--------|-------|
@@ -249,14 +249,15 @@ Set via Inspector on the EOSManager component. The `_showConsole` bool independe
 | P2P (3) | Manager Active, NAT Type, Peer Connected | Context-aware |
 | Networking (4) | NetworkManager, Is Online, Room State, Player State | Context-aware |
 | Object Sync (6) | Registered Objects, Spring Syncs, Scene Objects, Player Balls, Physics Objects, Held Objects | Layer 1 sync status |
+| Flow Tests (8) | Local Ball Spawned, Ball SyncVars Set, Scene Objects Registered, Weapons Present, Spring Sync Coverage, NetworkTransform Disabled, Room State Created, Player State Created | Auto-triggers 1.5s after lobby join |
 
 **Context-aware checks:** Pre-lobby checks show **Skipped** (gray) instead of **Fail** (red). Red only appears for actual failures. Uses `EOSLobbyManager._instance?.IsInLobby` to detect lobby state without triggering auto-create.
 
 **UI:** Visible in the "Diag" tab (7th tab) in both the F1 overlay and Canvas UI.
 
 **Public API:**
-- `RunAllPassive()` — instant state checks (SDK, P2P, Networking, Object Sync)
-- `RunFullSequence()` — async: all passive + lobby lifecycle (create, search, leave)
+- `RunAllPassive()` — instant state checks (SDK, P2P, Networking, Object Sync, Flow Tests)
+- `RunFullSequence()` — async: all passive + lobby lifecycle (create, search — keeps lobby active)
 - `RunCategory(string)` — run a single category
 - `ResetAll()` — clear all check results
 

@@ -79,6 +79,7 @@ namespace EOSNative.Diagnostics
         public const string CAT_P2P = "P2P";
         public const string CAT_NET = "Networking";
         public const string CAT_SYNC = "Object Sync";
+        public const string CAT_FLOW = "Flow Tests";
 
         // Auto-run
         private float _autoRunTimer;
@@ -104,6 +105,10 @@ namespace EOSNative.Diagnostics
         {
             if (_instance == this)
             {
+                var lobby = EOSLobbyManager._instance;
+                if (lobby != null)
+                    lobby.OnLobbyJoined -= OnLobbyJoinedForFlow;
+
                 _instance = null;
                 _shuttingDown = true;
             }
@@ -118,6 +123,11 @@ namespace EOSNative.Diagnostics
         {
             EnsureChecksRegistered();
             RunAllPassive();
+
+            // Subscribe to lobby join for flow check auto-trigger
+            var lobby = EOSLobbyManager._instance;
+            if (lobby != null)
+                lobby.OnLobbyJoined += OnLobbyJoinedForFlow;
         }
 
         private void Update()
@@ -175,6 +185,16 @@ namespace EOSNative.Diagnostics
             Register("Player Balls", CAT_SYNC);
             Register("Physics Objects", CAT_SYNC);
             Register("Held Objects", CAT_SYNC);
+
+            // Flow Tests (8)
+            Register("Local Ball Spawned", CAT_FLOW);
+            Register("Ball SyncVars Set", CAT_FLOW);
+            Register("Scene Objects Registered", CAT_FLOW);
+            Register("Weapons Present", CAT_FLOW);
+            Register("Spring Sync Coverage", CAT_FLOW);
+            Register("NetworkTransform Disabled", CAT_FLOW);
+            Register("Room State Created", CAT_FLOW);
+            Register("Player State Created", CAT_FLOW);
         }
 
         private void Register(string name, string category)
@@ -200,6 +220,7 @@ namespace EOSNative.Diagnostics
             RunP2PChecks();
             RunNetworkingChecks();
             RunSyncChecks();
+            RunFlowChecks();
             OnChecksUpdated?.Invoke();
         }
 
@@ -232,12 +253,13 @@ namespace EOSNative.Diagnostics
                 RunSyncChecks();
                 OnChecksUpdated?.Invoke();
 
-                // 7. Leave lobby if we created one
+                // 8. Flow checks
+                RunFlowChecks();
+                OnChecksUpdated?.Invoke();
+
+                // Keep lobby alive — don't destroy game state after testing
                 if (_createdLobbyInSequence)
-                {
-                    await RunLeaveCheckAsync();
-                    OnChecksUpdated?.Invoke();
-                }
+                    SetCheck("Leave Lobby", CheckStatus.Skipped, "Lobby kept active");
 
                 Debug.Log($"[HealthCheck] Complete: {PassCount}/{TotalCount} passed ({TotalDuration:F2}s)");
             }
@@ -264,11 +286,9 @@ namespace EOSNative.Diagnostics
                 await RunLobbyChecksAsync();
                 OnChecksUpdated?.Invoke();
 
+                // Keep lobby alive — don't destroy game state after testing
                 if (_createdLobbyInSequence)
-                {
-                    await RunLeaveCheckAsync();
-                    OnChecksUpdated?.Invoke();
-                }
+                    SetCheck("Leave Lobby", CheckStatus.Skipped, "Lobby kept active");
 
                 Debug.Log($"[HealthCheck] Lobby sequence complete: {PassCount}/{TotalCount} passed ({TotalDuration:F2}s)");
             }
@@ -293,6 +313,7 @@ namespace EOSNative.Diagnostics
                 case CAT_P2P: RunP2PChecks(); break;
                 case CAT_NET: RunNetworkingChecks(); break;
                 case CAT_SYNC: RunSyncChecks(); break;
+                case CAT_FLOW: RunFlowChecks(); break;
                 case CAT_LOBBY:
                     RunLobbySequence();
                     return; // async — will invoke OnChecksUpdated internally
@@ -659,6 +680,193 @@ namespace EOSNative.Diagnostics
                 SetCheck("Held Objects", CheckStatus.Pass, $"{heldObjs} reparented (held)");
             else
                 SetCheck("Held Objects", CheckStatus.Skipped, "None held");
+        }
+
+        #endregion
+
+        #region Flow Tests
+
+        private void OnLobbyJoinedForFlow(LobbyData lobby)
+        {
+            // Delay to let spawn cascade settle (ball spawn, scene object registration, etc.)
+            Invoke(nameof(RunFlowChecksDelayed), 1.5f);
+        }
+
+        private void RunFlowChecksDelayed()
+        {
+            RunFlowChecks();
+            OnChecksUpdated?.Invoke();
+        }
+
+        private void RunFlowChecks()
+        {
+            var nm = NetworkManager._instance;
+            var lobby = EOSLobbyManager._instance;
+            bool inLobby = lobby != null && lobby.IsInLobby;
+
+            // --- Local Ball Spawned ---
+            bool foundLocalBall = false;
+            NetworkObject localBallObj = null;
+            if (nm != null)
+            {
+                foreach (var kvp in nm.Objects)
+                {
+                    var obj = kvp.Value;
+                    if (obj == null) continue;
+                    if ((kvp.Key & 0xFF000000u) != 0xBB000000u) continue;
+                    var ball = obj.GetComponent<P2PPlayerBall>();
+                    if (ball != null && ball.IsLocal)
+                    {
+                        foundLocalBall = true;
+                        localBallObj = obj;
+                        break;
+                    }
+                }
+            }
+
+            if (foundLocalBall)
+                SetCheck("Local Ball Spawned", CheckStatus.Pass, "Local ball active");
+            else if (!inLobby)
+                SetCheck("Local Ball Spawned", CheckStatus.Skipped, "No lobby joined");
+            else
+                SetCheck("Local Ball Spawned", CheckStatus.Fail, "In lobby but no local ball");
+
+            // --- Ball SyncVars Set ---
+            if (localBallObj != null)
+            {
+                var behaviour = localBallObj.GetComponent<DemoBallBehaviour>();
+                if (behaviour != null)
+                {
+                    bool nameSet = behaviour.DisplayName != null && !string.IsNullOrEmpty(behaviour.DisplayName.Value);
+                    bool colorSet = behaviour.BallColor != null && behaviour.BallColor.Value != Color.white;
+
+                    if (nameSet && colorSet)
+                        SetCheck("Ball SyncVars Set", CheckStatus.Pass, $"\"{behaviour.DisplayName.Value}\" + color");
+                    else if (nameSet || colorSet)
+                        SetCheck("Ball SyncVars Set", CheckStatus.Pass, nameSet ? "Name set" : "Color set");
+                    else
+                        SetCheck("Ball SyncVars Set", CheckStatus.Fail, "DisplayName & BallColor at defaults");
+                }
+                else
+                {
+                    SetCheck("Ball SyncVars Set", CheckStatus.Fail, "No DemoBallBehaviour on ball");
+                }
+            }
+            else if (!inLobby)
+            {
+                SetCheck("Ball SyncVars Set", CheckStatus.Skipped, "No lobby joined");
+            }
+            else
+            {
+                SetCheck("Ball SyncVars Set", CheckStatus.Skipped, "No local ball yet");
+            }
+
+            // --- Scene Objects Registered ---
+            int sceneObjCount = 0;
+            if (nm != null)
+            {
+                foreach (var kvp in nm.Objects)
+                {
+                    var obj = kvp.Value;
+                    if (obj == null) continue;
+                    if (obj.PrefabId == NetworkObject.SCENE_OBJECT || (kvp.Key & 0xFF000000u) == 0xEE000000u)
+                        sceneObjCount++;
+                }
+            }
+
+            bool isHost = nm != null && nm.IsHost;
+            if (sceneObjCount > 0)
+                SetCheck("Scene Objects Registered", CheckStatus.Pass, $"{sceneObjCount} scene objects");
+            else if (!inLobby)
+                SetCheck("Scene Objects Registered", CheckStatus.Skipped, "No lobby joined");
+            else if (!isHost)
+                SetCheck("Scene Objects Registered", CheckStatus.Skipped, "Non-host (claimed via snapshot)");
+            else
+                SetCheck("Scene Objects Registered", CheckStatus.Fail, "Host has 0 scene objects");
+
+            // --- Weapons Present ---
+            int weaponCount = 0;
+            if (nm != null)
+            {
+                foreach (var kvp in nm.Objects)
+                {
+                    var obj = kvp.Value;
+                    if (obj == null) continue;
+                    if (obj.GetComponent<DemoWeapon>() != null)
+                        weaponCount++;
+                }
+            }
+
+            if (weaponCount > 0)
+                SetCheck("Weapons Present", CheckStatus.Pass, $"{weaponCount} weapon(s)");
+            else if (!foundLocalBall)
+                SetCheck("Weapons Present", CheckStatus.Skipped, "No ball yet");
+            else
+                SetCheck("Weapons Present", CheckStatus.Fail, "Ball exists but 0 weapons");
+
+            // --- Spring Sync Coverage ---
+            int physicsCount = 0;
+            int withSpring = 0;
+            if (nm != null)
+            {
+                foreach (var kvp in nm.Objects)
+                {
+                    var obj = kvp.Value;
+                    if (obj == null) continue;
+                    if (obj.GetComponent<Rigidbody>() == null) continue;
+                    physicsCount++;
+                    if (obj.GetComponent<P2PSpringSync>() != null)
+                        withSpring++;
+                }
+            }
+
+            if (physicsCount == 0)
+                SetCheck("Spring Sync Coverage", CheckStatus.Skipped, "No physics objects");
+            else if (withSpring == physicsCount)
+                SetCheck("Spring Sync Coverage", CheckStatus.Pass, $"{withSpring}/{physicsCount} covered");
+            else
+                SetCheck("Spring Sync Coverage", CheckStatus.Fail, $"Missing: {withSpring}/{physicsCount}");
+
+            // --- NetworkTransform Disabled ---
+            int springCount = 0;
+            int ntEnabled = 0;
+            if (nm != null)
+            {
+                foreach (var kvp in nm.Objects)
+                {
+                    var obj = kvp.Value;
+                    if (obj == null) continue;
+                    var spring = obj.GetComponent<P2PSpringSync>();
+                    if (spring == null) continue;
+                    springCount++;
+                    var nt = obj.GetComponent<NetworkTransform>();
+                    if (nt != null && nt.enabled)
+                        ntEnabled++;
+                }
+            }
+
+            if (springCount == 0)
+                SetCheck("NetworkTransform Disabled", CheckStatus.Skipped, "No spring-synced objects");
+            else if (ntEnabled == 0)
+                SetCheck("NetworkTransform Disabled", CheckStatus.Pass, $"All {springCount} clean");
+            else
+                SetCheck("NetworkTransform Disabled", CheckStatus.Fail, $"{ntEnabled} still have NT enabled");
+
+            // --- Room State Created ---
+            if (nm != null && nm.RoomState != null)
+                SetCheck("Room State Created", CheckStatus.Pass, "Present");
+            else if (!isHost)
+                SetCheck("Room State Created", CheckStatus.Skipped, "Non-host");
+            else
+                SetCheck("Room State Created", CheckStatus.Fail, "Host has no RoomState");
+
+            // --- Player State Created ---
+            if (nm != null && nm.LocalPlayerState != null)
+                SetCheck("Player State Created", CheckStatus.Pass, "Present");
+            else if (!inLobby)
+                SetCheck("Player State Created", CheckStatus.Skipped, "No lobby joined");
+            else
+                SetCheck("Player State Created", CheckStatus.Fail, "In lobby but no PlayerState");
         }
 
         #endregion

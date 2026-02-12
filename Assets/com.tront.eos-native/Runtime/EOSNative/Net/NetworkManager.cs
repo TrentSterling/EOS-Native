@@ -210,13 +210,16 @@ namespace EOSNative.Net
         }
 
         /// <summary>
-        /// True if connected to at least one peer via P2P.
+        /// True if in a lobby or connected to peers via P2P.
         /// Quick check for "am I in a networked session".
         /// </summary>
         public bool IsOnline
         {
             get
             {
+                if (OfflineMode) return false;
+                var lobby = EOSLobbyManager._instance;
+                if (lobby != null && lobby.IsInLobby) return true;
                 var peers = EOSP2PManager._instance?.Peers;
                 return peers != null && peers.Count > 0;
             }
@@ -3026,9 +3029,14 @@ namespace EOSNative.Net
         private void OnLobbyJoinedRecomputeHost(LobbyData _)
         {
             RecomputeHost();
-            // Retry RegisterSceneObjects in case RecomputeHost's call failed due to null PUID
+            InitLocalIdPrefix();
+
             if (IsHost)
+            {
                 RegisterSceneObjects();
+                EnsureRoomState();
+                EnsureLocalPlayerState();
+            }
         }
 
         private void OnLobbyLeftReset()
