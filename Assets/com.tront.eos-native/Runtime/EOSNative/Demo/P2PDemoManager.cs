@@ -54,6 +54,7 @@ namespace EOSNative.Demo
         private const byte MSG_POSITION = 0x01; // Vector3Half(6) + compressed rot(4) = 10 bytes
         private const byte MSG_JOIN = 0x02;      // R(1) + G(1) + B(1) = 3 bytes
         private const byte MSG_LEAVE = 0x03;     // 0 bytes (just the msgId)
+        private const byte MSG_OBJECT_POSITION = 0x04; // [count:byte][foreach: netId:uint32 + pos:half3 + rot:uint32]
 
         private const byte CHANNEL_POSITION = 0;
         private const byte CHANNEL_RELIABLE = 1;
@@ -75,6 +76,7 @@ namespace EOSNative.Demo
         private readonly NetWriter _writer = new();
         private bool _localSpawned;
         private int _colorIndex;
+        private readonly List<(NetworkObject obj, P2PSpringSync sync)> _ownedSyncObjects = new();
 
         // Weapons (reparenting demo)
         private NetworkObject _heldWeapon;
@@ -122,6 +124,7 @@ namespace EOSNative.Demo
             router.Register(MSG_POSITION, HandlePosition);
             router.Register(MSG_JOIN, HandleJoin);
             router.Register(MSG_LEAVE, HandleLeave);
+            router.Register(MSG_OBJECT_POSITION, HandleObjectPosition);
 
             var lobby = EOSLobbyManager.Instance;
             lobby.OnLobbyJoined += OnLobbyJoined;
@@ -140,6 +143,7 @@ namespace EOSNative.Demo
                 router.Unregister(MSG_POSITION);
                 router.Unregister(MSG_JOIN);
                 router.Unregister(MSG_LEAVE);
+                router.Unregister(MSG_OBJECT_POSITION);
             }
 
             var lobby = EOSLobbyManager.Instance;
@@ -152,17 +156,21 @@ namespace EOSNative.Demo
 
         private void FixedUpdate()
         {
-            if (_localBall == null || _localSync == null) return;
+            // Broadcast local ball position to all peers
+            if (_localBall != null && _localSync != null)
+            {
+                _localSync.GetCompressedState(out var pos, out uint rot);
 
-            // Broadcast local position to all peers
-            _localSync.GetCompressedState(out var pos, out uint rot);
+                _writer.Reset();
+                _writer.WriteVector3Half(pos.ToVector3());
+                _writer.WriteUInt32(rot);
 
-            _writer.Reset();
-            _writer.WriteVector3Half(pos.ToVector3());
-            _writer.WriteUInt32(rot);
+                EOSP2PManager.Instance.Router.SendToAll(
+                    MSG_POSITION, _writer, PacketReliability.UnreliableUnordered, CHANNEL_POSITION);
+            }
 
-            EOSP2PManager.Instance.Router.SendToAll(
-                MSG_POSITION, _writer, PacketReliability.UnreliableUnordered, CHANNEL_POSITION);
+            // Broadcast owned object (crate/weapon) positions — Layer 1 spring sync
+            BroadcastOwnedObjectPositions();
         }
 
         #region Initialization
@@ -490,6 +498,9 @@ namespace EOSNative.Demo
                 }
             }
 
+            // Ensure physics objects use P2PSpringSync for Layer 1 position sync
+            EnsureSpringSync();
+
             if (_localBall == null || _localBehaviour == null) return;
 
 #if EOS_HAS_INPUT_SYSTEM
@@ -692,6 +703,115 @@ namespace EOSNative.Demo
             }
 
             return best;
+        }
+
+        #endregion
+
+        #region Layer 1 Object Sync
+
+        /// <summary>
+        /// Broadcast positions of all owned physics objects (crates, weapons) via Layer 1 P2P.
+        /// Uses the same spring sync as player balls for smooth semi-predicted physics.
+        /// Skips held/reparented objects — they follow their parent transform.
+        /// </summary>
+        private void BroadcastOwnedObjectPositions()
+        {
+            var nm = NetworkManager._instance;
+            if (nm == null) return;
+            var p2p = EOSP2PManager._instance;
+            if (p2p == null || p2p.Peers.Count == 0) return;
+
+            _ownedSyncObjects.Clear();
+            foreach (var kvp in nm.Objects)
+            {
+                var obj = kvp.Value;
+                if (obj == null || !obj.IsOwner) continue;
+                if (obj.GetComponent<P2PPlayerBall>() != null) continue;
+                if (obj.ParentNetworkId != 0) continue; // held objects follow parent
+
+                var sync = obj.GetComponent<P2PSpringSync>();
+                if (sync == null || !sync.enabled) continue;
+
+                _ownedSyncObjects.Add((obj, sync));
+            }
+
+            if (_ownedSyncObjects.Count == 0) return;
+
+            _writer.Reset();
+            _writer.WriteByte((byte)_ownedSyncObjects.Count);
+
+            for (int i = 0; i < _ownedSyncObjects.Count; i++)
+            {
+                var (obj, sync) = _ownedSyncObjects[i];
+                sync.GetCompressedState(out var pos, out uint rot);
+                _writer.WriteUInt32(obj.NetworkId);
+                _writer.WriteVector3Half(pos.ToVector3());
+                _writer.WriteUInt32(rot);
+            }
+
+            p2p.Router.SendToAll(MSG_OBJECT_POSITION, _writer, PacketReliability.UnreliableUnordered, CHANNEL_POSITION);
+        }
+
+        private void HandleObjectPosition(ProductUserId sender, NetReader reader)
+        {
+            var nm = NetworkManager._instance;
+            if (nm == null) return;
+
+            int count = reader.ReadByte();
+            for (int i = 0; i < count; i++)
+            {
+                uint netId = reader.ReadUInt32();
+                var pos = reader.ReadVector3Half();
+                uint rot = reader.ReadUInt32();
+
+                if (!nm.Objects.TryGetValue(netId, out var obj) || obj == null || obj.IsOwner) continue;
+
+                var sync = obj.GetComponent<P2PSpringSync>();
+                if (sync != null)
+                    sync.SetTarget(pos, P2PSpringSync.DecompressRotation(rot));
+            }
+        }
+
+        /// <summary>
+        /// Ensure all registered physics objects have P2PSpringSync for Layer 1 position sync.
+        /// Disables NetworkTransform on these objects since P2PSpringSync handles position.
+        /// Held/reparented objects have spring sync disabled (they follow parent transform).
+        /// </summary>
+        private void EnsureSpringSync()
+        {
+            var nm = NetworkManager._instance;
+            if (nm == null) return;
+
+            foreach (var kvp in nm.Objects)
+            {
+                var obj = kvp.Value;
+                if (obj == null) continue;
+                if (obj.GetComponent<P2PPlayerBall>() != null) continue;
+
+                bool isChild = obj.ParentNetworkId != 0;
+
+                var sync = obj.GetComponent<P2PSpringSync>();
+                if (sync != null)
+                {
+                    sync.IsLocal = obj.IsOwner;
+                    // Disable spring when held (follows parent), re-enable when dropped
+                    sync.enabled = !isChild;
+                    continue;
+                }
+
+                // Don't add to currently-reparented objects
+                if (isChild) continue;
+
+                // Only add to objects with Rigidbody (physics objects)
+                if (obj.GetComponent<Rigidbody>() == null) continue;
+
+                sync = obj.gameObject.AddComponent<P2PSpringSync>();
+                sync.IsLocal = obj.IsOwner;
+
+                // Disable NetworkTransform — P2PSpringSync handles position via Layer 1
+                var nt = obj.GetComponent<NetworkTransform>();
+                if (nt != null) nt.enabled = false;
+            }
         }
 
         #endregion

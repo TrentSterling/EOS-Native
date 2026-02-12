@@ -4053,6 +4053,10 @@ namespace EOSNative.Net
                 }
 
                 obj.NotifyNetworkSpawn();
+
+                // Safety net: if SyncVars got dirty before IsRegistered was true,
+                // the _isDirty flag is stuck (MarkDirty returned early). Flush now.
+                if (obj.IsDirty) OnObjectDirty(obj);
             }
 
             // Pass 2: Children (objects with a NetworkObject ancestor)
@@ -4101,6 +4105,9 @@ namespace EOSNative.Net
                 }
 
                 obj.NotifyNetworkSpawn();
+
+                // Safety net: flush stuck dirty flag (same as root pass)
+                if (obj.IsDirty) OnObjectDirty(obj);
 
                 EOSDebugLogger.Log(DebugCategory.EOSManager, "NetworkManager",
                     $"Scene child '{obj.name}' ({sceneNetId}) registered under root {obj.ParentNetworkId}");

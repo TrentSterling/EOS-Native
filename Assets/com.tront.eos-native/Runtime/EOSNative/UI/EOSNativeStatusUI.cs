@@ -211,6 +211,7 @@ namespace EOSNative.UI
         private bool _diagFoldLobby = true;
         private bool _diagFoldP2P = true;
         private bool _diagFoldNet = true;
+        private bool _diagFoldSync = true;
 
         // Tab names
         private static readonly string[] TabNames = { "Status", "Lobbies", "Voice", "Social", "Stats", "Tools", "Diag" };
@@ -1370,6 +1371,8 @@ namespace EOSNative.UI
             DrawDiagCategory(EOSHealthCheck.CAT_P2P, ref _diagFoldP2P);
             GUILayout.Space(2);
             DrawDiagCategory(EOSHealthCheck.CAT_NET, ref _diagFoldNet);
+            GUILayout.Space(2);
+            DrawDiagCategory(EOSHealthCheck.CAT_SYNC, ref _diagFoldSync);
         }
 
         private void DrawDiagCategory(string category, ref bool foldout)

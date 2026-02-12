@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
+using EOSNative.Demo;
 using EOSNative.Lobbies;
 using EOSNative.Net;
 using EOSNative.P2P;
@@ -77,6 +78,11 @@ namespace EOSNative.Diagnostics
         public const string CAT_LOBBY = "Lobby";
         public const string CAT_P2P = "P2P";
         public const string CAT_NET = "Networking";
+        public const string CAT_SYNC = "Object Sync";
+
+        // Auto-run
+        private float _autoRunTimer;
+        private const float AUTO_RUN_INTERVAL = 2f;
 
         #endregion
 
@@ -106,6 +112,23 @@ namespace EOSNative.Diagnostics
         private void OnApplicationQuit()
         {
             _shuttingDown = true;
+        }
+
+        private void Start()
+        {
+            EnsureChecksRegistered();
+            RunAllPassive();
+        }
+
+        private void Update()
+        {
+            _autoRunTimer += Time.unscaledDeltaTime;
+            if (_autoRunTimer >= AUTO_RUN_INTERVAL)
+            {
+                _autoRunTimer = 0f;
+                if (!_isRunning)
+                    RunAllPassive();
+            }
         }
 
         #endregion
@@ -144,6 +167,14 @@ namespace EOSNative.Diagnostics
             Register("Is Online", CAT_NET);
             Register("Room State", CAT_NET);
             Register("Player State", CAT_NET);
+
+            // Object Sync (6)
+            Register("Registered Objects", CAT_SYNC);
+            Register("Spring Syncs", CAT_SYNC);
+            Register("Scene Objects", CAT_SYNC);
+            Register("Player Balls", CAT_SYNC);
+            Register("Physics Objects", CAT_SYNC);
+            Register("Held Objects", CAT_SYNC);
         }
 
         private void Register(string name, string category)
@@ -168,6 +199,7 @@ namespace EOSNative.Diagnostics
             RunSDKChecks();
             RunP2PChecks();
             RunNetworkingChecks();
+            RunSyncChecks();
             OnChecksUpdated?.Invoke();
         }
 
@@ -194,6 +226,10 @@ namespace EOSNative.Diagnostics
 
                 // 6. Networking checks
                 RunNetworkingChecks();
+                OnChecksUpdated?.Invoke();
+
+                // 7. Sync checks
+                RunSyncChecks();
                 OnChecksUpdated?.Invoke();
 
                 // 7. Leave lobby if we created one
@@ -256,6 +292,7 @@ namespace EOSNative.Diagnostics
                 case CAT_SDK: RunSDKChecks(); break;
                 case CAT_P2P: RunP2PChecks(); break;
                 case CAT_NET: RunNetworkingChecks(); break;
+                case CAT_SYNC: RunSyncChecks(); break;
                 case CAT_LOBBY:
                     RunLobbySequence();
                     return; // async — will invoke OnChecksUpdated internally
@@ -509,6 +546,102 @@ namespace EOSNative.Diagnostics
                 SetCheck("Room State", CheckStatus.Fail, "No NetworkManager");
                 SetCheck("Player State", CheckStatus.Fail, "No NetworkManager");
             }
+        }
+
+        #endregion
+
+        #region Object Sync Checks
+
+        private void RunSyncChecks()
+        {
+            var nm = NetworkManager._instance;
+
+            if (nm == null)
+            {
+                SetCheck("Registered Objects", CheckStatus.Fail, "No NetworkManager");
+                SetCheck("Spring Syncs", CheckStatus.Fail, "No NetworkManager");
+                SetCheck("Scene Objects", CheckStatus.Fail, "No NetworkManager");
+                SetCheck("Player Balls", CheckStatus.Fail, "No NetworkManager");
+                SetCheck("Physics Objects", CheckStatus.Fail, "No NetworkManager");
+                SetCheck("Held Objects", CheckStatus.Skipped, "No NetworkManager");
+                return;
+            }
+
+            int totalObjs = nm.Objects.Count;
+            int springSyncs = 0;
+            int sceneObjs = 0;
+            int playerBalls = 0;
+            int physicsObjs = 0;
+            int heldObjs = 0;
+            int springEnabled = 0;
+            int springDisabled = 0;
+
+            foreach (var kvp in nm.Objects)
+            {
+                var obj = kvp.Value;
+                if (obj == null) continue;
+
+                if (obj.PrefabId == NetworkObject.SCENE_OBJECT)
+                    sceneObjs++;
+
+                if (obj.GetComponent<P2PPlayerBall>() != null)
+                    playerBalls++;
+
+                if (obj.GetComponent<Rigidbody>() != null)
+                    physicsObjs++;
+
+                if (obj.ParentNetworkId != 0)
+                    heldObjs++;
+
+                var sync = obj.GetComponent<P2PSpringSync>();
+                if (sync != null)
+                {
+                    springSyncs++;
+                    if (sync.enabled)
+                        springEnabled++;
+                    else
+                        springDisabled++;
+                }
+            }
+
+            // Registered Objects
+            if (totalObjs > 0)
+                SetCheck("Registered Objects", CheckStatus.Pass, $"{totalObjs} objects");
+            else
+                SetCheck("Registered Objects", CheckStatus.Skipped, "None registered");
+
+            // Spring Syncs
+            if (springSyncs > 0)
+                SetCheck("Spring Syncs", CheckStatus.Pass,
+                    $"{springSyncs} total ({springEnabled} active, {springDisabled} held)");
+            else if (totalObjs > 0)
+                SetCheck("Spring Syncs", CheckStatus.Fail, "No P2PSpringSync on any object");
+            else
+                SetCheck("Spring Syncs", CheckStatus.Skipped, "No objects");
+
+            // Scene Objects
+            if (sceneObjs > 0)
+                SetCheck("Scene Objects", CheckStatus.Pass, $"{sceneObjs} scene objects");
+            else
+                SetCheck("Scene Objects", CheckStatus.Skipped, "None");
+
+            // Player Balls
+            if (playerBalls > 0)
+                SetCheck("Player Balls", CheckStatus.Pass, $"{playerBalls} balls");
+            else
+                SetCheck("Player Balls", CheckStatus.Skipped, "No balls spawned");
+
+            // Physics Objects
+            if (physicsObjs > 0)
+                SetCheck("Physics Objects", CheckStatus.Pass, $"{physicsObjs} with Rigidbody");
+            else
+                SetCheck("Physics Objects", CheckStatus.Skipped, "None");
+
+            // Held Objects
+            if (heldObjs > 0)
+                SetCheck("Held Objects", CheckStatus.Pass, $"{heldObjs} reparented (held)");
+            else
+                SetCheck("Held Objects", CheckStatus.Skipped, "None held");
         }
 
         #endregion
