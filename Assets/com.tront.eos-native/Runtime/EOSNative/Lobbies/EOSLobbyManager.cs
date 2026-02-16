@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Epic.OnlineServices;
 using Epic.OnlineServices.Lobby;
@@ -20,7 +21,7 @@ namespace EOSNative.Lobbies
     {
         #region Singleton
 
-        internal static EOSLobbyManager _instance;
+        private static EOSLobbyManager _instance;
         private static bool _shuttingDown;
         public static EOSLobbyManager Instance
         {
@@ -85,6 +86,12 @@ namespace EOSNative.Lobbies
         /// Fired when a member's attributes are updated (including chat).
         /// </summary>
         public event Action<string, string, string> OnMemberAttributeUpdated; // PUID, key, value
+
+        /// <summary>
+        /// Async hook invoked BEFORE leaving a lobby. Transport registers this
+        /// to stop FishNet before the EOS leave is sent.
+        /// </summary>
+        public Func<Task> BeforeLeaveLobby { get; set; }
 
         #endregion
 
@@ -271,28 +278,20 @@ namespace EOSNative.Lobbies
             string lobbyId = createResult.LobbyId;
             EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", $" Lobby created: {lobbyId}");
 
-            // Set the join code attribute
-            var setCodeResult = await SetLobbyAttributeAsync(lobbyId, LobbyAttributes.JOIN_CODE, joinCode);
-            if (setCodeResult != Result.Success)
-            {
-                Debug.LogWarning($"[EOSLobbyManager] Failed to set join code attribute: {setCodeResult}");
-            }
-
-            // Set migration support attribute
-            if (options.AllowHostMigration)
-            {
-                await SetLobbyAttributeAsync(lobbyId, LobbyAttributes.MIGRATION_SUPPORT, "true");
-            }
-
-            // Set all attributes (includes convenience properties + custom attributes)
+            // Set ALL attributes in a single modification (atomic, 1 round trip instead of N)
             var allAttributes = options.BuildAttributes();
-            foreach (var kvp in allAttributes)
+            allAttributes[LobbyAttributes.JOIN_CODE] = joinCode;
+            if (options.AllowHostMigration)
+                allAttributes[LobbyAttributes.MIGRATION_SUPPORT] = "true";
+
+            var setAttrsResult = await SetLobbyAttributesBatchAsync(lobbyId, allAttributes);
+            if (setAttrsResult != Result.Success)
             {
-                var attrResult = await SetLobbyAttributeAsync(lobbyId, kvp.Key, kvp.Value);
-                if (attrResult != Result.Success)
-                {
-                    Debug.LogWarning($"[EOSLobbyManager] Failed to set attribute {kvp.Key}: {attrResult}");
-                }
+                Debug.LogWarning($"[EOSLobbyManager] Failed to set lobby attributes: {setAttrsResult}");
+            }
+            else
+            {
+                Debug.Log($"[EOSLobbyManager] Set {allAttributes.Count} attributes on lobby {lobbyId}: {string.Join(", ", allAttributes.Select(kv => $"{kv.Key}={kv.Value}"))}");
             }
 
             // Get lobby details and cache
@@ -306,7 +305,7 @@ namespace EOSNative.Lobbies
             // Notify voice manager if voice is enabled
             if (enableVoice)
             {
-                EOSVoiceManager.Instance?.OnLobbyCreated(lobbyId);
+                EOSVoiceManager.Instance?.OnLobbyJoined(lobbyId);
             }
 
             EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", $" Lobby ready with code: {joinCode}");
@@ -380,6 +379,9 @@ namespace EOSNative.Lobbies
                 return (createResult, null);
             }
 
+            // Track parameters for debug logging
+            var searchParams = new List<string>();
+
             // Set search parameters
             if (!string.IsNullOrEmpty(options.JoinCode))
             {
@@ -394,6 +396,7 @@ namespace EOSNative.Lobbies
                     }
                 };
                 var paramResult = searchHandle.SetParameter(ref paramOptions);
+                searchParams.Add($"JOIN_CODE == '{options.JoinCode}' ({paramResult})");
                 if (paramResult != Result.Success)
                 {
                     Debug.LogWarning($"[EOSLobbyManager] Failed to set JOIN_CODE parameter: {paramResult}");
@@ -402,7 +405,6 @@ namespace EOSNative.Lobbies
             else
             {
                 // No specific join code - search for all lobbies with a non-empty JOIN_CODE
-                // This pattern comes from FishyEOS samples: use Notequal with empty string
                 var paramOptions = new LobbySearchSetParameterOptions
                 {
                     ComparisonOp = ComparisonOp.Notequal,
@@ -413,10 +415,10 @@ namespace EOSNative.Lobbies
                     }
                 };
                 var paramResult = searchHandle.SetParameter(ref paramOptions);
+                searchParams.Add($"JOIN_CODE != '' ({paramResult})");
                 if (paramResult != Result.Success)
                 {
                     Debug.LogWarning($"[EOSLobbyManager] Failed to set search parameter: {paramResult}");
-                    // Continue anyway - search may still work without this filter
                 }
             }
 
@@ -433,6 +435,7 @@ namespace EOSNative.Lobbies
                     }
                 };
                 var bucketResult = searchHandle.SetParameter(ref bucketParam);
+                searchParams.Add($"bucket == '{options.BucketId}' ({bucketResult})");
                 if (bucketResult != Result.Success)
                 {
                     Debug.LogWarning($"[EOSLobbyManager] Failed to set bucket parameter: {bucketResult}");
@@ -454,6 +457,7 @@ namespace EOSNative.Lobbies
                         }
                     };
                     var filterResult = searchHandle.SetParameter(ref filterParam);
+                    searchParams.Add($"{kvp.Key} == '{kvp.Value}' ({filterResult})");
                     if (filterResult != Result.Success)
                     {
                         Debug.LogWarning($"[EOSLobbyManager] Failed to set filter '{kvp.Key}': {filterResult}");
@@ -476,12 +480,15 @@ namespace EOSNative.Lobbies
                         }
                     };
                     var filterResult = searchHandle.SetParameter(ref filterParam);
+                    searchParams.Add($"{filter.Key} {filter.Comparison} '{filter.Value}' ({filterResult})");
                     if (filterResult != Result.Success)
                     {
                         Debug.LogWarning($"[EOSLobbyManager] Failed to set filter '{filter}': {filterResult}");
                     }
                 }
             }
+
+            Debug.Log($"[EOSLobbyManager] Search params ({searchParams.Count}): {string.Join(" AND ", searchParams)}");
 
             // Execute search
             var findOptions = new LobbySearchFindOptions { LocalUserId = LocalProductUserId };
@@ -500,11 +507,24 @@ namespace EOSNative.Lobbies
                 return (result.ResultCode, null);
             }
 
-            // Process results
+            // Log raw EOS result count before client-side filtering
+            var rawCountOptions = new LobbySearchGetSearchResultCountOptions();
+            uint rawCount = searchHandle.GetSearchResultCount(ref rawCountOptions);
+
+            // Process results (applies client-side filters)
             var lobbies = ProcessSearchResults(searchHandle, options);
             searchHandle.Release();
 
-            EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", $" Found {lobbies.Count} lobbies");
+            // Log summary with each lobby's attributes
+            Debug.Log($"[EOSLobbyManager] Search result: {result.ResultCode}, EOS returned {rawCount} raw, {lobbies.Count} after filtering");
+            foreach (var lobby in lobbies)
+            {
+                var attrSummary = lobby.Attributes != null && lobby.Attributes.Count > 0
+                    ? string.Join(", ", lobby.Attributes.Select(kv => $"{kv.Key}={kv.Value}"))
+                    : "(no attributes)";
+                Debug.Log($"[EOSLobbyManager]   Lobby {lobby.JoinCode ?? lobby.LobbyId}: owner={lobby.OwnerPuid}, members={lobby.MemberCount}/{lobby.MaxMembers}, attrs=[{attrSummary}]");
+            }
+
             return (Result.Success, lobbies);
         }
 
@@ -588,6 +608,14 @@ namespace EOSNative.Lobbies
             var lobbyData = ExtractLobbyData(details);
             details.Release();
             searchHandle.Release();
+
+            // Ghost lobby check — lobby exists in EOS but has no members or no owner
+            if (lobbyData.IsGhost)
+            {
+                EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager",
+                    $" SearchByLobbyId: Rejecting ghost lobby {lobbyId} (Members:{lobbyData.MemberCount}, Owner:{lobbyData.OwnerPuid ?? "null"})");
+                return (Result.NotFound, null);
+            }
 
             EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", $" SearchByLobbyId found: {lobbyData}");
             return (Result.Success, lobbyData);
@@ -679,7 +707,7 @@ namespace EOSNative.Lobbies
                 return (result.ResultCode, null);
             }
 
-            // Process results (no filtering - we want all lobbies containing this user)
+            // Process results — filter out ghost lobbies
             var lobbies = new List<LobbyData>();
             var countOptions = new LobbySearchGetSearchResultCountOptions();
             uint count = searchHandle.GetSearchResultCount(ref countOptions);
@@ -692,8 +720,13 @@ namespace EOSNative.Lobbies
                 if (copyResult == Result.Success && details != null)
                 {
                     var lobbyData = ExtractLobbyData(details);
-                    lobbies.Add(lobbyData);
                     details.Release();
+
+                    // Skip ghost lobbies (0 members or no owner)
+                    if (lobbyData.IsGhost)
+                        continue;
+
+                    lobbies.Add(lobbyData);
                 }
             }
 
@@ -718,8 +751,8 @@ namespace EOSNative.Lobbies
                 return (result, lobbies);
             }
 
-            // Filter to only joinable lobbies (not full, not in progress)
-            var joinable = lobbies.FindAll(l => l.AvailableSlots > 0 && !l.IsInProgress);
+            // Filter to only joinable lobbies (not ghost, not full, not in progress)
+            var joinable = lobbies.FindAll(l => !l.IsGhost && l.AvailableSlots > 0 && !l.IsInProgress);
             return (Result.Success, joinable);
         }
 
@@ -752,9 +785,24 @@ namespace EOSNative.Lobbies
         /// Quick match - finds and joins the first available lobby.
         /// Excludes password-protected and in-progress games.
         /// </summary>
-        public async Task<(Result result, LobbyData lobby)> QuickMatchAsync()
+        public Task<(Result result, LobbyData lobby)> QuickMatchAsync()
         {
-            var (searchResult, lobbies) = await SearchLobbiesAsync(LobbySearchOptions.QuickMatch());
+            return QuickMatchAsync(LobbySearchOptions.QuickMatch());
+        }
+
+        /// <summary>
+        /// Quick match with custom search filters.
+        /// Use LobbySearchOptions fluent builders to configure filters:
+        /// <code>
+        /// var (result, lobby) = await EOSLobbyManager.Instance.QuickMatchAsync(
+        ///     new LobbySearchOptions()
+        ///         .WithGameMode("deathmatch")
+        ///         .WithAttribute("SCENE", SceneManager.GetActiveScene().name));
+        /// </code>
+        /// </summary>
+        public async Task<(Result result, LobbyData lobby)> QuickMatchAsync(LobbySearchOptions searchOptions)
+        {
+            var (searchResult, lobbies) = await SearchLobbiesAsync(searchOptions);
 
             if (searchResult != Result.Success)
             {
@@ -804,10 +852,19 @@ namespace EOSNative.Lobbies
         /// </summary>
         /// <param name="hostOptions">Options to use if hosting is needed. If null, uses defaults.</param>
         /// <returns>Result, lobby data, and whether we became the host.</returns>
-        public async Task<(Result result, LobbyData lobby, bool didHost)> QuickMatchOrHostAsync(LobbyCreateOptions hostOptions = null)
+        public Task<(Result result, LobbyData lobby, bool didHost)> QuickMatchOrHostAsync(LobbyCreateOptions hostOptions = null)
+        {
+            return QuickMatchOrHostAsync(LobbySearchOptions.QuickMatch(), hostOptions);
+        }
+
+        /// <summary>
+        /// Quick match OR auto-host with custom search filters.
+        /// Searches using the provided filters, joins a random match, or hosts a new lobby if none found.
+        /// </summary>
+        public async Task<(Result result, LobbyData lobby, bool didHost)> QuickMatchOrHostAsync(LobbySearchOptions searchOptions, LobbyCreateOptions hostOptions = null)
         {
             // First try to find a lobby
-            var (searchResult, lobbies) = await SearchLobbiesAsync(LobbySearchOptions.QuickMatch());
+            var (searchResult, lobbies) = await SearchLobbiesAsync(searchOptions);
 
             if (searchResult == Result.Success && lobbies != null && lobbies.Count > 0)
             {
@@ -824,6 +881,27 @@ namespace EOSNative.Lobbies
             hostOptions ??= new LobbyCreateOptions();
             var (createResult, newLobby) = await CreateLobbyAsync(hostOptions);
             return (createResult, newLobby, true); // didHost = true
+        }
+
+        /// <summary>
+        /// Quick match OR auto-host using unified LobbyOptions.
+        /// The same options configure both the search filters AND the fallback host settings.
+        /// This is the simplest way to implement "Play Now":
+        /// <code>
+        /// var options = new LobbyOptions()
+        ///     .WithGameMode("deathmatch")
+        ///     .WithAttribute("SCENE", SceneManager.GetActiveScene().name)
+        ///     .WithAttribute("QUEUE", "ranked")
+        ///     .WithMaxPlayers(4)
+        ///     .ExcludePassworded()
+        ///     .ExcludeGamesInProgress();
+        ///
+        /// var (result, lobby, didHost) = await EOSLobbyManager.Instance.QuickMatchOrHostAsync(options);
+        /// </code>
+        /// </summary>
+        public Task<(Result result, LobbyData lobby, bool didHost)> QuickMatchOrHostAsync(LobbyOptions options)
+        {
+            return QuickMatchOrHostAsync(options.ToSearchOptions(), options.ToCreateOptions());
         }
 
         /// <summary>
@@ -943,9 +1021,22 @@ namespace EOSNative.Lobbies
 
             // Get updated lobby data
             var lobbyData = await GetLobbyDataAsync(lobbyId);
-            CurrentLobby = lobbyData;
-
             details?.Release();
+
+            // Post-join ghost detection — if we joined a lobby that's actually dead, bail out
+            if (lobbyData.IsGhost)
+            {
+                Debug.LogWarning($"[EOSLobbyManager] Joined ghost lobby {lobbyId} (Members:{lobbyData.MemberCount}, Owner:{lobbyData.OwnerPuid ?? "null"}) — auto-leaving");
+                var leaveOptions = new LeaveLobbyOptions
+                {
+                    LocalUserId = LocalProductUserId,
+                    LobbyId = lobbyId
+                };
+                LobbyInterface.LeaveLobby(ref leaveOptions, null, (ref LeaveLobbyCallbackInfo _) => { });
+                return (Result.NotFound, default);
+            }
+
+            CurrentLobby = lobbyData;
 
             // Subscribe to notifications
             SubscribeToNotifications(lobbyId);
@@ -1011,6 +1102,9 @@ namespace EOSNative.Lobbies
             CurrentLobby = default;
 
             EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager", "Left lobby (sync)");
+
+            // Fire OnLobbyLeft so subscribers (FishNet, P2P, NetworkManager, etc.) can clean up
+            OnLobbyLeft?.Invoke();
         }
 
         /// <summary>
@@ -1022,6 +1116,13 @@ namespace EOSNative.Lobbies
             {
                 EOSDebugLogger.LogWarning(DebugCategory.LobbyManager, "EOSLobbyManager", "Not in a lobby.");
                 return Result.NotFound;
+            }
+
+            // Invoke pre-leave hook (e.g. transport stops FishNet before EOS leave)
+            if (BeforeLeaveLobby != null)
+            {
+                try { await BeforeLeaveLobby(); }
+                catch (Exception ex) { Debug.LogWarning($"[EOSLobbyManager] BeforeLeaveLobby hook failed: {ex.Message}"); }
             }
 
             string lobbyId = CurrentLobby.LobbyId;
@@ -1142,6 +1243,62 @@ namespace EOSNative.Lobbies
                 Debug.LogError($"[EOSLobbyManager] Failed to add attribute: {addResult}");
                 modification.Release();
                 return addResult;
+            }
+
+            var updateOptions = new UpdateLobbyOptions { LobbyModificationHandle = modification };
+            var tcs = new TaskCompletionSource<UpdateLobbyCallbackInfo>();
+            LobbyInterface.UpdateLobby(ref updateOptions, null, (ref UpdateLobbyCallbackInfo data) =>
+            {
+                tcs.SetResult(data);
+            });
+
+            var result = await tcs.Task;
+            modification.Release();
+
+            return result.ResultCode;
+        }
+
+        /// <summary>
+        /// Sets multiple lobby attributes in a single modification (1 round trip).
+        /// All attributes are set atomically — no window where lobby is partially configured.
+        /// </summary>
+        public async Task<Result> SetLobbyAttributesBatchAsync(string lobbyId, Dictionary<string, string> attributes)
+        {
+            if (attributes == null || attributes.Count == 0)
+                return Result.Success;
+
+            var modifyOptions = new UpdateLobbyModificationOptions
+            {
+                LocalUserId = LocalProductUserId,
+                LobbyId = lobbyId
+            };
+
+            var modifyResult = LobbyInterface.UpdateLobbyModification(ref modifyOptions, out LobbyModification modification);
+            if (modifyResult != Result.Success)
+            {
+                Debug.LogError($"[EOSLobbyManager] Failed to create modification for batch: {modifyResult}");
+                return modifyResult;
+            }
+
+            foreach (var kvp in attributes)
+            {
+                var addAttrOptions = new LobbyModificationAddAttributeOptions
+                {
+                    Attribute = new AttributeData
+                    {
+                        Key = kvp.Key,
+                        Value = new AttributeDataValue { AsUtf8 = kvp.Value }
+                    },
+                    Visibility = LobbyAttributeVisibility.Public
+                };
+
+                var addResult = modification.AddAttribute(ref addAttrOptions);
+                if (addResult != Result.Success)
+                {
+                    Debug.LogError($"[EOSLobbyManager] Failed to add attribute '{kvp.Key}' to batch: {addResult}");
+                    modification.Release();
+                    return addResult;
+                }
             }
 
             var updateOptions = new UpdateLobbyOptions { LobbyModificationHandle = modification };
@@ -1308,8 +1465,8 @@ namespace EOSNative.Lobbies
                         continue;
                     }
 
-                    // Filter out empty lobbies (ghost lobbies)
-                    if (lobbyData.MemberCount == 0)
+                    // Filter out ghost lobbies (0 members or no owner)
+                    if (lobbyData.IsGhost)
                     {
                         details.Release();
                         continue;
@@ -1416,23 +1573,35 @@ namespace EOSNative.Lobbies
             };
 
             // Retry with backoff — EOS SDK local cache may not be populated immediately after join
-            LobbyDetails details = null;
-            Result result = Result.NotFound;
-            for (int i = 0; i < 5; i++)
+            // We need both: the details handle AND the owner info to be available
+            LobbyData lobbyData = default;
+            for (int i = 0; i < 15; i++)
             {
-                await Task.Delay(100 * (i + 1));
-                result = LobbyInterface.CopyLobbyDetailsHandle(ref options, out details);
-                if (result == Result.Success && details != null) break;
+                await Task.Delay(100 * Math.Min(i + 1, 5)); // 100, 200, 300, 400, 500, 500, ...
+
+                var result = LobbyInterface.CopyLobbyDetailsHandle(ref options, out LobbyDetails details);
+                if (result != Result.Success || details == null)
+                    continue;
+
+                lobbyData = ExtractLobbyData(details);
+                details.Release();
+
+                // Owner info is critical for client auto-connect — keep retrying if missing
+                if (!string.IsNullOrEmpty(lobbyData.OwnerPuid))
+                    break;
+
+                EOSDebugLogger.Log(DebugCategory.LobbyManager, "EOSLobbyManager",
+                    $"GetLobbyDataAsync: Details available but OwnerPuid not yet populated (attempt {i + 1})");
             }
 
-            if (result != Result.Success || details == null)
+            if (string.IsNullOrEmpty(lobbyData.LobbyId))
             {
-                Debug.LogWarning($"[EOSLobbyManager] Failed to get lobby details after retries: {result}");
-                return default;
+                Debug.LogWarning($"[EOSLobbyManager] Failed to get lobby details after retries");
             }
-
-            var lobbyData = ExtractLobbyData(details);
-            details.Release();
+            else if (string.IsNullOrEmpty(lobbyData.OwnerPuid))
+            {
+                Debug.LogWarning($"[EOSLobbyManager] Got lobby details but OwnerPuid never populated");
+            }
 
             return lobbyData;
         }

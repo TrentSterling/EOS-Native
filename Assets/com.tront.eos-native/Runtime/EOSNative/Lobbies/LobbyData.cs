@@ -67,6 +67,12 @@ namespace EOSNative.Lobbies
         public bool IsValid => !string.IsNullOrEmpty(LobbyId) && !string.IsNullOrEmpty(OwnerPuid);
 
         /// <summary>
+        /// Whether this lobby appears to be a ghost (0 members or no owner).
+        /// Ghost lobbies linger in EOS search results after all players leave.
+        /// </summary>
+        public bool IsGhost => MemberCount == 0 || string.IsNullOrEmpty(OwnerPuid);
+
+        /// <summary>
         /// Whether we can join this lobby (has available slots).
         /// </summary>
         public bool CanJoin => AvailableSlots > 0;
