@@ -1381,7 +1381,7 @@ namespace EOSNative.Lobbies
             return result;
         }
 
-        private async Task<LobbyData> GetLobbyDataAsync(string lobbyId)
+        public async Task<LobbyData> GetLobbyDataAsync(string lobbyId)
         {
             var options = new CopyLobbyDetailsHandleOptions
             {
