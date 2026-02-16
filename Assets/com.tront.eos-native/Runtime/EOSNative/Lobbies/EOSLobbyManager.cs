@@ -872,6 +872,17 @@ namespace EOSNative.Lobbies
                 return (Result.NotConfigured, default);
             }
 
+            // Guard against joining while already in a lobby
+            if (IsInLobby)
+            {
+                Debug.LogWarning($"[EOSLobbyManager] Already in lobby {CurrentLobby.LobbyId}. Leave first before joining {lobbyId}.");
+                if (CurrentLobby.LobbyId == lobbyId)
+                {
+                    // Already in this exact lobby — return current data
+                    return (Result.Success, CurrentLobby);
+                }
+            }
+
             // Get lobby details first
             var detailsOptions = new CopyLobbyDetailsHandleOptions
             {
