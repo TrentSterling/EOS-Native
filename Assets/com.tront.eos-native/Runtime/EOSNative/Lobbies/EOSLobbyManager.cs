@@ -208,6 +208,13 @@ namespace EOSNative.Lobbies
                 return (Result.NotConfigured, default);
             }
 
+            // Auto-leave existing lobby to prevent LimitExceeded from orphaned lobbies
+            if (IsInLobby)
+            {
+                Debug.Log($"[EOSLobbyManager] Already in lobby {CurrentLobby.LobbyId} — leaving before creating new one.");
+                await LeaveLobbyAsync();
+            }
+
             // Generate join code if not provided (respect per-lobby length override)
             int savedLength = _joinCodeLength;
             if (options.JoinCodeLength.HasValue)
@@ -244,6 +251,14 @@ namespace EOSNative.Lobbies
             {
                 Debug.LogWarning($"[EOSLobbyManager] Lobby creation failed with voice enabled ({createResult.ResultCode}). Retrying without voice...");
                 enableVoice = false;
+                createResult = await CreateLobbyInternal(options, enableVoice, allowedPlatforms);
+            }
+
+            // Retry once on LimitExceeded (orphaned lobbies from crashes)
+            if (createResult.ResultCode == Result.LimitExceeded)
+            {
+                Debug.LogWarning("[EOSLobbyManager] LimitExceeded — likely orphaned lobbies from previous session. Waiting 5s and retrying...");
+                await Task.Delay(5000);
                 createResult = await CreateLobbyInternal(options, enableVoice, allowedPlatforms);
             }
 
