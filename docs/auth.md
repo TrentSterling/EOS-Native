@@ -10,6 +10,7 @@ EOS Native supports multiple authentication methods.
 | Epic Account | Login via Epic overlay | Full social features |
 | Persistent Auth | Silent re-login across sessions | Returning players |
 | Smart Login | Persistent -> device token fallback | Production recommended |
+| External Auth | Platform-verified identity (Steam, Oculus, etc.) | VR, console, storefront |
 
 ## Device Token Login
 
@@ -54,6 +55,60 @@ Tries persistent auth first, falls back to device token. Best for production use
 var result = await EOSManager.Instance.LoginSmartAsync();
 // Always succeeds (device token is the fallback)
 ```
+
+## External Auth Login
+
+Login using an external platform credential. This is the standard approach for platform-verified identity (VR headsets, Steam, consoles, mobile, etc.).
+
+### Supported Providers
+
+| Provider | ExternalCredentialType | Token Format |
+|----------|----------------------|--------------|
+| Meta/Oculus | `OculusUseridNonce` | `"{userId}\|{nonce}"` |
+| Steam | `SteamSessionTicket` | Hex-encoded session ticket |
+| Discord | `DiscordAccessToken` | OAuth2 access token |
+| Apple | `AppleIdToken` | Sign in with Apple JWT |
+| Google | `GoogleIdToken` | Google Sign-In ID token |
+| PlayStation (PSN) | `PsnIdToken` | PSN auth code |
+| Xbox Live | `XblXstsToken` | XSTS token |
+| Nintendo | `NintendoIdToken` | NSA ID token |
+| GOG Galaxy | `GogSessionTicket` | Galaxy session ticket |
+| OpenID | `OpenidAccessToken` | OpenID Connect token |
+
+### Generic Usage
+
+```csharp
+// You obtain the token from the platform SDK yourself
+string steamTicket = GetSteamSessionTicket(); // your code
+
+var result = await EOSManager.Instance.LoginWithExternalAuthAsync(
+    ExternalCredentialType.SteamSessionTicket,
+    steamTicket,
+    "PlayerName"
+);
+
+if (result == Result.Success)
+    Debug.Log($"Logged in: {EOSManager.Instance.LocalProductUserId}");
+```
+
+### Meta/Oculus (Quest VR)
+
+Convenience method that formats the `"{userId}|{nonce}"` token automatically.
+
+```csharp
+// 1. Get nonce from Meta Platform SDK (your code)
+string oculusUserId = "1234567890";
+string nonce = GetOculusNonce(); // Platform.User.GetUserProof()
+
+// 2. Login with EOS Native
+var result = await EOSManager.Instance.LoginWithOculusNonceAsync(
+    oculusUserId,
+    nonce,
+    "VRPlayer"
+);
+```
+
+> **Note:** You must enable the "User ID" feature in the [Oculus Developer Dashboard](https://developer.oculus.com/) for nonce verification to work. EOS verifies the nonce directly with Meta's servers.
 
 ## Auto Login
 

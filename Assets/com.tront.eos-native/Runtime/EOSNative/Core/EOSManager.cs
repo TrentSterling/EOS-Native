@@ -1423,6 +1423,129 @@ namespace EOSNative
 
         #endregion
 
+        #region External Auth Login
+
+        /// <summary>
+        /// Logs in using an external platform credential (Steam, Oculus, Discord, Apple, Google, etc.).
+        /// The caller is responsible for obtaining the token from the platform SDK.
+        /// See <see cref="ExternalCredentialType"/> for all supported types.
+        /// </summary>
+        /// <param name="credentialType">The external credential type (e.g. OculusUseridNonce, SteamSessionTicket).</param>
+        /// <param name="token">The platform-specific auth token or credential string.</param>
+        /// <param name="displayName">Display name for the user (1-32 characters). Can be null for platforms that provide their own.</param>
+        /// <returns>The result of the login operation.</returns>
+        public async Task<Result> LoginWithExternalAuthAsync(ExternalCredentialType credentialType, string token, string displayName = null)
+        {
+            if (!IsInitialized)
+            {
+                EOSDebugLogger.LogError("EOSManager", "Cannot login - SDK not initialized.");
+                return Result.NotConfigured;
+            }
+
+            if (IsLoggedIn)
+            {
+                EOSDebugLogger.LogWarning(DebugCategory.EOSManager, "EOSManager", "Already logged in.");
+                return Result.Success;
+            }
+
+            if (string.IsNullOrEmpty(token))
+            {
+                EOSDebugLogger.LogError("EOSManager", "Token cannot be null or empty.");
+                return Result.InvalidParameters;
+            }
+
+            if (displayName != null && (displayName.Length == 0 || displayName.Length > 32))
+            {
+                EOSDebugLogger.LogError("EOSManager", "Display name must be 1-32 characters.");
+                return Result.InvalidParameters;
+            }
+
+            // Login to Connect with external credential
+            var tcs = new TaskCompletionSource<LoginCallbackInfo>();
+            var loginOptions = new Epic.OnlineServices.Connect.LoginOptions
+            {
+                Credentials = new Epic.OnlineServices.Connect.Credentials
+                {
+                    Type = credentialType,
+                    Token = token
+                },
+                UserLoginInfo = displayName != null ? new UserLoginInfo { DisplayName = displayName } : null
+            };
+
+            ConnectInterface.Login(ref loginOptions, null, (ref LoginCallbackInfo data) =>
+            {
+                tcs.SetResult(data);
+            });
+
+            var loginResult = await tcs.Task;
+
+            if (loginResult.ResultCode == Result.InvalidUser)
+            {
+                if (loginResult.ContinuanceToken == null)
+                {
+                    EOSDebugLogger.LogError("EOSManager", "ContinuanceToken is null, cannot create user.");
+                    OnLoginFailed?.Invoke(Result.InvalidUser);
+                    return Result.InvalidUser;
+                }
+
+                Result createUserResult = await CreateUserAsync(loginResult.ContinuanceToken);
+                if (createUserResult != Result.Success)
+                {
+                    Debug.LogError($"[EOSManager] CreateUser failed: {createUserResult}");
+                    OnLoginFailed?.Invoke(createUserResult);
+                    return createUserResult;
+                }
+            }
+            else if (loginResult.ResultCode != Result.Success)
+            {
+                Debug.LogError($"[EOSManager] External auth login failed: {loginResult.ResultCode}");
+                OnLoginFailed?.Invoke(loginResult.ResultCode);
+                return loginResult.ResultCode;
+            }
+            else
+            {
+                LocalProductUserId = loginResult.LocalUserId;
+            }
+
+            SetupAuthExpirationNotification();
+            SetupLoginStatusChangedNotification();
+
+            IsLoggedIn = true;
+            EOSDebugLogger.Log(DebugCategory.EOSManager, "EOSManager", $" Logged in via {credentialType}. ProductUserId: {LocalProductUserId}");
+            OnLoginSuccess?.Invoke(LocalProductUserId);
+
+            return Result.Success;
+        }
+
+        /// <summary>
+        /// Convenience method to login with a Meta/Oculus nonce (Quest VR).
+        /// Formats the userId and nonce into the required "{userId}|{nonce}" format.
+        /// The caller must obtain the nonce from the Meta/Oculus Platform SDK themselves.
+        /// </summary>
+        /// <param name="oculusUserId">The Oculus user ID.</param>
+        /// <param name="nonce">The nonce obtained from the Oculus Platform SDK.</param>
+        /// <param name="displayName">Display name for the user (1-32 characters). Can be null.</param>
+        /// <returns>The result of the login operation.</returns>
+        public Task<Result> LoginWithOculusNonceAsync(string oculusUserId, string nonce, string displayName = null)
+        {
+            if (string.IsNullOrEmpty(oculusUserId))
+            {
+                EOSDebugLogger.LogError("EOSManager", "Oculus user ID cannot be null or empty.");
+                return System.Threading.Tasks.Task.FromResult(Result.InvalidParameters);
+            }
+
+            if (string.IsNullOrEmpty(nonce))
+            {
+                EOSDebugLogger.LogError("EOSManager", "Oculus nonce cannot be null or empty.");
+                return System.Threading.Tasks.Task.FromResult(Result.InvalidParameters);
+            }
+
+            string token = $"{oculusUserId}|{nonce}";
+            return LoginWithExternalAuthAsync(ExternalCredentialType.OculusUseridNonce, token, displayName);
+        }
+
+        #endregion
+
         #region ParrelSync Support
 
         private bool IsParrelSyncClone()
