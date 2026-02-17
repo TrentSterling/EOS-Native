@@ -331,11 +331,39 @@ var (result, data) = await lobby.CreateLobbyAsync(
 );
 ```
 
+## Ghost Lobby Filtering
+
+EOS lobbies can become "ghosts" — they linger in search results after all players leave or disconnect. EOS-Native automatically filters these at every level:
+
+```csharp
+// Check if a lobby is a ghost (0 members or no owner)
+if (lobbyData.IsGhost)
+    Debug.Log("This lobby is dead");
+```
+
+**Built-in protection (no user action needed):**
+
+| Layer | Method | What Happens |
+|-------|--------|-------------|
+| Search | `SearchLobbiesAsync` | Ghost lobbies excluded from results |
+| Direct ID | `SearchByLobbyIdAsync` | Returns `NotFound` for ghost lobbies |
+| Friend search | `SearchByMemberAsync` | Ghost lobbies filtered from results |
+| Friend join | `FindFriendLobbiesAsync` | Ghost lobbies filtered |
+| Join | `JoinLobbyByIdAsync` | Post-join detection — auto-leaves if lobby is dead |
+
+The join-level check is the final safety net. Even if a ghost lobby slips through search results (race condition between search and join), `JoinLobbyByIdAsync` will detect it after joining, automatically leave, and return `NotFound`.
+
 ## Leaving a Lobby
 
 ```csharp
+// Async (recommended) — fires BeforeLeaveLobby hook + OnLobbyLeft event
 await EOSLobbyManager.Instance.LeaveLobbyAsync();
+
+// Sync (for application quit) — fires OnLobbyLeft event
+EOSLobbyManager.Instance.LeaveLobbySync();
 ```
+
+Both paths notify all subscribers (FishNet transport, P2P, voice, etc.) via the `OnLobbyLeft` event. Use `LeaveLobbyAsync` when possible; use `LeaveLobbySync` only during `OnApplicationQuit` where async won't complete in time.
 
 ## State Checking
 

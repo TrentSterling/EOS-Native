@@ -2,6 +2,19 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.60.0] - 2026-02-16
+
+### Added
+- **Ghost lobby defense** — 4-layer filtering prevents joining stale/empty lobbies that linger in EOS search results after all players leave:
+  - `LobbyData.IsGhost` computed property — `true` when `MemberCount == 0` or `OwnerPuid` is null/empty. Single source of truth for ghost detection.
+  - `SearchByLobbyIdAsync()` now rejects ghost lobbies (returns `NotFound`) instead of returning stale data.
+  - `SearchByMemberAsync()` and `FindFriendLobbiesAsync()` now filter out ghost lobbies from results.
+  - `JoinLobbyByIdAsync()` post-join ghost detection — if we successfully join a lobby that turns out to be dead (0 members, no owner), automatically leaves and returns `NotFound`. This is the final safety net that catches ghosts regardless of how the join was initiated.
+  - `ProcessSearchResults()` upgraded from `MemberCount == 0` check to `IsGhost` (also catches null owner edge case).
+
+### Fixed
+- **`LeaveLobbySync()` not firing `OnLobbyLeft` event** — `LeaveLobbySync()` (used during application quit and sync leave paths) was missing `OnLobbyLeft?.Invoke()`. This meant subscribers like FishNet transport, P2P manager, NetworkManager, PlayerSpawner, and other systems were never notified to clean up when leaving via the sync path. The async path (`LeaveLobbyAsync`) was not affected. Fixes "leave lobby works but transport stays connected" bug.
+
 ## [2.31.0] - 2026-02-09
 
 ### Added

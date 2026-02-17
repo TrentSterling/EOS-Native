@@ -56,6 +56,7 @@ Everything auto-creates. No manual component wiring needed.
 - **EOSLobbyManager** - Create, search, join, leave lobbies with **4-digit join codes**
 - **Quick Match** - Find and join a random public lobby
 - **Host Migration** - Automatic ownership transfer
+- **Ghost Lobby Defense** - 4-layer filtering prevents joining stale/empty lobbies (`LobbyData.IsGhost`)
 - **Lobby Attributes** - Custom key/value data on lobbies and members
 - **EOSLobbyChatManager** - Text chat via lobby attributes (persists through host migration)
 

@@ -36,6 +36,25 @@ Common issues and solutions.
 2. Leave other lobbies first
 3. Check attribute key/value lengths (64/1000 char max)
 
+### Ghost lobbies (joining dead/empty lobbies)
+
+**Symptoms**: Client tries to join a lobby but gets stuck, or joins a lobby with no host.
+
+**Cause**: EOS lobbies can linger in search results after all players leave. These "ghost lobbies" have 0 members or a null owner PUID.
+
+**Solution**: EOS-Native v2.60.0+ automatically filters ghost lobbies at every level — search results, direct ID lookups, friend searches, and post-join validation. If you're on an older version, check `LobbyData.IsGhost` before joining:
+
+```csharp
+if (!lobbyData.IsGhost)
+    await EOSLobbyManager.Instance.JoinLobbyByIdAsync(lobbyData.LobbyId);
+```
+
+### Transport stays connected after leaving lobby
+
+**Cause**: Using `LeaveLobbySync()` on a version before v2.60.0 — it was missing the `OnLobbyLeft` event, so FishNet/P2P/NetworkManager were never notified to stop.
+
+**Solution**: Update to v2.60.0+. `LeaveLobbySync()` now fires `OnLobbyLeft` like `LeaveLobbyAsync()` does.
+
 ### "Lobby code not found"
 
 **Causes**:
