@@ -1127,6 +1127,17 @@ namespace EOSNative.Lobbies
 
             string lobbyId = CurrentLobby.LobbyId;
 
+            // Unsubscribe from notifications BEFORE leaving — prevents stale notifications
+            // from triggering RefreshCurrentLobbyAsync during the leave window
+            UnsubscribeFromNotifications();
+
+            // Notify voice manager
+            EOSVoiceManager.Instance?.OnLobbyLeft();
+
+            // Clear current lobby BEFORE the EOS call — prevents any in-flight refresh
+            // from overwriting the cleared state
+            CurrentLobby = default;
+
             var leaveOptions = new LeaveLobbyOptions
             {
                 LocalUserId = LocalProductUserId,
@@ -1140,15 +1151,6 @@ namespace EOSNative.Lobbies
             });
 
             var result = await tcs.Task;
-
-            // Unsubscribe from notifications
-            UnsubscribeFromNotifications();
-
-            // Notify voice manager
-            EOSVoiceManager.Instance?.OnLobbyLeft();
-
-            // Clear current lobby
-            CurrentLobby = default;
 
             if (result.ResultCode != Result.Success && result.ResultCode != Result.NotFound)
             {
@@ -1574,10 +1576,13 @@ namespace EOSNative.Lobbies
 
             // Retry with backoff — EOS SDK local cache may not be populated immediately after join
             // We need both: the details handle AND the owner info to be available
+            // Check-first pattern: attempt immediately, then backoff if needed
+            // Worst case: 0 + 50 + 100 + 150 + 200 + 250*5 = 1750ms (was 6500ms)
             LobbyData lobbyData = default;
-            for (int i = 0; i < 15; i++)
+            for (int i = 0; i < 10; i++)
             {
-                await Task.Delay(100 * Math.Min(i + 1, 5)); // 100, 200, 300, 400, 500, 500, ...
+                if (i > 0)
+                    await Task.Delay(50 * Math.Min(i, 5)); // 0, 50, 100, 150, 200, 250, 250, ...
 
                 var result = LobbyInterface.CopyLobbyDetailsHandle(ref options, out LobbyDetails details);
                 if (result != Result.Success || details == null)

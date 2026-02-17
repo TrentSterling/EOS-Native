@@ -396,6 +396,13 @@ namespace EOSNative
 
             string key = TruncatePuid(puid);
             _platforms[key] = platformId;
+
+            // Cap size to prevent unbounded growth (same limit as name cache)
+            if (_platforms.Count > MAX_CACHED_PLAYERS)
+            {
+                // Remove oldest entries by cross-referencing timestamps
+                TrimOldestEntries(MAX_CACHED_PLAYERS / 10);
+            }
         }
 
         /// <summary>
@@ -1424,6 +1431,7 @@ namespace EOSNative
                 string key = sorted[i].Key;
                 _cache.Remove(key);
                 _timestamps.Remove(key);
+                _platforms.Remove(key);
             }
 
             EOSDebugLogger.Log(DebugCategory.PlayerRegistry, "EOSPlayerRegistry", $"Trimmed {count} oldest entries");

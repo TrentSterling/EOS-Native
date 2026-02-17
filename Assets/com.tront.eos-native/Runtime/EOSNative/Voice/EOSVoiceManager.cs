@@ -910,6 +910,15 @@ namespace EOSNative.Voice
 
             string puid = data.ParticipantId.ToString();
 
+            // Lazily register participant if we haven't seen them yet
+            // (fixes race condition where host creates lobby and clients join RTC
+            // before OnParticipantStatusChanged notifications are registered)
+            if (!_audioStatus.ContainsKey(puid))
+            {
+                _audioStatus[puid] = RTCAudioStatus.Enabled;
+                _speakingState[puid] = false;
+            }
+
             // Get or create buffer for this participant
             var buffer = _audioBuffers.GetOrAdd(puid, _ => new ConcurrentQueue<short[]>());
 
@@ -944,6 +953,14 @@ namespace EOSNative.Voice
             // Diagnostic: log participant updates (helps debug Android "all silent" issue)
             string shortPuid = puid.Length > 8 ? puid.Substring(0, 8) + ".." : puid;
             Debug.Log($"[EOSVoice] ParticipantUpdated: {shortPuid} Speaking={data.Speaking} AudioStatus={data.AudioStatus}");
+
+            // Lazily register participant if we haven't seen them yet
+            // (second safety net for the host RTC race condition)
+            if (!_audioStatus.ContainsKey(puid))
+            {
+                _audioStatus[puid] = RTCAudioStatus.Enabled;
+                _speakingState[puid] = false;
+            }
 
             bool wasSpeaking = _speakingState.TryGetValue(puid, out var prev) && prev;
             bool isSpeaking = data.Speaking;
