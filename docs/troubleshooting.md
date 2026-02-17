@@ -75,6 +75,26 @@ if (!lobbyData.IsGhost)
 
 **Solution**: The DLL should be at `Runtime/EOSSDK/Plugins/Windows/x64/xaudio2_9redist.dll`. The path resolver checks multiple locations automatically. Verify the file exists.
 
+### Host can't hear anyone (one-way voice)
+
+**Symptoms**: Host can transmit voice (others hear the host), but host cannot hear any other participants. Clients hear each other fine.
+
+**Cause**: RTC notification race condition in versions before v2.61.0. When the host creates a lobby, clients could join the RTC room before the host finished registering `OnParticipantStatusChanged`, so those participants were never tracked.
+
+**Solution**: Update to v2.61.0+. Participant registration is now lazy — any incoming audio data or status update auto-registers the participant.
+
+### Can't reconnect after leaving lobby
+
+**Cause**: In versions before v2.61.0, `LeaveLobbyAsync()` cleared state after the EOS leave call. Stale notifications during the await window could overwrite the cleared state.
+
+**Solution**: Update to v2.61.0+. State cleanup now happens before the EOS leave call.
+
+### Host migration takes too long
+
+**Cause**: In versions before v2.61.0, the lobby data retry loop waited up to 6.5 seconds for the EOS SDK cache to populate.
+
+**Solution**: Update to v2.61.0+. Worst-case retry time reduced from 6.5s to 1.75s.
+
 ### "No voice audio"
 
 **Causes**:

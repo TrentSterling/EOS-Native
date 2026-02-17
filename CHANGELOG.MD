@@ -2,6 +2,14 @@
 
 All notable changes to the EOS-Native package will be documented in this file.
 
+## [2.61.0] - 2026-02-16
+
+### Fixed
+- **Voice one-way bug (host can't hear clients)** — RTC notification race condition: when the host creates a lobby, clients could join the RTC room before the host registered `OnParticipantStatusChanged`, causing those participants to never appear in `_audioStatus`. The host could transmit (others heard the host) but couldn't receive audio from anyone. Fixed by lazily registering participants in `OnAudioBeforeRender` and `OnParticipantUpdated` callbacks — any incoming audio data or status update now auto-registers the participant if not already tracked.
+- **Host migration ~10 seconds** — `GetLobbyDataAsync()` retry loop was 15 iterations with 500ms backoff cap (6.5s worst case). Reduced to 10 iterations with 250ms cap (1.75s worst case) and switched to check-first pattern (attempt immediately, then backoff) eliminating the initial 100ms delay.
+- **Can't reconnect after leaving lobby** — `LeaveLobbyAsync()` was clearing state AFTER the EOS leave call completed. During the await window, stale lobby notifications could trigger `RefreshCurrentLobbyAsync()` which would start a retry loop and potentially overwrite the cleared `CurrentLobby`. Fixed by unsubscribing from notifications and clearing `CurrentLobby` BEFORE sending the EOS leave call.
+- **`EOSPlayerRegistry._platforms` unbounded growth** — Platform ID cache (`_platforms` dictionary) grew without limits as new players were encountered. Now capped at `MAX_CACHED_PLAYERS` (500) and `TrimOldestEntries()` also removes stale platform entries.
+
 ## [2.60.0] - 2026-02-16
 
 ### Added

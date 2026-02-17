@@ -67,6 +67,16 @@ voice.SetParticipantVolume(puid, 50f);  // 50% volume
 voice.SetParticipantMuted(puid, true);
 ```
 
+## Participant Discovery
+
+Participants are discovered automatically through three callbacks:
+
+1. **`OnParticipantStatusChanged`** — EOS notification when a player joins/leaves the RTC room
+2. **`OnAudioBeforeRender`** — When audio data arrives from a participant (lazy registration)
+3. **`OnParticipantUpdated`** — When speaking/mute status changes (lazy registration)
+
+The lazy registration (2 & 3) acts as a safety net for timing edge cases — for example, when the host creates a lobby and clients join the RTC room before notifications are fully registered. Any incoming audio or status data will auto-register the participant.
+
 ## Audio Levels
 
 Monitor voice activity:
