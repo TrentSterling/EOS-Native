@@ -71,7 +71,7 @@ await EOSLobbyChatManager.Instance.SendChatMessageAsync("Hello!");
 
 ## Links
 
-- [Blog Post](https://blog.tront.xyz/posts/eos-native/)
+- [Blog Post](https://tront.xyz/blog/posts/eos-native/)
 - [TrontCloud](https://tront.xyz/trontcloud/) - Optional persistent backend for stats, leaderboards, and achievements
 
 ## Support
