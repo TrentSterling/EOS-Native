@@ -42,7 +42,7 @@ Common issues and solutions.
 
 **Cause**: EOS lobbies can linger in search results after all players leave. These "ghost lobbies" have 0 members or a null owner PUID.
 
-**Solution**: EOS-Native v2.60.0+ automatically filters ghost lobbies at every level — search results, direct ID lookups, friend searches, and post-join validation. If you're on an older version, check `LobbyData.IsGhost` before joining:
+**Solution**: EOS-Native v2.60.0+ automatically filters ghost lobbies at every level - search results, direct ID lookups, friend searches, and post-join validation. If you're on an older version, check `LobbyData.IsGhost` before joining:
 
 ```csharp
 if (!lobbyData.IsGhost)
@@ -51,7 +51,7 @@ if (!lobbyData.IsGhost)
 
 ### Transport stays connected after leaving lobby
 
-**Cause**: Using `LeaveLobbySync()` on a version before v2.60.0 — it was missing the `OnLobbyLeft` event, so FishNet/P2P/NetworkManager were never notified to stop.
+**Cause**: Using `LeaveLobbySync()` on a version before v2.60.0 - it was missing the `OnLobbyLeft` event, so FishNet/P2P/NetworkManager were never notified to stop.
 
 **Solution**: Update to v2.60.0+. `LeaveLobbySync()` now fires `OnLobbyLeft` like `LeaveLobbyAsync()` does.
 
@@ -81,7 +81,7 @@ if (!lobbyData.IsGhost)
 
 **Cause**: RTC notification race condition in versions before v2.61.0. When the host creates a lobby, clients could join the RTC room before the host finished registering `OnParticipantStatusChanged`, so those participants were never tracked.
 
-**Solution**: Update to v2.61.0+. Participant registration is now lazy — any incoming audio data or status update auto-registers the participant.
+**Solution**: Update to v2.61.0+. Participant registration is now lazy - any incoming audio data or status update auto-registers the participant.
 
 ### Can't reconnect after leaving lobby
 

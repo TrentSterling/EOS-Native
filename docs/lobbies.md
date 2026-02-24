@@ -77,7 +77,7 @@ Shorter codes (4 digits) are easier to share verbally but have higher collision 
 
 ### With EOS LobbyId as Code
 
-Use the EOS-generated LobbyId instead of a random numeric code. Guarantees uniqueness — useful for chat history or invite links that key off the lobby code:
+Use the EOS-generated LobbyId instead of a random numeric code. Guarantees uniqueness - useful for chat history or invite links that key off the lobby code:
 
 ```csharp
 var (result, data) = await lobby.CreateLobbyAsync(
@@ -205,7 +205,7 @@ All fluent methods return the same `LobbyOptions` instance for chaining.
 Pre-configured presets for common scenarios:
 
 ```csharp
-// Quick match — search for open, non-passworded, non-in-progress lobbies
+// Quick match - search for open, non-passworded, non-in-progress lobbies
 var options = LobbyOptions.QuickMatch();
 
 // Game mode search
@@ -238,7 +238,7 @@ var (result, data) = await EOSLobbyManager.Instance.JoinLobbyByIdAsync(lobbyId);
 Finds an available lobby or creates one if none found:
 
 ```csharp
-// Simple — uses defaults
+// Simple - uses defaults
 var (result, data, didHost) = await EOSLobbyManager.Instance.QuickMatchOrHostAsync();
 
 if (didHost)
@@ -333,7 +333,7 @@ var (result, data) = await lobby.CreateLobbyAsync(
 
 ## Ghost Lobby Filtering
 
-EOS lobbies can become "ghosts" — they linger in search results after all players leave or disconnect. EOS-Native automatically filters these at every level:
+EOS lobbies can become "ghosts" - they linger in search results after all players leave or disconnect. EOS-Native automatically filters these at every level:
 
 ```csharp
 // Check if a lobby is a ghost (0 members or no owner)
@@ -349,17 +349,17 @@ if (lobbyData.IsGhost)
 | Direct ID | `SearchByLobbyIdAsync` | Returns `NotFound` for ghost lobbies |
 | Friend search | `SearchByMemberAsync` | Ghost lobbies filtered from results |
 | Friend join | `FindFriendLobbiesAsync` | Ghost lobbies filtered |
-| Join | `JoinLobbyByIdAsync` | Post-join detection — auto-leaves if lobby is dead |
+| Join | `JoinLobbyByIdAsync` | Post-join detection - auto-leaves if lobby is dead |
 
 The join-level check is the final safety net. Even if a ghost lobby slips through search results (race condition between search and join), `JoinLobbyByIdAsync` will detect it after joining, automatically leave, and return `NotFound`.
 
 ## Leaving a Lobby
 
 ```csharp
-// Async (recommended) — fires BeforeLeaveLobby hook + OnLobbyLeft event
+// Async (recommended) - fires BeforeLeaveLobby hook + OnLobbyLeft event
 await EOSLobbyManager.Instance.LeaveLobbyAsync();
 
-// Sync (for application quit) — fires OnLobbyLeft event
+// Sync (for application quit) - fires OnLobbyLeft event
 EOSLobbyManager.Instance.LeaveLobbySync();
 ```
 

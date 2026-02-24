@@ -211,11 +211,11 @@ By default, only the object owner can write SyncVars (`SyncVarWriteAccess.Owner`
 Health = Sync(100f);
 Health = Sync(100f, SyncVarWriteAccess.Owner);  // same thing
 
-// Host-only — useful for game state managed by the host
+// Host-only - useful for game state managed by the host
 GamePhase = Sync(0, SyncVarWriteAccess.Host);
 MatchTimer = Sync(0f, SyncVarWriteAccess.Host);
 
-// Any peer — last-write-wins, no conflict resolution
+// Any peer - last-write-wins, no conflict resolution
 SharedScore = Sync(0, SyncVarWriteAccess.All);
 ```
 
@@ -248,7 +248,7 @@ NetworkManager.Instance.OnSyncVarWrite = (sender, target) =>
 Convenience helpers:
 
 ```csharp
-// Strict owner-only (ignores WriteAccess levels — all SyncVars become owner-only)
+// Strict owner-only (ignores WriteAccess levels - all SyncVars become owner-only)
 NetworkManager.Instance.EnableOwnerOnlySyncVarValidation();
 
 // Owner OR host can write any object
@@ -576,7 +576,7 @@ NetworkManager.Instance.RegisterRPC(Net, "GotHitBy", reader =>
 
 ## SyncVar LOD
 
-Distance-based sync rate throttling. Attach `SyncVarLOD` to any NetworkObject to reduce bandwidth for distant objects. Works on the **owner side** — throttles how often dirty SyncVars are propagated to the send queue.
+Distance-based sync rate throttling. Attach `SyncVarLOD` to any NetworkObject to reduce bandwidth for distant objects. Works on the **owner side** - throttles how often dirty SyncVars are propagated to the send queue.
 
 ### Quick Start
 
@@ -616,9 +616,9 @@ public class Player : NetworkBehaviour
     SyncVar<string> StatusText;  // index 3 (bit 3)
 
     // Example tiers:
-    // Close (0-30m):  sync all 4 SyncVars — mask = 0xF (bits 0-3)
-    // Medium (30-80m): sync position + health only — mask = 0x3 (bits 0-1)
-    // Far (80-150m):  sync position only — mask = 0x1 (bit 0)
+    // Close (0-30m):  sync all 4 SyncVars - mask = 0xF (bits 0-3)
+    // Medium (30-80m): sync position + health only - mask = 0x3 (bits 0-1)
+    // Far (80-150m):  sync position only - mask = 0x1 (bit 0)
 }
 ```
 
@@ -654,7 +654,7 @@ lod.ObserverPosition = Camera.main.transform.position;
 
 ### Difference from NetworkTransform LOD
 
-`SyncVarLOD` throttles **all SyncVars** on a NetworkObject at the dirty-flag level. `NetworkTransform` has its own built-in distance LOD that controls **interpolation quality** (spring vs tweened vs snap). They can be used together — SyncVarLOD controls send frequency while NetworkTransform LOD controls visual fidelity.
+`SyncVarLOD` throttles **all SyncVars** on a NetworkObject at the dirty-flag level. `NetworkTransform` has its own built-in distance LOD that controls **interpolation quality** (spring vs tweened vs snap). They can be used together - SyncVarLOD controls send frequency while NetworkTransform LOD controls visual fidelity.
 
 ## Tick-Based Simulation
 
@@ -773,14 +773,14 @@ Once an object becomes visible to a peer, it stays visible until the distance ex
 
 Interest management and SyncVar LOD work at different levels and complement each other:
 
-- **Interest Management** (InterestManager) — controls **which peers** receive data about an object. Binary: visible or not.
-- **SyncVar LOD** (SyncVarLOD) — controls **how often** data is sent for visible objects. Graduated: full rate, half rate, 1/10 rate, etc.
+- **Interest Management** (InterestManager) - controls **which peers** receive data about an object. Binary: visible or not.
+- **SyncVar LOD** (SyncVarLOD) - controls **how often** data is sent for visible objects. Graduated: full rate, half rate, 1/10 rate, etc.
 
 For maximum bandwidth savings, use both: InterestManager culls distant objects entirely, SyncVarLOD reduces send rate for objects at medium distance.
 
 ### Performance
 
-The spatial hash grid uses O(1) cell lookups. The per-peer interest rebuild iterates all objects once per peer, every `RebuildInterval` seconds. For a 64-player game with 1000 objects, that's ~64K checks every 0.5s — negligible CPU cost.
+The spatial hash grid uses O(1) cell lookups. The per-peer interest rebuild iterates all objects once per peer, every `RebuildInterval` seconds. For a 64-player game with 1000 objects, that's ~64K checks every 0.5s - negligible CPU cost.
 
 State updates (`SendStateUpdates`) are the hot path. Without interest management, one packet is broadcast to all peers. With interest management, per-peer packets are built containing only the objects that peer can see. This increases CPU slightly but reduces bandwidth proportionally to the culling ratio.
 
@@ -1295,7 +1295,7 @@ All Layer 2 networking messages use the `0xA0`-`0xAF` range:
 
 ## Offline Mode
 
-`NetworkManager.StartOfflineMode()` enables a fully local networking session — no EOS login, no P2P connections, no lobby required. Perfect for single-player gameplay, testing, and prototyping.
+`NetworkManager.StartOfflineMode()` enables a fully local networking session - no EOS login, no P2P connections, no lobby required. Perfect for single-player gameplay, testing, and prototyping.
 
 ```csharp
 // Start offline session
@@ -1304,7 +1304,7 @@ NetworkManager.Instance.StartOfflineMode();
 
 // Spawn and interact normally
 var obj = NetworkManager.Instance.Spawn(myPrefabId, pos, rot);
-obj.IsOwner; // true — ownership tracked locally
+obj.IsOwner; // true - ownership tracked locally
 
 // All RPCs execute locally
 [NetRpc(RPCTarget.All)]
@@ -1336,7 +1336,7 @@ NetworkManager.Instance.StopOfflineMode();
 // Go from offline to online
 NetworkManager.Instance.DespawnAll();   // clean up offline objects
 NetworkManager.Instance.StopOfflineMode();
-// Now join a lobby normally — EOS login, P2P, etc.
+// Now join a lobby normally - EOS login, P2P, etc.
 ```
 
 ## Client-Side Prediction & Lag Compensation
@@ -1345,17 +1345,17 @@ Opt-in prediction and lag compensation for networked objects. Three components i
 
 ### When You Need This
 
-EOS-Native uses peer-to-peer authority — you already move your own objects locally (no prediction needed for basic movement). Prediction matters when:
+EOS-Native uses peer-to-peer authority - you already move your own objects locally (no prediction needed for basic movement). Prediction matters when:
 
-- **Host-validated RPCs** — You act optimistically, but the host might reject. If the host sends back a different state, `NetworkPrediction` smoothly corrects your object.
-- **Hit detection** — When a player fires a weapon, they see other players where they were ~half-RTT ago. `LagCompensation` rewinds all objects so raycasts match what the shooter saw.
+- **Host-validated RPCs** - You act optimistically, but the host might reject. If the host sends back a different state, `NetworkPrediction` smoothly corrects your object.
+- **Hit detection** - When a player fires a weapon, they see other players where they were ~half-RTT ago. `LagCompensation` rewinds all objects so raycasts match what the shooter saw.
 
 ### Setup
 
 Add `NetworkPrediction` to any GameObject that already has a `NetworkObject`:
 
 ```csharp
-// On your player prefab — just add the component
+// On your player prefab - just add the component
 [RequireComponent(typeof(NetworkObject))]
 public class Player : NetworkBehaviour
 {

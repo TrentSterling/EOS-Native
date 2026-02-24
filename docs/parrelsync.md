@@ -4,7 +4,7 @@ Test multiplayer locally with multiple Unity editors.
 
 ## Overview
 
-EOS-Native has built-in ParrelSync support. Each clone gets a unique device identity automatically — no configuration needed.
+EOS-Native has built-in ParrelSync support. Each clone gets a unique device identity automatically - no configuration needed.
 
 ## How It Works
 
@@ -37,8 +37,8 @@ This means:
 1. Install [ParrelSync](https://github.com/VeriorPies/ParrelSync) in your Unity project
 2. Open **ParrelSync > Clones Manager** and create 1-2 clones
 3. Open the clone project(s) in separate Unity editor instances
-4. Press Play in the main project — it auto-creates a device token and logs in
-5. Press Play in clone(s) — each gets a unique device identity and logs in as a different user
+4. Press Play in the main project - it auto-creates a device token and logs in
+5. Press Play in clone(s) - each gets a unique device identity and logs in as a different user
 6. Use Quick Match or Host + Join by code to connect
 
 ## What Gets Uniquified
@@ -75,7 +75,7 @@ Both the reflection-based (EOSManager) and preprocessor-based (EOSPlatformHelper
 
 ### Clone fails to login
 
-- Each clone needs its own device token — the first login creates it automatically
+- Each clone needs its own device token - the first login creates it automatically
 - If a clone was previously used as the main project, clear its `Library/` folder
 - Check that your EOS application allows multiple device tokens
 

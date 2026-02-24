@@ -48,7 +48,7 @@ PlatformInterface.Shutdown();
 
 ### Automatic Handling
 
-Most API results (structs, info copies) are automatically marshaled — no manual release needed.
+Most API results (structs, info copies) are automatically marshaled - no manual release needed.
 
 ```csharp
 // Structs returned by Copy* functions are auto-managed
@@ -159,10 +159,10 @@ var initOptions = new InitializeOptions {
 
 ### Critical Rules
 
-1. **Never call Release or Shutdown in editor** — prevents reinitialization without restart
-2. **Overlay not supported in editor** — disable explicitly
+1. **Never call Release or Shutdown in editor** - prevents reinitialization without restart
+2. **Overlay not supported in editor** - disable explicitly
 3. **Dynamic bindings required in editor** (SDK 1.12+) for on-demand load/unload
-4. **Tick in Update()** — call `platform.Tick()` in MonoBehaviour.Update
+4. **Tick in Update()** - call `platform.Tick()` in MonoBehaviour.Update
 
 ### Platform Symbols
 
@@ -188,5 +188,5 @@ Set in project settings or asmdef:
 
 ## See Also
 
-- [Platform Interface](ref-platform.md) — SDK initialization and lifecycle
-- [SDK Conventions](ref-conventions.md) — Error codes, threading, throttling
+- [Platform Interface](ref-platform.md) - SDK initialization and lifecycle
+- [SDK Conventions](ref-conventions.md) - Error codes, threading, throttling

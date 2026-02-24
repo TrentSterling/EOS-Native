@@ -59,7 +59,7 @@ platformInterface.Tick();
 
 Call from your main game loop **every frame** to process async operations and fire callbacks.
 
-`TickBudgetInMilliseconds` controls how much work is done per tick — `0` means process everything.
+`TickBudgetInMilliseconds` controls how much work is done per tick - `0` means process everything.
 
 ## Interface Access
 
@@ -128,8 +128,8 @@ var result = platformInterface.CheckForLauncherAndRestart();
 
 | Return Code | Action |
 |-------------|--------|
-| `EOS_Success` | App is restarting via launcher — terminate process |
-| `EOS_NoChange` | Already launched by launcher — continue normally |
+| `EOS_Success` | App is restarting via launcher - terminate process |
+| `EOS_NoChange` | Already launched by launcher - continue normally |
 | `EOS_UnexpectedError` | LauncherCheck module failed |
 
 Environment variable `EOS_PLATFORM_CHECKFORLAUNCHERANDRESTART_ENV_VAR` is set to `1` by the launcher.
@@ -138,12 +138,12 @@ Environment variable `EOS_PLATFORM_CHECKFORLAUNCHERANDRESTART_ENV_VAR` is set to
 
 Proper cleanup order:
 
-1. `EOS_Platform_Release(platformHandle)` — release platform instance
-2. `EOS_Shutdown()` — release global SDK state
+1. `EOS_Platform_Release(platformHandle)` - release platform instance
+2. `EOS_Shutdown()` - release global SDK state
 
 > **Warning:** After `EOS_Shutdown`, the SDK cannot be reinitialized. All further calls will fail.
 
-> **Unity Editor:** Never call Release or Shutdown in editor — you won't be able to reinitialize without restarting the editor.
+> **Unity Editor:** Never call Release or Shutdown in editor - you won't be able to reinitialize without restarting the editor.
 
 ## Block List Enforcement
 

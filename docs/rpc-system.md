@@ -22,7 +22,7 @@ public class Player : NetworkBehaviour
     }
 }
 
-// Calling is transparent — all peers execute TakeDamage:
+// Calling is transparent - all peers execute TakeDamage:
 player.TakeDamage(19f);
 ```
 
@@ -89,7 +89,7 @@ All types registered in `NetSerializers` can be used as RPC parameters:
 
 ## Host-Validated RPCs
 
-For anti-cheat and authoritative gameplay, RPCs can be routed through the host for validation before being broadcast. The host acts as a relay — it receives the RPC, runs an optional validator, and only rebroadcasts to all peers if approved.
+For anti-cheat and authoritative gameplay, RPCs can be routed through the host for validation before being broadcast. The host acts as a relay - it receives the RPC, runs an optional validator, and only rebroadcasts to all peers if approved.
 
 ### Basic Usage
 
@@ -110,7 +110,7 @@ With `Validated = true`, calling `AddScore(10)` sends the RPC to the host first.
 
 ### Adding a Validator
 
-Define a method named `Validate_<MethodName>` on the same class. The IL weaver auto-discovers it by naming convention — no `nameof` or registration needed.
+Define a method named `Validate_<MethodName>` on the same class. The IL weaver auto-discovers it by naming convention - no `nameof` or registration needed.
 
 ```csharp
 public class Player : NetworkBehaviour
@@ -123,7 +123,7 @@ public class Player : NetworkBehaviour
         Score.Value += amount;
     }
 
-    // Auto-discovered by the weaver — runs on the HOST only
+    // Auto-discovered by the weaver - runs on the HOST only
     private bool Validate_AddScore(ProductUserId sender, NetworkObject target, byte[] argData)
     {
         // Only the object owner can add score
@@ -141,9 +141,9 @@ public class Player : NetworkBehaviour
 
 **Validator signature:** `bool Validate_X(ProductUserId sender, NetworkObject target, byte[] argData)`
 
-- `sender` — the peer who sent the RPC
-- `target` — the NetworkObject the RPC targets
-- `argData` — raw serialized arguments (use NetReader to deserialize)
+- `sender` - the peer who sent the RPC
+- `target` - the NetworkObject the RPC targets
+- `argData` - raw serialized arguments (use NetReader to deserialize)
 - Return `true` to approve (host rebroadcasts), `false` to reject (RPC is dropped)
 
 ### Flow Diagram
@@ -168,12 +168,12 @@ If the host calls a validated RPC, it validates locally and rebroadcasts without
 
 | Scenario | Use Validated? |
 |----------|---------------|
-| Score/currency changes | Yes — prevent clients from awarding arbitrary points |
-| Damage dealing | Yes — validate damage amount and source |
-| Spawning items | Yes — validate spawn location and rate |
-| Movement updates | No — too frequent, use SyncVars instead |
-| Cosmetic effects | No — no gameplay impact |
-| Chat messages | Maybe — could validate for profanity/rate limiting |
+| Score/currency changes | Yes - prevent clients from awarding arbitrary points |
+| Damage dealing | Yes - validate damage amount and source |
+| Spawning items | Yes - validate spawn location and rate |
+| Movement updates | No - too frequent, use SyncVars instead |
+| Cosmetic effects | No - no gameplay impact |
+| Chat messages | Maybe - could validate for profanity/rate limiting |
 
 ### No Validator = Relay Only
 

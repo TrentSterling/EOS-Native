@@ -33,7 +33,7 @@ All strings (input and output) must be **UTF-8** encoded.
 
 - SDK functions allocate memory for callback data; freed when callback completes
 - Make copies of callback data if you need to cache it
-- `Copy` functions return data you own — must call `Release` before SDK shutdown
+- `Copy` functions return data you own - must call `Release` before SDK shutdown
 - C# SDK handles release automatically via wrappers
 
 ## Thread Safety

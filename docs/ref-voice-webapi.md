@@ -109,7 +109,7 @@ POST /rtc/v1/{DeploymentId}/room/{RoomId}/participants/{ProductUserId}
 
 Response: `204 No Content`
 
-Server-side mute — independent of participant's local mute status.
+Server-side mute - independent of participant's local mute status.
 
 ---
 
@@ -177,4 +177,4 @@ var joinOptions = new RTC.JoinRoomOptions {
 
 ## Reference Implementation
 
-- [node-eos-voice](https://github.com/Mr-Craig/node-eos-voice) — MIT Node.js wrapper (npm: `node-eos-voice`)
+- [node-eos-voice](https://github.com/Mr-Craig/node-eos-voice) - MIT Node.js wrapper (npm: `node-eos-voice`)

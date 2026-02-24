@@ -284,5 +284,5 @@ public class MatchManager : MonoBehaviour
 ### Tie issues
 
 - With TieBreaker.HostChoice, ensure you call ResolveTie
-- Random tie breaking may feel unfair — consider Revote mode
-- FirstOption can be predictable — shuffle options first
+- Random tie breaking may feel unfair - consider Revote mode
+- FirstOption can be predictable - shuffle options first

@@ -250,8 +250,8 @@ void applyInterpolationOrExtrapolation()
 ```
 
 **Key insight:** There's a TWO-STAGE pipeline:
-1. **Target calculation** — interpolation or extrapolation computes where the object *should* be
-2. **Easing** — the actual transform lerps toward the target at `positionLerpSpeed` (0.85 default)
+1. **Target calculation** - interpolation or extrapolation computes where the object *should* be
+2. **Easing** - the actual transform lerps toward the target at `positionLerpSpeed` (0.85 default)
 
 This double-lerp provides extra smoothing on top of the interpolation.
 
@@ -328,7 +328,7 @@ else
 }
 ```
 
-**Receiver-side:** When `atPositionalRest == true`, skip extrapolation entirely — just hold the last known position.
+**Receiver-side:** When `atPositionalRest == true`, skip extrapolation entirely - just hold the last known position.
 
 ---
 
@@ -457,11 +457,11 @@ Frame 3: Receive State@t=0.066s [pos=(0.33,0,0)]
 
 ### What SmoothSync Does Well
 
-1. **Dual-stage pipeline** — target calculation (interp/extrap) + easing (lerp toward target). Two layers of smoothing.
-2. **Rest state detection** — saves bandwidth AND prevents extrapolation drift.
-3. **Velocity estimation from deltas** — kinematic objects don't need to sync velocity explicitly.
-4. **Clock synchronization** — smooth drift correction instead of jarring time jumps.
-5. **Graceful degradation** — interpolation -> extrapolation -> freeze, with configurable limits.
+1. **Dual-stage pipeline** - target calculation (interp/extrap) + easing (lerp toward target). Two layers of smoothing.
+2. **Rest state detection** - saves bandwidth AND prevents extrapolation drift.
+3. **Velocity estimation from deltas** - kinematic objects don't need to sync velocity explicitly.
+4. **Clock synchronization** - smooth drift correction instead of jarring time jumps.
+5. **Graceful degradation** - interpolation -> extrapolation -> freeze, with configurable limits.
 
 ### How It Differs from Our Spring Sync
 
@@ -477,15 +477,15 @@ Frame 3: Receive State@t=0.066s [pos=(0.33,0,0)]
 
 ### What We Could Adopt (Best of Both Worlds)
 
-1. **Rest state detection** — Stop syncing when idle. Saves bandwidth, prevents drift. Easy to add: track `samePositionCount`, broadcast rest flag.
+1. **Rest state detection** - Stop syncing when idle. Saves bandwidth, prevents drift. Easy to add: track `samePositionCount`, broadcast rest flag.
 
-2. **Velocity estimation for kinematic objects** — Our NetworkTransform always uses spring sync. For kinematic objects (no Rigidbody), we could estimate velocity from position deltas and use linear extrapolation + easing instead of spring forces.
+2. **Velocity estimation for kinematic objects** - Our NetworkTransform always uses spring sync. For kinematic objects (no Rigidbody), we could estimate velocity from position deltas and use linear extrapolation + easing instead of spring forces.
 
-3. **Extrapolation limits** — Add configurable time/distance limits to prevent objects from flying off into space during long latency spikes.
+3. **Extrapolation limits** - Add configurable time/distance limits to prevent objects from flying off into space during long latency spikes.
 
-4. **Interpolation mode option** — For kinematic objects, offer lerp-based interpolation (SmoothSync-style) as an alternative to spring physics. Springs are great for physics objects but can feel "bouncy" on UI elements, platforms, and other rigid kinematic objects.
+4. **Interpolation mode option** - For kinematic objects, offer lerp-based interpolation (SmoothSync-style) as an alternative to spring physics. Springs are great for physics objects but can feel "bouncy" on UI elements, platforms, and other rigid kinematic objects.
 
-5. **Clock drift correction** — Our current approach doesn't track owner time. Adding estimated owner time with gradual correction would improve sync accuracy for objects moving at consistent speeds.
+5. **Clock drift correction** - Our current approach doesn't track owner time. Adding estimated owner time with gradual correction would improve sync accuracy for objects moving at consistent speeds.
 
 ### Recommendation: Hybrid Approach
 
@@ -502,7 +502,7 @@ NetworkTransform Mode Selection:
 ```
 
 This gives us:
-- **Spring sync** for physics objects (our strength — feels physically correct)
-- **Lerp interpolation** for kinematic objects (SmoothSync's strength — no bouncing)
+- **Spring sync** for physics objects (our strength - feels physically correct)
+- **Lerp interpolation** for kinematic objects (SmoothSync's strength - no bouncing)
 - **Extrapolation** as fallback for both (velocity-based prediction)
 - **Rest detection** for bandwidth savings on both

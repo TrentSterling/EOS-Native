@@ -77,7 +77,7 @@ Setting the thread's context classloader via `Thread.currentThread().setContextC
 If the `EOSNativeLoader` class is not found at runtime (for example, in builds made before the build processor was added), `EOSManager` falls back to calling `EOSSDK.init(activity)` directly from C# with a warning log:
 
 ```
-[EOS] EOSNativeLoader not found — falling back to direct EOSSDK.init(). Voice may not work.
+[EOS] EOSNativeLoader not found - falling back to direct EOSSDK.init(). Voice may not work.
 ```
 
 In this fallback path, `System.loadLibrary` is never called from Java, so `JNI_OnLoad` uses the system classloader and voice will not function.
@@ -253,7 +253,7 @@ The `EOSManager.AndroidJavaInitSuccess` property tracks whether the Java-side in
 
 ```csharp
 if (!EOSManager.Instance.AndroidJavaInitSuccess)
-    Debug.LogWarning("Java init failed — voice will not work");
+    Debug.LogWarning("Java init failed - voice will not work");
 ```
 
 ### Console Early Init

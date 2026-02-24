@@ -11,7 +11,7 @@ SDK version: **1.18.1.2** | Last updated: 2026-02-06
 
 | Item | Value |
 |------|-------|
-| Cost | **Free** — no royalties, no hosting fees, no bandwidth fees |
+| Cost | **Free** - no royalties, no hosting fees, no bandwidth fees |
 | CCU cap | No publicly documented hard cap |
 | Relay bandwidth cap | No publicly documented hard cap |
 | Paid tiers | None |
@@ -30,7 +30,7 @@ SDK version: **1.18.1.2** | Last updated: 2026-02-06
 | Attribute string value max length | **1,000 chars** | (server-side, not in SDK) |
 | Attribute data types | int64, double, bool, UTF-8 string | `AttributeData` struct |
 | Max search results | **200** (SDK) / **256** (server) | `MAX_SEARCH_RESULTS` |
-| Lobby ID override length | **4–60 chars** | `MIN/MAX_LOBBYIDOVERRIDE_LENGTH` |
+| Lobby ID override length | **4-60 chars** | `MIN/MAX_LOBBYIDOVERRIDE_LENGTH` |
 | Invite ID max length | **64 chars** | `INVITEID_MAX_LENGTH` |
 | Connect string buffer | **256 bytes** | `GETCONNECTSTRING_BUFFER_SIZE` |
 | New lobby indexing delay | **up to 3 seconds** | (documentation) |
@@ -62,7 +62,7 @@ SDK version: **1.18.1.2** | Last updated: 2026-02-06
 | Max session attributes | **64** (SDK) / **100** (server) | `SESSIONMODIFICATION_MAX_SESSION_ATTRIBUTES` |
 | Attribute name max length | **64 chars** (SDK) / **1,000 chars** (server) | `SESSIONMODIFICATION_MAX_SESSION_ATTRIBUTE_LENGTH` |
 | Max search results | **200** | `MAX_SEARCH_RESULTS` |
-| Session ID override length | **16–64 chars** | `MIN/MAX_SESSIONIDOVERRIDE_LENGTH` |
+| Session ID override length | **16-64 chars** | `MIN/MAX_SESSIONIDOVERRIDE_LENGTH` |
 | Invite ID max length | **64 chars** | `INVITEID_MAX_LENGTH` |
 | Indexing delay | **up to 3 seconds** | (documentation) |
 
@@ -84,10 +84,10 @@ SDK version: **1.18.1.2** | Last updated: 2026-02-06
 |-------|-------|--------------|
 | Max packet size | **1,170 bytes** | `MAX_PACKET_SIZE` |
 | Max connections per remote peer | **32** | `MAX_CONNECTIONS` |
-| Channels | **0–255** (byte) | `SendPacketOptions.Channel` |
+| Channels | **0-255** (byte) | `SendPacketOptions.Channel` |
 | Socket name max length | **32 chars** (33-byte buffer) | `SOCKETID_SOCKETNAME_SIZE` |
 | Default port | **7777** | `SetPortRangeOptions` |
-| Default port range | **7777–7876** (100 ports) | Port + MaxAdditionalPortsToTry |
+| Default port range | **7777-7876** (100 ports) | Port + MaxAdditionalPortsToTry |
 | Unlimited queue sentinel | **0** | `MAX_QUEUE_SIZE_UNLIMITED` |
 | Network interruption threshold | **>30 seconds** packet loss | (documentation) |
 | Protocol stack | **UDP → DTLS → SCTP** | (documentation) |
@@ -131,7 +131,7 @@ SDK version: **1.18.1.2** | Last updated: 2026-02-06
 | Audio format | **Signed 16-bit interleaved PCM** (`short[]`) | SDK |
 | Audio channels | Configurable (`uint`) | SDK |
 | Audio sample rate | Configurable (`uint`) | SDK |
-| Volume range | **0–100** (50 = unmodified, 100 = 2x gain) | Documentation |
+| Volume range | **0-100** (50 = unmodified, 100 = 2x gain) | Documentation |
 | Codec | **Opus** (WebRTC-based) | Architecture docs |
 | Positional audio | **Not supported** | Community confirmed |
 | RTC option key max | **256 chars** | `OPTION_KEY_MAXCHARCOUNT` |
@@ -188,10 +188,10 @@ SDK version: **1.18.1.2** | Last updated: 2026-02-06
 | Operation | Per-User | Per-Deployment |
 |-----------|----------|----------------|
 | Ingest stats | 60/min, 500 stats/request | 1 req per 5 Client IDs/min |
-| Get stats by Player ID | 100/min | — |
-| Get stats by Player IDs | 100/min, 64 players/req, 25 stats/player | — |
-| Create stat | — | 100/min |
-| Delete stat | — | 100/min |
+| Get stats by Player ID | 100/min | - |
+| Get stats by Player IDs | 100/min, 64 players/req, 25 stats/player | - |
+| Create stat | - | 100/min |
+| Delete stat | - | 100/min |
 
 ---
 
@@ -206,10 +206,10 @@ SDK version: **1.18.1.2** | Last updated: 2026-02-06
 
 | Operation | Per-User | Per-Deployment |
 |-----------|----------|----------------|
-| Get single value | 100/min | — |
-| Get all values | 10/min | — |
-| Create leaderboard | — | 100/min |
-| Delete leaderboard | — | 100/min |
+| Get single value | 100/min | - |
+| Get all values | 10/min | - |
+| Create leaderboard | - | 100/min |
+| Delete leaderboard | - | 100/min |
 
 ---
 
@@ -300,8 +300,8 @@ SDK version: **1.18.1.2** | Last updated: 2026-02-06
 | Message to server max size | **512 bytes** | `ONMESSAGETOSERVERCALLBACK_MAX_MESSAGE_SIZE` |
 | Message to client max size | **512 bytes** | `ONMESSAGETOCLIENTCALLBACK_MAX_MESSAGE_SIZE` |
 | Message to peer max size | **512 bytes** | `ONMESSAGETOPEERCALLBACK_MAX_MESSAGE_SIZE` |
-| Register timeout range | **10–120 sec** | `MIN/MAX_REGISTERTIMEOUT` |
-| Peer auth timeout range | **40–120 sec** | `MIN/MAX_AUTHENTICATIONTIMEOUT` |
+| Register timeout range | **10-120 sec** | `MIN/MAX_REGISTERTIMEOUT` |
+| Peer auth timeout range | **40-120 sec** | `MIN/MAX_AUTHENTICATIONTIMEOUT` |
 | Log event string max | **39 chars** | `LOGEVENT_STRING_MAX_LENGTH` |
 | Weapon name max | **32 chars** | `LOGPLAYERUSEWEAPON_WEAPONNAME_MAX_LENGTH` |
 | Max registered event params | **12** | `REGISTEREVENT_MAX_PARAMDEFSCOUNT` |

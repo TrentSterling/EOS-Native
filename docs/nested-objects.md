@@ -19,7 +19,7 @@ No special setup needed. Just add `NetworkObject` (and optionally `NetworkTransf
 
 ### How It Works
 
-1. `Spawn()` calls `GetComponentsInChildren<NetworkObject>(true)` — root is index 0, children follow
+1. `Spawn()` calls `GetComponentsInChildren<NetworkObject>(true)` - root is index 0, children follow
 2. Each child gets its own `NetworkId` with `ParentNetworkId` pointing to the root
 3. Children share the root's `PrefabId`, `OwnerId`, and `DestroyWithOwner`
 4. Despawn/TransferAuthority on the root cascades to all children automatically
@@ -56,7 +56,7 @@ Detach children from or attach objects to network hierarchies at runtime. Use ca
 ### API
 
 ```csharp
-// Detach a child — becomes an independent root object
+// Detach a child - becomes an independent root object
 childNetObj.DetachFromNetworkParent();
 
 // Attach an object to a new parent (must be a root NetworkObject)
@@ -115,7 +115,7 @@ leftHandNetObj.DetachFromNetworkParent();
 
 ### Rules & Constraints
 
-- **Target must be a root.** You cannot attach to a child NetworkObject — only root objects can be parents.
+- **Target must be a root.** You cannot attach to a child NetworkObject - only root objects can be parents.
 - **Owner inherits.** When attaching to a parent, the child inherits the parent's `OwnerId`.
 - **Position sync is NetworkTransform's job.** Reparenting only changes the hierarchy and notifies peers. Position interpolation is handled by NetworkTransform.
 - **OriginalParentNetworkId is immutable.** Set once at spawn, tracks which root prefab a child was originally part of. Used internally for snapshot serialization.

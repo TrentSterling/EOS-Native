@@ -90,7 +90,7 @@ When set, `HandleRPC()` checks this callback after reading the networkId and met
 The most common pattern is to only allow RPCs from the object's owner:
 
 ```csharp
-// Convenience helper — one line
+// Convenience helper - one line
 NetworkManager.Instance.EnableOwnerOnlyRPCValidation();
 
 // Equivalent to:

@@ -11,7 +11,7 @@
 | **Sessions Interface** | Host, discover, manage game sessions |
 | **Voice / RTC** | Cross-platform voice chat and text |
 
-All multiplayer services are **EOS Game Services** — players authenticate via any supported identity provider (no Epic account required).
+All multiplayer services are **EOS Game Services** - players authenticate via any supported identity provider (no Epic account required).
 
 ---
 

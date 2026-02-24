@@ -20,10 +20,10 @@ The Stats service tracks player statistics for achievements, leaderboards, and c
 | Operation | Per-User | Per-Deployment |
 |-----------|----------|----------------|
 | Ingest stats | 60/min, 500 stats/request | 1 req per 5 Client IDs/min |
-| Get stats by Player ID | 100/min | — |
-| Get stats by Player IDs | 100/min, 64 players/req, 25 stats/player | — |
-| Create stat | — | 100/min |
-| Delete stat | — | 100/min |
+| Get stats by Player ID | 100/min | - |
+| Get stats by Player IDs | 100/min, 64 players/req, 25 stats/player | - |
+| Create stat | - | 100/min |
+| Delete stat | - | 100/min |
 
 > When a dedicated server submits stats on behalf of users, per-user limits do not apply. Limits are based on rate per second for each clientId per deployment.
 

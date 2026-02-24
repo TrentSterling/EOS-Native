@@ -38,8 +38,8 @@ Create a prefab with:
 
 ```
 YourPlayerPrefab
-├── NetworkObject        (required — gives network identity)
-├── NetworkTransform     (optional — syncs position/rotation)
+├── NetworkObject        (required - gives network identity)
+├── NetworkTransform     (optional - syncs position/rotation)
 └── YourPlayerScript     (your NetworkBehaviour with SyncVars)
 ```
 
@@ -60,7 +60,7 @@ NetworkManager.Instance.RegisterPrefab(playerPrefab, prefabId: 0);
 
 **Option C: Spawn with Auto-Register**
 
-Just call `Spawn(prefab)` — it auto-registers if not already registered:
+Just call `Spawn(prefab)` - it auto-registers if not already registered:
 ```csharp
 NetworkManager.Instance.Spawn(playerPrefab, position, rotation);
 ```
@@ -76,7 +76,7 @@ In the Inspector on your `PlayerSpawner` component:
 
 From code:
 ```csharp
-// Quick match — finds a lobby or creates one
+// Quick match - finds a lobby or creates one
 await EOSLobbyManager.Instance.QuickMatchOrHostAsync();
 
 // Or create directly
@@ -128,7 +128,7 @@ Not Initialized → Initialized → Logged In → In Lobby → Online (peers con
                                                       → Offline (alone in lobby)
 ```
 
-**Important:** `IsOnline` requires at least one other peer to be connected via P2P. If you're the only person in the lobby, `IsOnline` is `false`. This is by design — there's no one to network with. Use `EOSLobbyManager.Instance.IsInLobby` to check if you're in a lobby regardless of peer count.
+**Important:** `IsOnline` requires at least one other peer to be connected via P2P. If you're the only person in the lobby, `IsOnline` is `false`. This is by design - there's no one to network with. Use `EOSLobbyManager.Instance.IsInLobby` to check if you're in a lobby regardless of peer count.
 
 ## What Happens Automatically
 
@@ -136,12 +136,12 @@ When you join a lobby, the following chain fires without any code on your part:
 
 1. **`EOSLobbyManager.OnLobbyJoined`** fires
 2. **`EOSP2PManager.OnLobbyJoined()`** calls `Initialize()`, accepts existing members, sends handshake packets
-3. **Handshake retry** — if the initial handshake doesn't connect (timing/NAT), automatic retries fire every 2 seconds (up to 5 times)
+3. **Handshake retry** - if the initial handshake doesn't connect (timing/NAT), automatic retries fire every 2 seconds (up to 5 times)
 4. **`EOSP2PManager.OnPeerConnected`** fires for each peer that establishes a P2P link
 5. **`NetworkManager.OnPeerConnected()`** elects a host, creates `NetworkRoomState` and `NetworkPlayerState` objects
 6. **`PlayerSpawner`** detects online state and calls `Spawn()` for the local player
 
-**Voice** also auto-connects when the lobby has voice enabled — no manual wiring needed.
+**Voice** also auto-connects when the lobby has voice enabled - no manual wiring needed.
 
 ## Manual Control
 
@@ -179,7 +179,7 @@ public class MyGameStarter : MonoBehaviour
     {
         // Spawn with auto-register (no need for RegisterPrefab)
         var obj = NetworkManager.Instance.Spawn(playerPrefab, position, Quaternion.identity);
-        // obj is your local NetworkObject — you're the owner
+        // obj is your local NetworkObject - you're the owner
     }
 }
 ```
@@ -234,7 +234,7 @@ The P2P handshake requires **both sides** to accept the connection AND at least 
 
 ### "Host migration breaks everything"
 
-It shouldn't — host migration is automatic. When the host leaves, the next peer is elected. All `NetworkObject` references remain valid. `DestroyWithOwner = true` objects are cleaned up. But if you're caching the host's PUID, update it when `OnHostChanged` fires.
+It shouldn't - host migration is automatic. When the host leaves, the next peer is elected. All `NetworkObject` references remain valid. `DestroyWithOwner = true` objects are cleaned up. But if you're caching the host's PUID, update it when `OnHostChanged` fires.
 
 ## Testing Locally
 
@@ -263,8 +263,8 @@ Fastest path to see networking work:
 
 ## Next Steps
 
-- [Networking Overview](networking.md) — SyncVars, RPCs, NetworkObject, spawning details
-- [Typed RPCs](rpc-system.md) — `[NetRpc]` attribute for zero-boilerplate RPCs
-- [Nested Objects & Reparenting](nested-objects.md) — Parent-child NetworkObject hierarchies
-- [P2P Transport](p2p-transport.md) — Low-level packet system
-- [Connection Statistics](connection-stats.md) — RTT, packet loss, bandwidth monitoring
+- [Networking Overview](networking.md) - SyncVars, RPCs, NetworkObject, spawning details
+- [Typed RPCs](rpc-system.md) - `[NetRpc]` attribute for zero-boilerplate RPCs
+- [Nested Objects & Reparenting](nested-objects.md) - Parent-child NetworkObject hierarchies
+- [P2P Transport](p2p-transport.md) - Low-level packet system
+- [Connection Statistics](connection-stats.md) - RTT, packet loss, bandwidth monitoring

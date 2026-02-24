@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Sessions Interface enables players to host, find, and interact with online gaming sessions. Sessions can be brief (fill slots, disband) or extended (cycle through multiple matches). **Dedicated servers MUST use Sessions** — they cannot use Lobbies.
+The Sessions Interface enables players to host, find, and interact with online gaming sessions. Sessions can be brief (fill slots, disband) or extended (cycle through multiple matches). **Dedicated servers MUST use Sessions** - they cannot use Lobbies.
 
 > Sessions use per-call HTTP requests (not persistent WebSocket like Lobbies). State updates must be pushed manually.
 
@@ -63,7 +63,7 @@ sessionsInterface.SendInvite(ref inviteOptions, null, OnInviteSent);
 ### Accept / Reject
 
 - **Accept:** Join the session using `EOS_HSessionDetails` from the invitation (no dedicated accept function)
-- **Reject:** `EOS_Sessions_RejectInvite` — permanently deletes the invitation
+- **Reject:** `EOS_Sessions_RejectInvite` - permanently deletes the invitation
 
 ### Query Invites
 
@@ -94,7 +94,7 @@ var regOptions = new RegisterPlayersOptions {
 sessionsInterface.RegisterPlayers(ref regOptions, null, OnRegistered);
 ```
 
-The callback includes a `SanctionedPlayers` list — players denied registration due to active sanctions. No error is returned; you must check this list manually.
+The callback includes a `SanctionedPlayers` list - players denied registration due to active sanctions. No error is returned; you must check this list manually.
 
 > **Warning:** Registered players in `PublicAdvertised` sessions are publicly discoverable via `SessionSearch_SetTargetUserId`. External applications could discover server IPs.
 
@@ -205,5 +205,5 @@ A: Developer Portal > Your Product > Epic Online Services > Multiplayer > Sessio
 
 ## See Also
 
-- [Multiplayer Overview](ref-multiplayer.md) — Lobbies vs Sessions comparison
-- [Lobby Interface API](ref-lobby-api.md) — Lobby alternative for P2P games
+- [Multiplayer Overview](ref-multiplayer.md) - Lobbies vs Sessions comparison
+- [Lobby Interface API](ref-lobby-api.md) - Lobby alternative for P2P games

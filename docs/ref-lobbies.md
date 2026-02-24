@@ -8,13 +8,13 @@ Lobbies provide persistent connections between players to share game and player 
 
 ## Lobby Lifecycle
 
-1. **Creation** — User creates lobby, becomes first member and owner. Indexing takes up to 3 seconds.
-2. **Setup** — Owner sets initial state, may invite users.
-3. **Member Activity** — Users join/leave, update state, invite others.
-4. **Game State** — Owner updates game-specific data.
-5. **Member Removal** — Owner can kick members or transfer ownership.
-6. **Multiple Rounds** — Play multiple rounds without destroying lobby.
-7. **Destruction** — Owner destroys lobby.
+1. **Creation** - User creates lobby, becomes first member and owner. Indexing takes up to 3 seconds.
+2. **Setup** - Owner sets initial state, may invite users.
+3. **Member Activity** - Users join/leave, update state, invite others.
+4. **Game State** - Owner updates game-specific data.
+5. **Member Removal** - Owner can kick members or transfer ownership.
+6. **Multiple Rounds** - Play multiple rounds without destroying lobby.
+7. **Destruction** - Owner destroys lobby.
 
 > **Warning:** Removing `lobbies:connect` permission from a client policy closes the lobby within minutes.
 
@@ -35,25 +35,25 @@ Lobbies provide persistent connections between players to share game and player 
 
 ## Invites
 
-- `SendInvite` — Members invite others
-- `RejectInvite` — Permanently delete invitation
-- `QueryInvites` — Refresh all pending invitations (useful at startup)
-- `GetInviteCount` / `GetInviteIdByIndex` — Read cached invitations
-- `AddNotifyLobbyInviteReceived` — Real-time invitation notifications
-- `CopyLobbyDetailsHandleByInviteId` — Get handle to join from invite
+- `SendInvite` - Members invite others
+- `RejectInvite` - Permanently delete invitation
+- `QueryInvites` - Refresh all pending invitations (useful at startup)
+- `GetInviteCount` / `GetInviteIdByIndex` - Read cached invitations
+- `AddNotifyLobbyInviteReceived` - Real-time invitation notifications
+- `CopyLobbyDetailsHandleByInviteId` - Get handle to join from invite
 
 ## Join / Leave
 
-- `JoinLobby` — Join with valid `LobbyDetails` handle. Can be in multiple lobbies simultaneously.
-- `LeaveLobby` — Leave lobby. If owner leaves, EOS selects new owner.
+- `JoinLobby` - Join with valid `LobbyDetails` handle. Can be in multiple lobbies simultaneously.
+- `LeaveLobby` - Leave lobby. If owner leaves, EOS selects new owner.
 
 ## Kick Members
 
-Owner calls `KickMember` — all remaining members notified with `EOS_LMSC_KICKED` event.
+Owner calls `KickMember` - all remaining members notified with `EOS_LMSC_KICKED` event.
 
 ## Destroy Lobby
 
-Owner calls `DestroyLobby` — removes all remaining members, triggers `EOS_LMS_CLOSED` status.
+Owner calls `DestroyLobby` - removes all remaining members, triggers `EOS_LMS_CLOSED` status.
 
 ## Service Limits
 

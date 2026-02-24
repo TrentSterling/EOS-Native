@@ -19,7 +19,7 @@ Products with online multiplayer **must support crossplay across all PC storefro
 - Proprietary solution
 - Third-party system
 
-> Crossplay is not mandatory for ALL multiplayer games — only when distributed on multiple PC storefronts.
+> Crossplay is not mandatory for ALL multiplayer games - only when distributed on multiple PC storefronts.
 
 ### Achievements
 

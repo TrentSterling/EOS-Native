@@ -17,7 +17,7 @@ The RTC Data Interface allows sending arbitrary data packets through RTC voice r
 
 > **Warning:** The RTC-data service can receive nearly 500 messages per second. If you exceed this limit, voice chat disconnects.
 
-> Data channel cannot be enabled retroactively — must be set when joining the room.
+> Data channel cannot be enabled retroactively - must be set when joining the room.
 
 ## API
 

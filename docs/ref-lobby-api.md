@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Lobby Interface enables multiplayer lobby functionality — creation, member management, invitations, real-time attribute sync, and voice integration via RTC.
+The Lobby Interface enables multiplayer lobby functionality - creation, member management, invitations, real-time attribute sync, and voice integration via RTC.
 
 ## Core Functions
 
@@ -177,6 +177,6 @@ Register with `AddNotify*`, unregister with `RemoveNotify*`:
 
 ## See Also
 
-- [Lobbies & Sessions Introduction](ref-multiplayer.md) — When to use lobbies vs sessions
-- [Voice Interface](ref-voice.md) — Voice chat with lobbies
-- [RTC Data Interface](ref-rtcdata.md) — Data channel over voice rooms
+- [Lobbies & Sessions Introduction](ref-multiplayer.md) - When to use lobbies vs sessions
+- [Voice Interface](ref-voice.md) - Voice chat with lobbies
+- [RTC Data Interface](ref-rtcdata.md) - Data channel over voice rooms
