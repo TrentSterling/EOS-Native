@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EOS Native - Studio</title>
+    <style>
+        :root {
+            --primary: #00f0ff;
+            --bg: #050505;
+            --panel: #111;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg);
+            color: white;
+            font-family: 'Segoe UI', monospace;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Layout */
+        .canvas-area {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle at center, #1a1a1a 0%, #000 100%);
+        }
+
+        .controls-area {
+            width: 300px;
+            background-color: var(--panel);
+            border-left: 1px solid #333;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: -5px 0 20px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+
+        canvas {
+            /* Display size (screen) */
+            width: 600px; 
+            height: 600px;
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        /* UI Elements */
+        h2 {
+            margin: 0 0 10px 0;
+            font-size: 1.2rem;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+
+        label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+
+        input[type=range] {
+            width: 100%;
+            margin-bottom: 15px;
+            cursor: pointer;
+        }
+
+        .toggle-group {
+            display: flex;
+            background: #222;
+            border-radius: 4px;
+            padding: 4px;
+            margin-bottom: 15px;
+        }
+
+        .toggle-opt {
+            flex: 1;
+            text-align: center;
+            padding: 8px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            border-radius: 2px;
+            transition: all 0.2s;
+        }
+
+        .toggle-opt.active {
+            background: var(--primary);
+            color: #000;
+            font-weight: bold;
+        }
+
+        button.btn-download {
+            width: 100%;
+            padding: 15px;
+            background: transparent;
+            border: 2px solid var(--primary);
+            color: var(--primary);
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: 0.2s;
+            margin-top: auto;
+        }
+
+        button.btn-download:hover {
+            background: var(--primary);
+            color: black;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.4);
+        }
+
+        .value-display { color: var(--primary); }
+
+    </style>
+</head>
+<body>
+
+    <div class="canvas-area">
+        <!-- Canvas is 2x resolution (1200x1200) for High-DPI export -->
+        <canvas id="logoCanvas" width="1200" height="1200"></canvas>
+    </div>
+
+    <div class="controls-area">
+        <div>
+            <h2>Mode</h2>
+            <div class="toggle-group">
+                <div id="modeStatic" class="toggle-opt active" onclick="setMode('static')">STATIC</div>
+                <div id="modeAnim" class="toggle-opt" onclick="setMode('animated')">ANIMATED</div>
+            </div>
+            <p style="font-size: 0.75rem; color: #666; margin-top:-10px; line-height: 1.4;">
+                <b>Static:</b> Best for saving PNGs. Frozen particles, manual rotation.<br><br>
+                <b>Animated:</b> Auto-rotation, drifting particles, pulse effects.
+            </p>
+        </div>
+
+        <div>
+            <h2>Composition</h2>
+            
+            <label>Rotation Y <span id="valRotY" class="value-display">0</span></label>
+            <input type="range" id="sliderRotY" min="0" max="6.28" step="0.01" value="0">
+
+            <label>Tilt X <span id="valTiltX" class="value-display">0.25</span></label>
+            <input type="range" id="sliderTiltX" min="-1" max="1" step="0.01" value="0.25">
+
+            <label>Line Opacity <span id="valOpacity" class="value-display">1.0</span></label>
+            <input type="range" id="sliderOpacity" min="0.1" max="2.0" step="0.1" value="1.0">
+        </div>
+
+        <button class="btn-download" onclick="saveLogo()">Download PNG</button>
+    </div>
+
+<script>
+    const canvas = document.getElementById('logoCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- State ---
+    const state = {
+        mode: 'static', // 'static' or 'animated'
+        rotationY: 0,
+        tiltX: 0.25,
+        opacityMult: 1.0,
+        time: 0
+    };
+
+    // --- Configuration ---
+    const config = {
+        cx: 600, cy: 600, // Center (based on 1200px canvas)
+        hexSize: 320,     
+        sphereSize: 200,  
+        nodeCount: 80,    // Higher count for density
+        connectionDist: 90, 
+        colors: {
+            rimLight: '#ffffff',
+            rimDark: '#005577',
+            hexFillInner: '#001a33',
+            hexFillOuter: '#00050a',
+            line: '#00f0ff',
+        }
+    };
+
+    let points = [];
+    let particles = [];
+
+    // --- Initialization ---
+
+    function initSphere() {
+        points = [];
+        const phi = Math.PI * (3 - Math.sqrt(5)); 
+        for (let i = 0; i < config.nodeCount; i++) {
+            // Even distribution
+            const y = 1 - (i / (config.nodeCount - 1)) * 2;
+            const radius = Math.sqrt(1 - y * y);
+            const theta = phi * i;
+            const x = Math.cos(theta) * radius;
+            const z = Math.sin(theta) * radius;
+            points.push({ x: x * config.sphereSize, y: y * config.sphereSize, z: z * config.sphereSize });
+        }
+    }
+
+    function initParticles() {
+        particles = [];
+        // Create static "dust" that looks good frozen or moving
+        for(let i=0; i<40; i++) {
+            particles.push({
+                x: (Math.random() - 0.5) * config.hexSize * 2.2,
+                y: (Math.random() - 0.5) * config.hexSize * 2.2,
+                z: Math.random(), // depth factor
+                s: Math.random() * 3 + 1, // size
+                a: Math.random() * 0.5 + 0.2 // alpha
+            })
+        }
+    }
+
+    // --- Math Helpers ---
+
+    function rotate(x, y, z, angX, angY) {
+        // Rotate Y
+        let cosY = Math.cos(angY);
+        let sinY = Math.sin(angY);
+        let x1 = x * cosY - z * sinY;
+        let z1 = z * cosY + x * sinY;
+
+        // Rotate X
+        let cosX = Math.cos(angX);
+        let sinX = Math.sin(angX);
+        let y2 = y * cosX - z1 * sinX;
+        let z2 = z1 * cosX + y * sinX;
+
+        return { x: x1, y: y2, z: z2 };
+    }
+
+    // Smooth map function
+    function map(n, start1, stop1, start2, stop2) {
+        return ((n-start1)/(stop1-start1))*(stop2-start2)+start2;
+    }
+
+    // --- Drawing Functions ---
+
+    function drawHexagon(size, isGlass) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 2;
+            const px = config.cx + size * Math.cos(angle);
+            const py = config.cy + size * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+
+        if (isGlass) {
+            // Glassy Background
+            const gradient = ctx.createRadialGradient(config.cx, config.cy, size * 0.2, config.cx, config.cy, size);
+            gradient.addColorStop(0, config.colors.hexFillInner);
+            gradient.addColorStop(1, config.colors.hexFillOuter);
+            ctx.fillStyle = gradient;
+            ctx.fill();
+        } else {
+            // Metallic Rim
+            const gradient = ctx.createLinearGradient(config.cx - size, config.cy - size, config.cx + size, config.cy + size);
+            gradient.addColorStop(0, config.colors.rimLight);
+            gradient.addColorStop(0.5, '#00aaff');
+            gradient.addColorStop(1, config.colors.rimDark);
+            
+            ctx.lineWidth = 16; 
+            ctx.strokeStyle = gradient;
+            ctx.stroke();
+        }
+    }
+
+    function drawParticles() {
+        particles.forEach(p => {
+            let px = p.x;
+            let py = p.y;
+            let alpha = p.a;
+
+            // Animation Logic
+            if (state.mode === 'animated') {
+                py -= (0.5 * p.z); // Move up based on depth
+                // Wrap around
+                if (py < -config.hexSize) {
+                    py = config.hexSize;
+                }
+                // Update persistent array for next frame
+                p.y = py; 
+                
+                // Pulsing alpha in animated mode
+                alpha = p.a * (0.8 + 0.2 * Math.sin(state.time * 2 + p.x));
+            }
+
+            // Draw if inside hex bounds roughly
+            if (Math.abs(px) + Math.abs(py) < config.hexSize) {
+                ctx.fillStyle = `rgba(0, 240, 255, ${alpha * 0.8})`;
+                ctx.beginPath();
+                ctx.arc(config.cx + px, config.cy + py, p.s, 0, Math.PI*2);
+                ctx.fill();
+            }
+        });
+    }
+
+    function drawNetwork() {
+        let projected = [];
+        
+        // Determine Rotation
+        let rY = state.rotationY;
+        let rX = state.tiltX;
+
+        if (state.mode === 'animated') {
+            rY += state.time * 0.5; // Auto rotate
+        }
+
+        // 1. Project Points
+        points.forEach(p => {
+            let r = rotate(p.x, p.y, p.z, rX, rY);
+            
+            // Perspective Projection
+            // Z goes from approx -200 to 200
+            let scale = 1000 / (1000 - r.z); 
+            let x2d = config.cx + r.x * scale;
+            let y2d = config.cy + r.y * scale;
+            
+            projected.push({ x: x2d, y: y2d, z: r.z, scale: scale });
+        });
+
+        // 2. Draw Connections
+        ctx.lineWidth = 2.5; 
+        
+        for (let i = 0; i < projected.length; i++) {
+            for (let j = i + 1; j < projected.length; j++) {
+                let p1 = projected[i];
+                let p2 = projected[j];
+
+                // Simple 2D distance check for connections
+                let dx = p1.x - p2.x;
+                let dy = p1.y - p2.y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+
+                if (dist < config.connectionDist) {
+                    // Calculate Alpha based on Average Z Depth
+                    // Front (z=200) -> High Alpha
+                    // Back (z=-200) -> Low Alpha
+                    let avgZ = (p1.z + p2.z) / 2;
+                    
+                    // Normalize Z (-200 to 200) to (0 to 1)
+                    let normalizedZ = (avgZ + config.sphereSize) / (config.sphereSize * 2);
+                    
+                    // Sharp drop off for back lines to reduce visual noise
+                    let alpha = Math.pow(normalizedZ, 3) * 0.8; 
+                    
+                    if (alpha > 0.05) {
+                        ctx.strokeStyle = `rgba(0, 240, 255, ${alpha * state.opacityMult})`;
+                        ctx.beginPath();
+                        ctx.moveTo(p1.x, p1.y);
+                        ctx.lineTo(p2.x, p2.y);
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        // 3. Draw Nodes
+        projected.forEach(p => {
+            // Depth Alpha
+            let normalizedZ = (p.z + config.sphereSize) / (config.sphereSize * 2);
+            let alpha = Math.pow(normalizedZ, 2); 
+            let size = p.scale * 4;
+
+            // Base Dot
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Glow for front nodes
+            if (p.z > 50) {
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#00f0ff';
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        });
+    }
+
+    // --- Main Loop ---
+
+    function animate(timestamp) {
+        // Update Time
+        if (state.mode === 'animated') {
+            state.time = timestamp * 0.001;
+        }
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 1. Background Hex (Glass)
+        ctx.shadowBlur = 80;
+        ctx.shadowColor = 'rgba(0, 100, 255, 0.4)';
+        drawHexagon(config.hexSize, true);
+        ctx.shadowBlur = 0;
+
+        // 2. Particles
+        drawParticles();
+
+        // 3. Network Sphere
+        drawNetwork();
+
+        // 4. Foreground Hex (Metal Rim)
+        ctx.shadowBlur = 30;
+        ctx.shadowColor = 'rgba(0, 200, 255, 0.5)';
+        drawHexagon(config.hexSize, false);
+        
+        // 5. Inner Accent Line
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.lineWidth = 2;
+        drawHexagon(config.hexSize - 20, false);
+
+        requestAnimationFrame(animate);
+    }
+
+
+    // --- UI Logic ---
+
+    function setMode(mode) {
+        state.mode = mode;
+        document.getElementById('modeStatic').classList.toggle('active', mode === 'static');
+        document.getElementById('modeAnim').classList.toggle('active', mode === 'animated');
+        
+        // Reset manual rotation if switching to static
+        if(mode === 'static') {
+            const slider = document.getElementById('sliderRotY');
+            state.rotationY = parseFloat(slider.value);
+        }
+    }
+
+    function saveLogo() {
+        const link = document.createElement('a');
+        link.download = 'EOS-Native-Logo.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+    }
+
+    // Input Listeners
+    document.getElementById('sliderRotY').addEventListener('input', (e) => {
+        state.rotationY = parseFloat(e.target.value);
+        document.getElementById('valRotY').innerText = Math.round(state.rotationY * 10) / 10;
+        if(state.mode === 'animated') setMode('static'); // Auto switch to static on drag
+    });
+
+    document.getElementById('sliderTiltX').addEventListener('input', (e) => {
+        state.tiltX = parseFloat(e.target.value);
+        document.getElementById('valTiltX').innerText = state.tiltX;
+    });
+
+    document.getElementById('sliderOpacity').addEventListener('input', (e) => {
+        state.opacityMult = parseFloat(e.target.value);
+        document.getElementById('valOpacity').innerText = state.opacityMult;
+    });
+
+
+    // Start
+    initSphere();
+    initParticles();
+    requestAnimationFrame(animate);
+
+</script>
+</body>
+</html>

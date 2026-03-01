@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EOS Native - Procedural Logo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050505; /* Deep black background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .container {
+            position: relative;
+            text-align: center;
+        }
+
+        canvas {
+            display: block;
+            /* Enhance the glow effect via CSS as well */
+            filter: drop-shadow(0 0 20px rgba(0, 240, 255, 0.2));
+        }
+
+        .logo-text {
+            color: white;
+            margin-top: 20px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            opacity: 0;
+            animation: fadeIn 2s ease-out forwards 1s;
+        }
+        
+        h1 {
+            font-weight: 700;
+            font-size: 2.5rem;
+            margin: 0;
+            background: linear-gradient(to right, #ffffff, #00f0ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        p {
+            color: #888;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <canvas id="logoCanvas" width="600" height="600"></canvas>
+    <div class="logo-text">
+        <h1>EOS Native</h1>
+        <p>Unity C# SDK</p>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('logoCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- Configuration ---
+    const config = {
+        hexSize: 180,
+        sphereSize: 110,
+        nodeCount: 60,       // How "networky" it is
+        connectionDist: 45,  // Max distance to draw a line
+        rotationSpeed: 0.005,
+        colors: {
+            bg: '#000810',
+            rimLight: '#ffffff',
+            rimDark: '#005577',
+            node: '#ffffff',
+            line: '#00f0ff',
+            glow: '#00d0ff'
+        }
+    };
+
+    // --- 3D Point Logic ---
+    let points = [];
+    
+    // Generate points on a sphere using Fibonacci Spiral algorithm
+    // This ensures perfect mathematical distribution (unlike random dots)
+    function initSphere() {
+        points = [];
+        const phi = Math.PI * (3 - Math.sqrt(5)); // Golden angle
+
+        for (let i = 0; i < config.nodeCount; i++) {
+            const y = 1 - (i / (config.nodeCount - 1)) * 2; // y goes from 1 to -1
+            const radius = Math.sqrt(1 - y * y); // Radius at y
+            const theta = phi * i; // Golden angle increment
+
+            const x = Math.cos(theta) * radius;
+            const z = Math.sin(theta) * radius;
+
+            points.push({ x: x * config.sphereSize, y: y * config.sphereSize, z: z * config.sphereSize });
+        }
+    }
+
+    // Rotation Matrix
+    let angleY = 0;
+    let angleX = 0.2; // Slight tilt
+
+    function rotate(x, y, z) {
+        // Rotate around Y
+        let cosY = Math.cos(angleY);
+        let sinY = Math.sin(angleY);
+        let x1 = x * cosY - z * sinY;
+        let z1 = z * cosY + x * sinY;
+
+        // Rotate around X
+        let cosX = Math.cos(angleX);
+        let sinX = Math.sin(angleX);
+        let y2 = y * cosX - z1 * sinX;
+        let z2 = z1 * cosX + y * sinX;
+
+        return { x: x1, y: y2, z: z2 };
+    }
+
+    // --- Drawing Helpers ---
+
+    function drawHexagon(x, y, size, strokeWidth, isGlass) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            // -Math.PI/2 rotates it so point is at the top
+            const angle = (Math.PI / 3) * i - Math.PI / 2;
+            const px = x + size * Math.cos(angle);
+            const py = y + size * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+
+        if (isGlass) {
+            // Inner gradient fill (Deep space look)
+            const gradient = ctx.createRadialGradient(x, y, size * 0.2, x, y, size);
+            gradient.addColorStop(0, '#001a33');
+            gradient.addColorStop(1, '#00050a');
+            ctx.fillStyle = gradient;
+            ctx.fill();
+        } else {
+            // Outer Metallic Rim
+            const gradient = ctx.createLinearGradient(x - size, y - size, x + size, y + size);
+            gradient.addColorStop(0, config.colors.rimLight);
+            gradient.addColorStop(0.5, '#00aaff');
+            gradient.addColorStop(1, config.colors.rimDark);
+            
+            ctx.lineWidth = strokeWidth;
+            ctx.strokeStyle = gradient;
+            ctx.stroke();
+        }
+    }
+
+    function drawNetwork(cx, cy) {
+        let projectedPoints = [];
+
+        // 1. Rotate and Project Points
+        points.forEach(p => {
+            let r = rotate(p.x, p.y, p.z);
+            // Perspective projection
+            let scale = 400 / (400 - r.z); 
+            let x2d = cx + r.x * scale;
+            let y2d = cy + r.y * scale;
+            
+            projectedPoints.push({ x: x2d, y: y2d, z: r.z, scale: scale });
+        });
+
+        // 2. Draw Connections (Lines)
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < projectedPoints.length; i++) {
+            for (let j = i + 1; j < projectedPoints.length; j++) {
+                let p1 = projectedPoints[i];
+                let p2 = projectedPoints[j];
+
+                // Calculate distance
+                let dx = p1.x - p2.x;
+                let dy = p1.y - p2.y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+
+                if (dist < config.connectionDist) {
+                    // Opacity based on Z-depth (fog)
+                    let avgZ = (p1.z + p2.z) / 2;
+                    let alpha = map(avgZ, -config.sphereSize, config.sphereSize, 0.1, 0.8);
+                    
+                    // Create glow for lines
+                    ctx.strokeStyle = `rgba(0, 240, 255, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // 3. Draw Nodes (Dots)
+        projectedPoints.forEach(p => {
+            let alpha = map(p.z, -config.sphereSize, config.sphereSize, 0.2, 1);
+            let size = p.scale * 2.5;
+
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Node Bloom
+            if (p.z > 20) {
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = config.colors.line;
+                ctx.fill();
+                ctx.shadowBlur = 0; // reset
+            }
+        });
+    }
+
+    // Utility: Map a value from one range to another
+    function map(value, min1, max1, min2, max2) {
+        return min2 + (value - min1) * (max2 - min2) / (max1 - min1);
+    }
+
+    // --- Sparkle Particles ---
+    let particles = [];
+    function initParticles() {
+        for(let i=0; i<20; i++) {
+            particles.push({
+                x: (Math.random() - 0.5) * config.hexSize * 2,
+                y: (Math.random() - 0.5) * config.hexSize * 2,
+                s: Math.random() * 2,
+                a: Math.random()
+            })
+        }
+    }
+    
+    function drawParticles(cx, cy) {
+        particles.forEach(p => {
+            p.y -= 0.2; // Move up
+            p.a -= 0.005; // Fade out
+            
+            if(p.a <= 0) {
+                p.y = config.hexSize * 0.8;
+                p.a = 1;
+                p.x = (Math.random() - 0.5) * config.hexSize * 1.5;
+            }
+
+            // Only draw if inside the hexagon roughly
+            if (Math.abs(p.x) + Math.abs(p.y) < config.hexSize) {
+                ctx.fillStyle = `rgba(0, 240, 255, ${p.a})`;
+                ctx.beginPath();
+                ctx.arc(cx + p.x, cy + p.y, p.s, 0, Math.PI*2);
+                ctx.fill();
+            }
+        });
+    }
+
+
+    // --- Main Loop ---
+
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+
+        // 1. Draw Inner Background Hexagon (Glass)
+        // Add a glow behind the hexagon
+        ctx.shadowBlur = 40;
+        ctx.shadowColor = 'rgba(0, 100, 255, 0.4)';
+        drawHexagon(cx, cy, config.hexSize, 0, true);
+        ctx.shadowBlur = 0;
+
+        // 2. Draw Particles inside
+        drawParticles(cx, cy);
+
+        // 3. Draw Rotating Network Sphere
+        angleY += config.rotationSpeed;
+        drawNetwork(cx, cy);
+
+        // 4. Draw Outer Hexagon Frame (Metal)
+        // We draw it last so it sits on top of lines that go "out of bounds" visually
+        // Use Global Composite to mask the network if needed, but drawing on top is easier
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = 'rgba(0, 200, 255, 0.6)';
+        drawHexagon(cx, cy, config.hexSize, 8, false);
+        
+        // 5. Draw a thinner inner accent line
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1;
+        drawHexagon(cx, cy, config.hexSize - 10, 1, false);
+
+        requestAnimationFrame(animate);
+    }
+
+    // Init
+    initSphere();
+    initParticles();
+    animate();
+
+    // Interaction (Mouse tilt)
+    document.addEventListener('mousemove', (e) => {
+        let x = (e.clientX / window.innerWidth) - 0.5;
+        let y = (e.clientY / window.innerHeight) - 0.5;
+        // Subtle interaction
+        angleX = 0.2 + (y * 0.5);
+        // config.rotationSpeed = 0.005 + (x * 0.01);
+    });
+
+</script>
+</body>
+</html>

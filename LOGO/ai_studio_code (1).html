@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EOS Native - Logo Generator</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #050505; /* Page bg (won't be in saved image) */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Segoe UI', sans-serif;
+            color: white;
+        }
+
+        canvas {
+            /* Display size (screen) */
+            width: 500px; 
+            height: 500px;
+            /* subtle glow for preview only */
+            filter: drop-shadow(0 0 30px rgba(0, 240, 255, 0.15));
+            cursor: pointer;
+        }
+
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: transparent;
+            border: 1px solid #00f0ff;
+            color: #00f0ff;
+            font-family: monospace;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #00f0ff;
+            color: #000;
+            box-shadow: 0 0 15px #00f0ff;
+        }
+
+        .hint {
+            color: #555;
+            font-size: 0.8rem;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Canvas is actually 2x size for Retina/High-Res Export -->
+    <canvas id="logoCanvas" width="1000" height="1000"></canvas>
+
+    <div class="controls">
+        <button onclick="saveLogo()">Download PNG</button>
+    </div>
+    <div class="hint">[SPACE] to Pause/Resume Rotation</div>
+
+<script>
+    const canvas = document.getElementById('logoCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- Configuration ---
+    // Everything is 2x larger here for high-res export
+    const config = {
+        cx: 500, cy: 500, // Center
+        hexSize: 300,     // Hexagon Radius
+        sphereSize: 190,  // Network Sphere Radius
+        nodeCount: 70,    // Number of dots
+        connectionDist: 85, // Max length of lines
+        rotationSpeed: 0.005,
+        colors: {
+            rimLight: '#ffffff',
+            rimDark: '#005577',
+            line: '#00f0ff',
+        }
+    };
+
+    let isPaused = false;
+    let angleY = 0;
+    let angleX = 0.25; 
+    let points = [];
+    let particles = [];
+
+    // --- Init Geometry ---
+    function initSphere() {
+        points = [];
+        const phi = Math.PI * (3 - Math.sqrt(5)); 
+        for (let i = 0; i < config.nodeCount; i++) {
+            const y = 1 - (i / (config.nodeCount - 1)) * 2;
+            const radius = Math.sqrt(1 - y * y);
+            const theta = phi * i;
+            const x = Math.cos(theta) * radius;
+            const z = Math.sin(theta) * radius;
+            points.push({ x: x * config.sphereSize, y: y * config.sphereSize, z: z * config.sphereSize });
+        }
+    }
+
+    function initParticles() {
+        for(let i=0; i<30; i++) {
+            particles.push({
+                x: (Math.random() - 0.5) * config.hexSize * 2.5,
+                y: (Math.random() - 0.5) * config.hexSize * 2.5,
+                s: Math.random() * 3, // larger size for high res
+                a: Math.random()
+            })
+        }
+    }
+
+    // --- Logic ---
+    function rotate(x, y, z) {
+        let cosY = Math.cos(angleY);
+        let sinY = Math.sin(angleY);
+        let x1 = x * cosY - z * sinY;
+        let z1 = z * cosY + x * sinY;
+
+        let cosX = Math.cos(angleX);
+        let sinX = Math.sin(angleX);
+        let y2 = y * cosX - z1 * sinX;
+        let z2 = z1 * cosX + y * sinX;
+        return { x: x1, y: y2, z: z2 };
+    }
+
+    function drawHexagon(size, isGlass) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 2;
+            const px = config.cx + size * Math.cos(angle);
+            const py = config.cy + size * Math.sin(angle);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+
+        if (isGlass) {
+            const gradient = ctx.createRadialGradient(config.cx, config.cy, size * 0.2, config.cx, config.cy, size);
+            gradient.addColorStop(0, '#001a33');
+            gradient.addColorStop(1, '#00050a');
+            ctx.fillStyle = gradient;
+            ctx.fill();
+        } else {
+            const gradient = ctx.createLinearGradient(config.cx - size, config.cy - size, config.cx + size, config.cy + size);
+            gradient.addColorStop(0, config.colors.rimLight);
+            gradient.addColorStop(0.5, '#00aaff');
+            gradient.addColorStop(1, config.colors.rimDark);
+            ctx.lineWidth = 14; // Thicker rim for high res
+            ctx.strokeStyle = gradient;
+            ctx.stroke();
+        }
+    }
+
+    function drawNetwork() {
+        let projected = [];
+        points.forEach(p => {
+            let r = rotate(p.x, p.y, p.z);
+            let scale = 800 / (800 - r.z); 
+            let x2d = config.cx + r.x * scale;
+            let y2d = config.cy + r.y * scale;
+            projected.push({ x: x2d, y: y2d, z: r.z, scale: scale });
+        });
+
+        // Lines
+        ctx.lineWidth = 2.5; // Thicker lines for high res
+        projected.forEach((p1, i) => {
+            for (let j = i + 1; j < projected.length; j++) {
+                let p2 = projected[j];
+                let dist = Math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2);
+                if (dist < config.connectionDist) {
+                    let alpha = (p1.z + p2.z) / 2 > 0 ? 0.6 : 0.15; // Simple depth fog
+                    // Map alpha
+                    alpha = (alpha === 0.6) ? 
+                        1 - (Math.abs(p1.z)/config.sphereSize)*0.5 : 
+                        0.1;
+
+                    ctx.strokeStyle = `rgba(0, 240, 255, ${alpha})`;
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.stroke();
+                }
+            }
+        });
+
+        // Nodes
+        projected.forEach(p => {
+            let alpha = (p.z + config.sphereSize) / (config.sphereSize * 2); 
+            alpha = Math.max(0.1, alpha);
+            let size = p.scale * 4; // Larger nodes
+
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            if (p.z > 50) { // Bloom for front nodes
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#00f0ff';
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        });
+    }
+
+    function drawParticles() {
+        particles.forEach(p => {
+            if(!isPaused) {
+                p.y -= 0.4; 
+                p.a -= 0.005;
+                if(p.a <= 0) {
+                    p.y = config.hexSize * 0.8;
+                    p.a = 1;
+                    p.x = (Math.random() - 0.5) * config.hexSize * 2;
+                }
+            }
+            if (Math.abs(p.x) + Math.abs(p.y) < config.hexSize) {
+                ctx.fillStyle = `rgba(0, 240, 255, ${p.a})`;
+                ctx.beginPath();
+                ctx.arc(config.cx + p.x, config.cy + p.y, p.s, 0, Math.PI*2);
+                ctx.fill();
+            }
+        });
+    }
+
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 1. Background Hex
+        ctx.shadowBlur = 60;
+        ctx.shadowColor = 'rgba(0, 100, 255, 0.4)';
+        drawHexagon(config.hexSize, true);
+        ctx.shadowBlur = 0;
+
+        // 2. Network & Particles
+        drawParticles();
+        if(!isPaused) angleY += config.rotationSpeed;
+        drawNetwork();
+
+        // 3. Foreground Frame
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = 'rgba(0, 200, 255, 0.6)';
+        drawHexagon(config.hexSize, false);
+        
+        // 4. Inner accent
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 2;
+        drawHexagon(config.hexSize - 16, false);
+
+        requestAnimationFrame(animate);
+    }
+
+    // --- Controls ---
+    function saveLogo() {
+        const link = document.createElement('a');
+        link.download = 'EOS-Native-Logo.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if(e.code === 'Space') isPaused = !isPaused;
+    });
+
+    initSphere();
+    initParticles();
+    animate();
+
+</script>
+</body>
+</html>

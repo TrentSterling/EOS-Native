@@ -56,3 +56,6 @@ crashlytics-build.properties
 # Packaging
 *.unitypackage
 *.tar.gz
+
+# Build temp
+.utmp/
