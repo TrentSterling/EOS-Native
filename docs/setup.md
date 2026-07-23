@@ -13,7 +13,7 @@ Complete setup guide for EOS Native.
 
 1. Open Package Manager (`Window > Package Manager`)
 2. Click `+` > `Add package from git URL`
-3. Enter: `https://github.com/TrentSterling/EOS-Native.git?path=Assets/com.tront.eos-native`
+3. Enter: `https://github.com/TrentSterling/eos-native.git?path=Assets/com.tront.eos-native`
 
 ### Via Local Package
 

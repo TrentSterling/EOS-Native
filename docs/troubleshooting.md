@@ -187,5 +187,5 @@ voice.SetOutputDevice(desiredDeviceId);
 1. Press F1 for the debug overlay
 2. Enable relevant debug categories
 3. Check Console for error messages
-4. Review [GitHub Issues](https://github.com/TrentSterling/EOS-Native/issues)
+4. Review [GitHub Issues](https://github.com/TrentSterling/eos-native/issues)
 5. Consult [EOS Documentation](https://dev.epicgames.com/docs)

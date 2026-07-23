@@ -9,7 +9,7 @@ Get EOS Native running in your Unity project.
 1. Open Unity
 2. Window > Package Manager
 3. Click "+" > "Add package from git URL"
-4. Enter: `https://github.com/TrentSterling/EOS-Native.git?path=Assets/com.tront.eos-native`
+4. Enter: `https://github.com/TrentSterling/eos-native.git?path=Assets/com.tront.eos-native`
 
 ### Manual
 

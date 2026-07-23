@@ -434,4 +434,4 @@ If you have used the PlayEveryWare EOS plugin before, you may have seen their `e
 3. **Check the Console:** Look for `[EOS-Native]` log messages to confirm the processor ran
 4. **Check AndroidJavaInitSuccess:** In the F1 overlay Status tab, verify Java init succeeded
 5. **Check Voice Diagnostics:** In the F1 overlay Voice tab, expand the Voice Diagnostics section
-6. **File an issue:** [github.com/TrentSterling/EOS-Native/issues](https://github.com/TrentSterling/EOS-Native/issues)
+6. **File an issue:** [github.com/TrentSterling/eos-native/issues](https://github.com/TrentSterling/eos-native/issues)

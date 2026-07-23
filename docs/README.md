@@ -77,5 +77,5 @@ await EOSLobbyChatManager.Instance.SendChatMessageAsync("Hello!");
 ## Support
 
 - [Troubleshooting](troubleshooting.md)
-- [GitHub Issues](https://github.com/TrentSterling/EOS-Native/issues)
+- [GitHub Issues](https://github.com/TrentSterling/eos-native/issues)
 - [EOS Developer Portal](https://dev.epicgames.com/portal)
